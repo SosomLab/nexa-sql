@@ -275,6 +275,9 @@ pub(crate) struct Profile {
     pub effort: String,
     /// 조회한 모델 목록([검증] · Claude `/v1/models` · Codex `model/list` · 110 §15-5) — 비면 제공자 내장 표.
     pub models: Vec<String>,
+    /// 모델별 노력도([검증] 때 `model/list`가 준 것 · Codex만 · `codex::dump_efforts` 꼴 · T-486) — API 키 모드의 노력도 맞춤 기준.
+    /// 비면 맞추지 않는다(종전 동작 · 다시 [검증]하면 채워진다).
+    pub efforts: String,
     /// ★ 인증 = ID 페더레이션(WIF · 110 §14-5 · §15-5) — `Some`이면 API 키 대신 IdP 로그인 토큰(볼트 봉투 `ai.<이름>` = 토큰 JSON).
     pub wif: Option<wif::Wif>,
 }
@@ -289,6 +292,7 @@ impl Profile {
             model: DEFAULT_MODEL.to_string(),
             effort: DEFAULT_EFFORT.to_string(),
             models: Vec::new(),
+            efforts: String::new(),
             wif: None,
         }
     }
@@ -391,6 +395,11 @@ impl ProfileStore {
                             .collect();
                     }
                 }
+                "efforts" => {
+                    if let Some(p) = cur.as_mut() {
+                        p.efforts = v.to_string();
+                    }
+                }
                 "auth" => {
                     if let Some(p) = cur.as_mut() {
                         if v.eq_ignore_ascii_case("wif") && p.wif.is_none() {
@@ -439,6 +448,9 @@ impl ProfileStore {
                 p.effort,
                 p.models.join(",")
             ));
+            if !p.efforts.is_empty() {
+                out.push_str(&format!("efforts={}\n", p.efforts));
+            }
             if let Some(w) = &p.wif {
                 out.push_str(&format!(
                     "auth=wif\nwif_issuer={}\nwif_client_id={}\nwif_rule={}\nwif_org={}\nwif_sa={}\nwif_scope={}\n",
@@ -1225,10 +1237,14 @@ mod tests {
         assert_eq!(items[0].0, "claude-x");
         assert_eq!(items.len(), CLAUDE_FAMILIES.len() + MODELS.len() + 1);
         p.models = vec!["claude-x".into(), "claude-y".into()];
+        // 모델별 노력도(T-486)도 왕복 — 값에 `=`·`:`·`;`가 들어 있다.
+        p.efforts = "m1=medium:low/medium/high;m2=:".into();
         let mut st = ProfileStore::default();
         st.upsert(p.clone());
         let back = ProfileStore::parse(&st.dump());
         assert_eq!(back.profiles[0].models, p.models);
+        assert_eq!(back.profiles[0].efforts, p.efforts);
+        assert!(!ProfileStore::default().dump().contains("efforts="));
         // WIF 프로필 왕복(토큰은 저장 파일에 없다).
         let mut q = Profile::new("corp");
         q.wif = Some(wif::Wif {

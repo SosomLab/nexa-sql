@@ -106,6 +106,8 @@ pub(crate) struct AiState {
     /// ★ 활동 막대 패널이 보이는 제공자(사용자 11-16 "활동 탭을 바꾸는 행위가 AI 탭의 세션과는 무관하도록"): 패널은 그 제공자의
     /// 세션 목록을 보이고 독립 탭으로 열기만 한다 — `tab`·`cur`(분할 창·채팅 탭이 쓰는 작업 세션)는 건드리지 않는다.
     pub panel_tab: Provider,
+    /// 패널이 마지막으로 따라간 채팅 탭 열쇠(T-488 · [`AiState::panel_follow`]) — 채팅 탭이 앞에 없으면 비운다.
+    pub follow_key: Option<String>,
     /// 탭을 떠날 때 보던 세션 id(돌아오면 복원).
     pub last_claude: Option<String>,
     pub last_codex: Option<String>,
@@ -322,6 +324,14 @@ impl App {
         let sid = sid.trim_start_matches(':').to_string();
         if want != self.ai.tab {
             self.ai_switch_tab(want);
+            self.ai_sync_panel();
+        }
+        // ★ 활동 패널도 그 채팅 탭의 제공자로(T-488 · 11-20): 패널은 Claude인데 Codex 채팅 탭을 앞으로 가져오면 패널에 세션이
+        //   없는 것처럼 기본값만 보였다. **탭이 바뀐 그때만** 따라간다 — 그 뒤 활동 막대로 다른 제공자를 고른 것은 그대로 둔다
+        //   (반대 방향 = 활동 탭이 작업 세션을 바꾸는 일은 없다 · 11-16).
+        if self.ai.panel_follow(self.ai_panel.is_visible(), want, &key) {
+            self.act_bar.set_active(Some(want.act_id()));
+            self.ai_codex_login_probe();
             self.ai_sync_panel();
         }
         let busy = self.ai.host.as_ref().is_some_and(|h| h.busy);
@@ -563,11 +573,10 @@ impl App {
             self.ai_apply_enabled();
         }
         self.ai_init();
-        let on = !(self.ai_panel.is_visible() && self.ai.panel_tab == p);
+        // ★ 패널이 보이는 제공자만 바꾼다(11-16 · [`AiState::panel_toggle`]) — 종전에는 작업 세션까지 그 제공자의 마지막 세션으로
+        //   바꿔, 편집기 옆 분할 창이 쓰던 세션이 활동 탭을 누를 때마다 딴 세션으로 넘어갔다.
+        let on = self.ai.panel_toggle(self.ai_panel.is_visible(), p);
         if on {
-            // ★ 패널이 보이는 제공자만 바꾼다(11-16) — 종전에는 작업 세션까지 그 제공자의 마지막 세션으로 바꿔, 편집기 옆 분할
-            //   창이 쓰던 세션이 활동 탭을 누를 때마다 딴 세션으로 넘어갔다.
-            self.ai.panel_tab = p;
             self.side_panel_close_others(p.act_id());
         }
         self.ai_panel.set_visible(on);
@@ -657,7 +666,7 @@ impl App {
 
     /// 패널이 보이는 제공자의 작업 세션(작업 세션이 다른 제공자 것이면 없음 — 패널은 그 제공자의 기본값을 보인다 · 11-16).
     fn ai_panel_cur(&self) -> Option<&Session> {
-        self.ai_cur().filter(|s| s.provider == self.ai.panel_tab)
+        self.ai.panel_cur()
     }
 
     fn ai_mode_default(&self) -> Mode {
@@ -1474,24 +1483,35 @@ impl App {
         if self.ai.host.as_ref().is_some_and(|h| h.busy) {
             return;
         }
-        let models = self.ai.codex_cli_models.clone();
-        let efforts = self.ai.codex_efforts.clone();
-        let Some(s) = self.ai_cur_mut() else { return };
-        if s.provider != Provider::Codex || s.mode != Mode::Cli {
+        let Some((provider, mode, profile)) = self
+            .ai_cur()
+            .map(|s| (s.provider, s.mode, s.profile.clone()))
+        else {
+            return;
+        };
+        if provider != Provider::Codex {
             return;
         }
+        // ★ API 키 모드(T-486 · 11-20) = 그 프로필을 [검증]할 때 받은 노력도로 맞춘다. 모델은 건드리지 않는다(프로필 목록에 없는
+        //   모델은 보낼 때 `resolve_model`이 고른다 · 사용자가 목록 밖 모델을 직접 적었을 수 있다).
+        let (models, efforts) = if mode == Mode::Cli {
+            (
+                self.ai.codex_cli_models.clone(),
+                self.ai.codex_efforts.clone(),
+            )
+        } else {
+            (Vec::new(), self.ai_profile_efforts(&profile))
+        };
+        let Some(s) = self.ai_cur_mut() else { return };
+        let (new_model, new_effort) = codex_fix(&s.model, &s.effort, &models, &efforts);
         let mut notes: Vec<String> = Vec::new();
-        if let Some(first) = models.first().filter(|_| !models.contains(&s.model)) {
+        if let Some(first) = new_model {
             let old = std::mem::replace(&mut s.model, first.clone());
-            notes.push(tf(Msg::AiModelSwapped, &[&old, first]));
+            notes.push(tf(Msg::AiModelSwapped, &[&old, &first]));
         }
-        // 노력도 = 그 모델이 받는 값으로(11-16 · 목록을 모르는 모델은 그대로).
-        if let Some(info) = efforts.get(&s.model) {
-            let fit = ai::codex::fit_effort(&s.effort, info, ai::EFFORTS);
-            if fit != s.effort {
-                let old = std::mem::replace(&mut s.effort, fit.clone());
-                notes.push(tf(Msg::AiEffortSwapped, &[&s.model, &old, &fit]));
-            }
+        if let Some(fit) = new_effort {
+            let old = std::mem::replace(&mut s.effort, fit.clone());
+            notes.push(tf(Msg::AiEffortSwapped, &[&s.model, &old, &fit]));
         }
         if notes.is_empty() {
             return;
@@ -1506,6 +1526,20 @@ impl App {
         }
         self.ai_sync_panel();
         self.redraw();
+    }
+
+    /// 프로필에 저장된 모델별 노력도(Codex · [검증] 때 채움 · T-486). 없거나 비면 빈 표 = 맞추지 않는다.
+    fn ai_profile_efforts(
+        &self,
+        profile: &str,
+    ) -> std::collections::HashMap<String, ai::codex::ModelInfo> {
+        self.ai
+            .store
+            .profiles
+            .iter()
+            .find(|p| p.name == profile)
+            .map(|p| ai::codex::parse_efforts(&p.efforts))
+            .unwrap_or_default()
     }
 
     /// ★ Codex CLI 로그인 상태(`codex login status` 첫 줄 · 스레드 · 콘솔 창 없음) — Codex 탭이 CLI 모드일 때 한 번만.
@@ -1553,11 +1587,10 @@ impl App {
                 // 그 계정이 쓸 수 있는 모델 목록(키 없이 = CLI 로그인) → 모델 팝업·자동 이름의 기준.
                 if let Ok(infos) = ai::host::codex_list_model_infos(&prog, &prefix, "") {
                     // 노력도 먼저(모델 목록이 도착하며 도는 바로잡기가 이것을 본다) · `id=기본:값/값;…`.
-                    let efforts: Vec<String> = infos
-                        .iter()
-                        .map(|m| format!("{}={}:{}", m.id, m.default_effort, m.efforts.join("/")))
-                        .collect();
-                    let _ = tx.send(AiEvent::Note(format!("codexefforts:{}", efforts.join(";"))));
+                    let _ = tx.send(AiEvent::Note(format!(
+                        "codexefforts:{}",
+                        ai::codex::dump_efforts(&infos)
+                    )));
                     let ids: Vec<&str> = infos.iter().map(|m| m.id.as_str()).collect();
                     let _ = tx.send(AiEvent::Note(format!("codexmodels:{}", ids.join(","))));
                     wake();
@@ -1812,7 +1845,17 @@ impl App {
             .spawn(move || {
                 let mut ws_auto = false;
                 let r = match &codex_cli {
-                    Some((prog, prefix)) => ai::host::codex_list_models(prog, prefix, &key),
+                    // Codex = 모델별 노력도도 프로필에 남긴다(T-486 · API 키 모드의 노력도 맞춤 기준) — 목록 결과보다 먼저 보낸다
+                    // (프로필 저장은 뒤따르는 `validate:ok`가 한다).
+                    Some((prog, prefix)) => ai::host::codex_list_model_infos(prog, prefix, &key)
+                        .map(|infos| {
+                            let _ = tx.send(AiEvent::Note(format!(
+                                "validefforts:{}:{}",
+                                p.name,
+                                ai::codex::dump_efforts(&infos)
+                            )));
+                            infos.into_iter().map(|m| m.id).collect()
+                        }),
                     None => {
                         let auth = ApiAuth::Key(key.clone());
                         match ai::claude_api::list_models(&p.base_url, &auth, &p.workspace) {
@@ -2123,10 +2166,16 @@ impl App {
         };
         // ★ 노력도 = 그 모델이 받는 값으로 맞춰 보내고 안내(11-16 · 목록을 모르면 그대로).
         let effort_owned;
-        let effort: &str = match self.ai.codex_efforts.get(model) {
+        //   API 키 모드(T-486 · 11-20)는 그 프로필을 [검증]할 때 받은 표로 — 종전에는 맞추지 않아 모델이 받지 않는 노력도가 그대로 나갔다.
+        let info = if mode == Mode::Cli {
+            self.ai.codex_efforts.get(model).cloned()
+        } else {
+            self.ai_profile_efforts(profile).remove(model)
+        };
+        let effort: &str = match info {
             _ if unknown => "",
-            Some(info) if mode == Mode::Cli => {
-                let fit = ai::codex::fit_effort(effort, info, ai::EFFORTS);
+            Some(info) => {
+                let fit = ai::codex::fit_effort(effort, &info, ai::EFFORTS);
                 if fit == effort {
                     effort
                 } else {
@@ -2205,12 +2254,13 @@ impl App {
         if self.ai_host().is_cli_alive() {
             // ★ 대화 중인 프로세스도 모델·노력도가 바뀌었으면 다시 띄운다(11-16 · 종전 = 미리 띄운 프로세스만 조건을 비교해,
             //   첫 턴 뒤에는 칩에서 모델을 바꿔도 옛 모델로 계속 답했다). 대화는 `resume`(CLI 세션 id)으로 이어진다.
-            let same_me = self
-                .ai
-                .cli_me
-                .as_ref()
-                .is_none_or(|(m, e)| m == model && e == effort);
-            if same_me && self.ai.warm.as_ref().is_none_or(|w| *w == sig) {
+            if cli_reuse(
+                self.ai.cli_me.as_ref(),
+                self.ai.warm.as_deref(),
+                model,
+                effort,
+                &sig,
+            ) {
                 return Ok(());
             }
             // 내린 프로세스의 늦은 종료 사건이 새 턴에 끼어들지 않게 세대를 올리고 내린다.
@@ -3026,6 +3076,8 @@ impl App {
                                 }
                             }
                             self.ai_store_save();
+                            // 보이는 세션이 이 프로필을 쓰는 Codex API 키 세션이면 노력도를 지금 맞춘다(T-486).
+                            self.ai_codex_fix_model();
                             if self.ai_view.editing_name() == Some(name) {
                                 self.ai_view.set_models(models);
                                 if ws_auto {
@@ -3048,26 +3100,17 @@ impl App {
                     };
                 } else if let Some(rest) = n.strip_prefix("codexlogin:") {
                     self.ai.codex_login = Some(rest.to_string());
+                } else if let Some(rest) = n.strip_prefix("validefforts:") {
+                    // "<프로필>:<노력도 한 줄>" — [검증]이 받은 모델별 노력도(Codex · T-486). 저장은 뒤따르는 `validate:ok`가 한다.
+                    let (name, line) = rest.split_once(':').unwrap_or((rest, ""));
+                    if let Some(p) = self.ai.store.get_mut(name) {
+                        p.efforts = line.to_string();
+                    }
+                    if self.ai_view.editing_name() == Some(name) {
+                        self.ai_view.set_efforts(line);
+                    }
                 } else if let Some(rest) = n.strip_prefix("codexefforts:") {
-                    self.ai.codex_efforts = rest
-                        .split(';')
-                        .filter_map(|one| {
-                            let (id, v) = one.split_once('=')?;
-                            let (dflt, list) = v.split_once(':')?;
-                            Some((
-                                id.to_string(),
-                                ai::codex::ModelInfo {
-                                    id: id.to_string(),
-                                    efforts: list
-                                        .split('/')
-                                        .filter(|e| !e.is_empty())
-                                        .map(String::from)
-                                        .collect(),
-                                    default_effort: dflt.to_string(),
-                                },
-                            ))
-                        })
-                        .collect();
+                    self.ai.codex_efforts = ai::codex::parse_efforts(rest);
                 } else if let Some(rest) = n.strip_prefix("codexmodels:") {
                     self.ai.codex_list_done = true;
                     self.ai.codex_cli_models = rest
@@ -6105,8 +6148,161 @@ fn ai_list_files(root: &std::path::Path, query: &str, limit: usize) -> Vec<Strin
     out
 }
 
+impl AiState {
+    /// 활동 막대의 AI 단추(순수 · 11-16): 패널이 그 제공자로 이미 보이면 닫고(`false`), 아니면 **패널의 제공자만** 바꿔 연다 —
+    /// 작업 세션(`tab` · `cur`)은 건드리지 않는다.
+    fn panel_toggle(&mut self, visible: bool, p: Provider) -> bool {
+        let on = !(visible && self.panel_tab == p);
+        if on {
+            self.panel_tab = p;
+        }
+        on
+    }
+
+    /// 패널이 보여 줄 세션 = 현재 세션이 패널의 제공자 것일 때만(아니면 그 제공자의 기본값).
+    fn panel_cur(&self) -> Option<&Session> {
+        self.cur
+            .and_then(|i| self.sessions.get(i))
+            .filter(|s| s.provider == self.panel_tab)
+    }
+
+    /// 앞에 온 채팅 탭(`key`)이 **바뀐 그때** 보이는 패널을 그 탭의 제공자로 돌린다(T-488) — 바뀌었으면 `true`. 같은 탭이 계속
+    /// 앞에 있는 동안은 아무 일도 하지 않는다(그 사이 활동 막대로 고른 제공자를 되돌리지 않는다).
+    fn panel_follow(&mut self, visible: bool, want: Provider, key: &str) -> bool {
+        if self.follow_key.as_deref() == Some(key) {
+            return false;
+        }
+        self.follow_key = Some(key.to_string());
+        if visible && self.panel_tab != want {
+            self.panel_tab = want;
+            return true;
+        }
+        false
+    }
+}
+
+/// 살아 있는 CLI 프로세스를 그대로 쓸지(순수 · 11-16): 띄울 때의 모델·노력도(`cli_me`)가 같고, 미리 띄운 것이면 그 조건(`warm`)도
+/// 같을 때만. 모르는 값(`None`)은 같다고 본다. 아니면 내리고 다시 띄운다(대화는 `resume`으로 이어진다).
+fn cli_reuse(
+    cli_me: Option<&(String, String)>,
+    warm: Option<&str>,
+    model: &str,
+    effort: &str,
+    sig: &str,
+) -> bool {
+    cli_me.is_none_or(|(m, e)| m == model && e == effort) && warm.is_none_or(|w| w == sig)
+}
+
+/// Codex 세션의 모델·노력도 바로잡기(순수 · 11-16): 목록이 있는데 거기 없는 모델 → 목록의 첫 모델 · 노력도 = (바뀐) 모델이 받는
+/// 값으로([`ai::codex::fit_effort`] · 그 모델을 모르면 그대로). 바뀌는 것만 `Some`.
+fn codex_fix(
+    model: &str,
+    effort: &str,
+    models: &[String],
+    efforts: &std::collections::HashMap<String, ai::codex::ModelInfo>,
+) -> (Option<String>, Option<String>) {
+    let new_model = models
+        .first()
+        .filter(|_| !models.iter().any(|m| m == model))
+        .cloned();
+    let now = new_model.as_deref().unwrap_or(model);
+    let new_effort = efforts
+        .get(now)
+        .map(|info| ai::codex::fit_effort(effort, info, ai::EFFORTS))
+        .filter(|fit| fit != effort);
+    (new_model, new_effort)
+}
+
 #[cfg(test)]
 mod tests {
+    /// ★ T-485 (a) 활동 패널 분리(11-16) + T-488 따라가기: 활동 막대는 패널의 제공자만 바꾸고 작업 세션은 그대로 · 패널은 현재
+    /// 세션이 자기 제공자 것일 때만 그것을 보인다 · 채팅 탭이 바뀐 그때만 패널이 따라간다.
+    #[test]
+    fn panel_tab_is_separate_from_the_working_session() {
+        use super::{ai::Mode, ai::Provider, ai::Session, AiState};
+        let mut st = AiState::default();
+        let mut s = Session::new(Mode::Cli, "", "m", "high");
+        s.provider = Provider::Claude;
+        st.sessions.push(s);
+        st.cur = Some(0);
+        st.tab = Provider::Claude;
+        st.panel_tab = Provider::Claude;
+        assert!(st.panel_cur().is_some());
+        // 다른 제공자의 활동 단추 = 패널만 그쪽으로 · 작업 세션은 그대로.
+        assert!(st.panel_toggle(true, Provider::Codex));
+        assert_eq!(st.panel_tab, Provider::Codex);
+        assert_eq!((st.tab, st.cur), (Provider::Claude, Some(0)));
+        assert!(st.panel_cur().is_none(), "패널 제공자의 세션이 아니다");
+        // 같은 단추 다시 = 닫기(제공자 유지) · 닫힌 채 누르면 연다.
+        assert!(!st.panel_toggle(true, Provider::Codex));
+        assert!(st.panel_toggle(false, Provider::Codex));
+        // T-488: Claude 채팅 탭이 앞으로 → 보이는 패널이 따라간다 · 같은 탭이 계속 앞이면 다시 건드리지 않는다.
+        assert!(st.panel_follow(true, Provider::Claude, "ai.chat:1"));
+        assert!(st.panel_cur().is_some());
+        assert!(st.panel_toggle(true, Provider::Codex));
+        assert!(
+            !st.panel_follow(true, Provider::Claude, "ai.chat:1"),
+            "활동 막대 선택을 되돌리지 않는다"
+        );
+        assert_eq!(st.panel_tab, Provider::Codex);
+        // 다른 탭으로 바뀌면 다시 따라간다 · 패널이 닫혀 있으면 바꾸지 않는다.
+        assert!(st.panel_follow(true, Provider::Claude, "ai.chat:2"));
+        st.panel_tab = Provider::Codex;
+        assert!(!st.panel_follow(false, Provider::Claude, "ai.chat:3"));
+        assert_eq!(st.panel_tab, Provider::Codex);
+        assert_eq!((st.tab, st.cur), (Provider::Claude, Some(0)));
+    }
+
+    /// ★ T-485 (b) CLI 재사용 판정(11-16 · MC/DC): 모델·노력도·미리 띄운 조건 가운데 하나만 달라도 다시 띄운다.
+    #[test]
+    fn cli_reuse_needs_same_model_effort_and_warm_signature() {
+        use super::cli_reuse;
+        let me = ("m".to_string(), "high".to_string());
+        assert!(cli_reuse(None, None, "m", "high", "sig"), "모르면 그대로");
+        assert!(cli_reuse(Some(&me), Some("sig"), "m", "high", "sig"));
+        assert!(
+            !cli_reuse(Some(&me), Some("sig"), "m2", "high", "sig"),
+            "모델"
+        );
+        assert!(
+            !cli_reuse(Some(&me), Some("sig"), "m", "low", "sig"),
+            "노력도"
+        );
+        assert!(
+            !cli_reuse(Some(&me), Some("old"), "m", "high", "sig"),
+            "미리 띄운 조건"
+        );
+        assert!(cli_reuse(Some(&me), None, "m", "high", "sig"));
+    }
+
+    /// ★ T-485 (c) Codex 목록 뒤 바로잡기(11-16): 목록에 없는 모델 → 첫 모델 · 노력도는 바뀐 모델 기준 · 목록이 비면 그대로.
+    #[test]
+    fn codex_fix_swaps_unknown_model_and_fits_effort() {
+        use super::{ai, codex_fix};
+        let models = vec!["m1".to_string(), "m2".to_string()];
+        let efforts = ai::codex::parse_efforts("m1=medium:low/medium;m2=high:high");
+        assert_eq!(codex_fix("m1", "low", &models, &efforts), (None, None));
+        assert_eq!(
+            codex_fix("gone", "max", &models, &efforts),
+            (Some("m1".into()), Some("medium".into())),
+            "바뀐 모델이 받는 값으로"
+        );
+        assert_eq!(
+            codex_fix("m2", "low", &models, &efforts),
+            (None, Some("high".into()))
+        );
+        // 목록을 못 받았으면(빈 목록) 모델은 그대로 · 노력도 표를 모르는 모델도 그대로.
+        assert_eq!(codex_fix("gone", "max", &[], &efforts), (None, None));
+        assert_eq!(
+            codex_fix("m1", "odd", &models, &Default::default()),
+            (None, None)
+        );
+        // API 키 모드(T-486) = 모델 목록 없이 노력도만.
+        assert_eq!(
+            codex_fix("m1", "max", &[], &efforts),
+            (None, Some("medium".into()))
+        );
+    }
 
     #[test]
     fn dml_without_where_detects_update_delete_only() {

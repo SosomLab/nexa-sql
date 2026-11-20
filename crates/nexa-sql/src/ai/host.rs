@@ -2,6 +2,7 @@
 //! 턴 스레드) · `Mock`(네트워크·CLI 없이 헤드리스 V1용 각본 · `NSQL_AI_MOCK=1`). 셋 다 [`AiEvent`]를 같은 채널로 보내고 깨운다.
 
 use super::{claude_api, claude_cli, AiEvent, Attachment, ToolReply, Usage};
+use nsql_ext::procjob::KillJob;
 use nsql_settings::json::Json;
 use std::io::{BufRead, BufReader, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -75,6 +76,8 @@ pub(crate) enum Running {
     Cli {
         child: std::process::Child,
         stdin: Option<std::process::ChildStdin>,
+        /// 후손까지 끝내는 묶음(Windows 작업 개체 · T-479 · Unix는 빈 값 = 프로세스 그룹이 대신).
+        job: KillJob,
     },
     Api {
         stop: Arc<AtomicBool>,
@@ -82,6 +85,7 @@ pub(crate) enum Running {
     /// `codex app-server`(stdio JSONL) — 쓰기는 `writer` 공유 · 스레드 id·턴 id는 읽기 스레드가 채운다.
     Codex {
         child: std::process::Child,
+        job: KillJob,
         writer: Arc<Mutex<std::process::ChildStdin>>,
         thread: Arc<Mutex<Option<String>>>,
         turn: Arc<Mutex<Option<String>>>,
@@ -129,6 +133,8 @@ pub(crate) fn codex_list_model_infos(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
     let mut child = cmd.spawn().map_err(|e| format!("{program}: {e}"))?;
+    // 후손까지(T-479): 이 함수가 어떻게 끝나든(오류 길 포함) 묶음이 닫히며 app-server가 띄운 프로세스도 함께 끝난다.
+    let job = KillJob::attach(&child);
     let (Some(mut stdin), Some(out)) = (child.stdin.take(), child.stdout.take()) else {
         let _ = child.kill();
         return Err("no stdio".into());
@@ -179,6 +185,7 @@ pub(crate) fn codex_list_model_infos(
         Ok(r) => r,
         Err(_) => Err("codex app-server: timeout".into()),
     };
+    job.kill();
     let _ = child.kill();
     let _ = child.wait();
     if let Ok(h) = reader {
@@ -187,7 +194,8 @@ pub(crate) fn codex_list_model_infos(
     r
 }
 
-/// 모델 id만([`codex_list_model_infos`] · 프로필 검증 · E2E).
+/// 모델 id만([`codex_list_model_infos`] · E2E — 프로필 검증은 노력도까지 받는다 = T-486).
+#[cfg(test)]
 pub(crate) fn codex_list_models(
     program: &str,
     prefix: &[String],
@@ -201,14 +209,18 @@ pub(crate) fn codex_list_models(
 /// 변경마다). 스레드를 못 만들면 기다리지 않고 놓는다(프로세스는 이미 종료 신호를 받았다).
 ///
 /// ★ 손자까지(11-15 · 가짜 CLI 재현): CLI가 띄운 셸·긴 명령은 CLI만 죽이면 고아로 남았다(세션 전환·■·앱 종료 뒤에도 생존) →
-/// Unix는 자식을 자기 프로세스 그룹의 머리로 띄우고([`own_group`]) 여기서 **그룹째** 끝낸다. Windows는 종전대로(작업 개체 = 후속).
-fn reap(mut child: std::process::Child) {
+/// Unix는 자식을 자기 프로세스 그룹의 머리로 띄우고([`own_group`]) 여기서 **그룹째** 끝낸다. Windows는 띄운 직후 넣어 둔
+/// 작업 개체([`KillJob`] · T-479 · 11-20)를 끝낸다 — node(CLI) · Codex가 띄운 셸 · `nsql mcp-bridge`까지. 묶음은 종료 대기가 끝난
+/// 뒤에 닫는다(닫히는 순간에도 남은 것이 끝난다).
+fn reap(mut child: std::process::Child, job: KillJob) {
     kill_group(&child);
+    job.kill();
     let _ = child.kill();
     let _ = std::thread::Builder::new()
         .name("ai-reap".into())
         .spawn(move || {
             let _ = child.wait();
+            drop(job);
         });
 }
 
@@ -247,6 +259,40 @@ fn kill_group(child: &std::process::Child) {
     {
         let _ = child;
     }
+}
+
+/// CLI 출력 한 줄씩 → 사건(읽기 스레드 본문 · 시험할 수 있게 떼어 냄 = T-485). **일부러 내린 프로세스**(`retire_cli`가 세대를
+/// 올렸다 = `gen != mine`)의 줄과 종료 알림은 버린다 — 새 프로세스의 턴에 옛 프로세스의 "cli exited"·`Done`이 끼어들지 않게(11-16).
+fn pump_cli<R: BufRead>(
+    out: R,
+    gen: &std::sync::atomic::AtomicU64,
+    mine: u64,
+    tx: &mpsc::Sender<AiEvent>,
+    wake: &Wake,
+) {
+    for line in out.lines().map_while(Result::ok) {
+        if gen.load(Ordering::Relaxed) != mine {
+            return;
+        }
+        let evs = claude_cli::parse_line(&line);
+        let mut any = false;
+        for e in evs {
+            any = true;
+            let _ = tx.send(e);
+        }
+        if any {
+            wake();
+        }
+    }
+    if gen.load(Ordering::Relaxed) != mine {
+        return;
+    }
+    let _ = tx.send(AiEvent::Note("cli exited".into()));
+    let _ = tx.send(AiEvent::Done {
+        stop: "exit".into(),
+        ms: 0,
+    });
+    wake();
 }
 
 /// 세션 하나의 호스트 상태(UI 스레드 소유).
@@ -346,6 +392,8 @@ impl Host {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
         let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", l.program))?;
+        // 아래 오류 길에서 일찍 돌아가도 묶음이 닫히며 후손까지 끝난다(T-479).
+        let job = KillJob::attach(&child);
         let Some(stdin) = child.stdin.take() else {
             let _ = child.kill();
             return Err("no stdin".into());
@@ -572,6 +620,7 @@ impl Host {
         }
         self.running = Running::Codex {
             child,
+            job,
             writer,
             thread,
             turn,
@@ -756,6 +805,8 @@ impl Host {
             cmd.env(k, v);
         }
         let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", l.program))?;
+        // 아래 오류 길에서 일찍 돌아가도 묶음이 닫히며 후손까지 끝난다(T-479).
+        let job = KillJob::attach(&child);
         let stdin = child.stdin.take();
         let Some(out) = child.stdout.take() else {
             let _ = child.kill();
@@ -767,32 +818,7 @@ impl Host {
         let mine = cli_gen.load(Ordering::Relaxed);
         let spawned = std::thread::Builder::new()
             .name("ai-cli-out".into())
-            .spawn(move || {
-                for line in BufReader::new(out).lines().map_while(Result::ok) {
-                    // 일부러 내린 프로세스(세대가 지남)의 사건은 버린다.
-                    if cli_gen.load(Ordering::Relaxed) != mine {
-                        return;
-                    }
-                    let evs = claude_cli::parse_line(&line);
-                    let mut any = false;
-                    for e in evs {
-                        any = true;
-                        let _ = tx.send(e);
-                    }
-                    if any {
-                        wake();
-                    }
-                }
-                if cli_gen.load(Ordering::Relaxed) != mine {
-                    return;
-                }
-                let _ = tx.send(AiEvent::Note("cli exited".into()));
-                let _ = tx.send(AiEvent::Done {
-                    stop: "exit".into(),
-                    ms: 0,
-                });
-                wake();
-            });
+            .spawn(move || pump_cli(BufReader::new(out), &cli_gen, mine, &tx, &wake));
         if spawned.is_err() {
             let _ = child.kill();
             return Err("thread".into());
@@ -812,7 +838,7 @@ impl Host {
                     }
                 });
         }
-        self.running = Running::Cli { child, stdin };
+        self.running = Running::Cli { child, stdin, job };
         Ok(())
     }
 
@@ -1081,14 +1107,16 @@ impl Host {
     /// ■ — 진행 중인 턴을 끊는다(CLI는 프로세스 종료 · API는 깃발).
     pub(crate) fn stop(&mut self) {
         match std::mem::replace(&mut self.running, Running::Idle) {
-            Running::Cli { child, stdin } => {
+            Running::Cli { child, stdin, job } => {
                 drop(stdin);
-                reap(child);
+                reap(child, job);
             }
             Running::Api { stop } => stop.store(true, Ordering::Relaxed),
-            Running::Codex { child, writer, .. } => {
+            Running::Codex {
+                child, writer, job, ..
+            } => {
                 drop(writer);
-                reap(child);
+                reap(child, job);
             }
             Running::Mock { stop } => stop.store(true, Ordering::Relaxed),
             Running::Idle => {}
@@ -1156,6 +1184,35 @@ mod tests {
         assert!(woke.load(Ordering::Relaxed));
         let (prog, _) = resolve_cli("");
         assert!(!prog.is_empty());
+    }
+
+    /// ★ T-485(11-16 CLI 세대): 스스로 끝난 프로세스는 "cli exited" + `Done{exit}`를 남기고, **일부러 내린**(세대가 지난) 프로세스는
+    /// 아무것도 남기지 않는다 — 깨움도 없다. `retire_cli`는 세대를 올린다.
+    #[test]
+    fn retired_cli_generation_is_silent() {
+        use std::sync::atomic::AtomicU64;
+        let run = |gen_now: u64, mine: u64| {
+            let (tx, rx) = mpsc::channel::<AiEvent>();
+            let woke = Arc::new(AtomicBool::new(false));
+            let w2 = woke.clone();
+            let wake: Wake = Arc::new(move || w2.store(true, Ordering::Relaxed));
+            let gen = AtomicU64::new(gen_now);
+            pump_cli(std::io::Cursor::new("not json\n\n"), &gen, mine, &tx, &wake);
+            drop(tx);
+            (rx.iter().collect::<Vec<_>>(), woke.load(Ordering::Relaxed))
+        };
+        let (evs, woke) = run(3, 3);
+        assert!(woke);
+        assert!(
+            matches!(evs.as_slice(), [.., AiEvent::Note(n), AiEvent::Done { stop, .. }] if n == "cli exited" && stop == "exit"),
+            "같은 세대 = 종료 알림"
+        );
+        let (evs, woke) = run(4, 3);
+        assert!(evs.is_empty() && !woke, "지난 세대 = 조용히");
+        let mut h = Host::new(Arc::new(|| {}));
+        let g0 = h.cli_gen.load(Ordering::Relaxed);
+        h.retire_cli();
+        assert_eq!(h.cli_gen.load(Ordering::Relaxed), g0 + 1);
     }
 
     /// 턴 도중 넣기(11-15): 상대가 없으면(한가함·모의) 넣지 않는다 · 턴 끝에서 CLI가 아니면 넣어 둔 표식을 비우고 busy를 내린다.

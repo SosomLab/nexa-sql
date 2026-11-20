@@ -312,6 +312,8 @@ pub(crate) struct AiView {
     p_model: String,
     p_effort: String,
     p_models: Vec<String>,
+    /// 모델별 노력도(프로필 `efforts` · 폼은 보여 주지 않고 그대로 들고 있다가 저장 때 되돌려 준다 · T-486).
+    p_efforts: String,
     /// 고급(기본 URL · 워크스페이스) 펼침.
     p_adv: bool,
     provider: Provider,
@@ -416,6 +418,7 @@ impl Default for AiView {
             p_model: super::DEFAULT_MODEL.to_string(),
             p_effort: super::DEFAULT_EFFORT.to_string(),
             p_models: Vec::new(),
+            p_efforts: String::new(),
             p_adv: false,
             provider: Provider::Claude,
             picker: None,
@@ -488,6 +491,11 @@ impl AiView {
         }
     }
 
+    /// [검증] 뒤 받은 모델별 노력도를 폼에 반영(보이지 않는 값 · 저장 때 프로필로 되돌아간다 · T-486).
+    pub(crate) fn set_efforts(&mut self, line: &str) {
+        self.p_efforts = line.to_string();
+    }
+
     /// [검증] 뒤 조회한 모델 목록을 폼에 반영(모델 팝업 선택지).
     pub(crate) fn set_models(&mut self, models: Vec<String>) {
         self.p_models = models;
@@ -517,6 +525,7 @@ impl AiView {
         self.p_model = p.model.clone();
         self.p_effort = p.effort.clone();
         self.p_models = p.models.clone();
+        self.p_efforts = p.efforts.clone();
         // 고급은 기본값과 다를 때만 펼친다(보통 손댈 일 없음).
         self.p_adv = p.base_url != super::DEFAULT_BASE_URL || !p.workspace.is_empty();
         self.p_key.set_text("");
@@ -613,6 +622,7 @@ impl AiView {
             p.effort = self.p_effort.trim().to_string();
         }
         p.models = self.p_models.clone();
+        p.efforts = self.p_efforts.clone();
         if self.p_wif {
             p.wif = Some(Wif {
                 issuer: self.p_issuer.text().trim().to_string(),
@@ -4424,6 +4434,47 @@ mod tests {
 
     /// ★ 11-19(사용자 "프롬프트 상자에서 누르고 영역 밖에서 놓으면 눌린 상태 유지"): 작성 상자 끌기 = `drag_active`(호스트가 영역 밖의
     /// 이동·놓기를 이 뷰로 보내는 조건) · 밖 좌표의 MouseUp으로 풀린다.
+    /// ★ T-485 (d) 고르기 팝업의 바깥 클릭(11-16): 팝업을 연 그 버튼을 다시 누르면 **닫기만**(같은 클릭이 버튼에 닿아 다시 열리지
+    /// 않는다 = 삼킨다) · 그 밖의 바깥 클릭은 닫고 그대로 진행한다.
+    #[test]
+    fn picker_reclick_on_its_opener_only_closes() {
+        use super::*;
+        use crate::ai::picker::{PickItem, Picker};
+        let opener = Rect::new(10, 10, 80, 20);
+        let host = Rect::new(0, 0, 400, 300);
+        let open = |v: &mut AiView| {
+            let items = vec![PickItem {
+                id: "a".into(),
+                title: "A".into(),
+                desc: String::new(),
+            }];
+            v.buttons = vec![(Btn::SideSessions, opener)];
+            v.picker = Some((
+                Btn::SideSessions,
+                Picker::new("t", items, None, Vec::new(), opener, host, 16, 1.0),
+            ));
+        };
+        let down = |x: i32, y: i32| InputEvent::MouseDown {
+            x,
+            y,
+            shift: false,
+            primary: false,
+        };
+        let mut v = AiView::default();
+        open(&mut v);
+        let _ = v.take_actions();
+        assert!(v.on_event(&down(opener.x + 5, opener.y + 5)), "삼킨다");
+        assert!(v.picker.is_none(), "닫혔다");
+        assert!(
+            v.take_actions().is_empty(),
+            "다시 열거나 다른 동작을 내지 않는다"
+        );
+        // 그 밖의 바깥 클릭 = 닫고 그대로 진행(삼키는지는 그 자리의 컨트롤이 정한다).
+        open(&mut v);
+        let _ = v.on_event(&down(host.w - 3, host.h - 3));
+        assert!(v.picker.is_none());
+    }
+
     #[test]
     fn composer_drag_counts_as_drag_and_releases_outside() {
         let mut v = AiView::default();

@@ -166,6 +166,37 @@ pub(crate) fn model_ids(result: Option<&Json>) -> Vec<String> {
     model_infos(result).into_iter().map(|m| m.id).collect()
 }
 
+/// 모델별 노력도를 한 줄로(`id=기본:값/값;…`) — 스레드 → UI 알림과 프로필 저장(`efforts=` · T-486)이 같은 꼴을 쓴다.
+pub(crate) fn dump_efforts(infos: &[ModelInfo]) -> String {
+    infos
+        .iter()
+        .map(|m| format!("{}={}:{}", m.id, m.default_effort, m.efforts.join("/")))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// [`dump_efforts`]의 반대 — 꼴이 어긋난 조각은 버린다.
+pub(crate) fn parse_efforts(s: &str) -> std::collections::HashMap<String, ModelInfo> {
+    s.split(';')
+        .filter_map(|one| {
+            let (id, v) = one.split_once('=')?;
+            let (dflt, list) = v.split_once(':')?;
+            Some((
+                id.to_string(),
+                ModelInfo {
+                    id: id.to_string(),
+                    efforts: list
+                        .split('/')
+                        .filter(|e| !e.is_empty())
+                        .map(String::from)
+                        .collect(),
+                    default_effort: dflt.to_string(),
+                },
+            ))
+        })
+        .collect()
+}
+
 /// 이 모델에 보낼 노력도(순수 · 11-16): 모델이 받는 값이면 그대로 · 목록을 모르면(빈 목록) 그대로 · 아니면 `order`(낮음 → 높음)에서
 /// **원하는 값보다 높지 않은 가장 높은** 지원 값 · 그것도 없으면 모델 기본값(없으면 지원 값의 첫째).
 pub(crate) fn fit_effort(want: &str, info: &ModelInfo, order: &[&str]) -> String {
@@ -639,6 +670,13 @@ mod tests {
         let infos = model_infos(result.as_ref());
         assert_eq!(infos[0].efforts, vec!["low", "medium", "high"]);
         assert_eq!(infos[0].default_effort, "medium");
+        // 한 줄 왕복(T-486 · 알림·프로필 저장 꼴) — 노력도를 모르는 모델도 자리는 남는다 · 어긋난 조각은 버린다.
+        let line = dump_efforts(&infos);
+        assert_eq!(line, "m1=medium:low/medium/high;m2=:");
+        let back = parse_efforts(&line);
+        assert_eq!(back.get("m1"), Some(&infos[0]));
+        assert_eq!(back.get("m2"), Some(&infos[1]));
+        assert!(parse_efforts("").is_empty() && parse_efforts("junk;a=b").is_empty());
         let order = ["low", "medium", "high", "xhigh", "max"];
         assert_eq!(
             fit_effort("high", &infos[0], &order),

@@ -7,6 +7,7 @@
 //! - [`pack`] — 패키지 폴더 다듬기(`files[].sha256` 재계산 · 색인 행 갱신/추가 · 원문 서식 보존)
 //! - [`sig`] — 색인 서명 사이드카(`index.sig` = `ed25519 <key-id> <hex128>` · nexa-license-tool `sign-file`과 같은 꼴) **검증**
 //! - [`net`] — 원격 저장소 읽기(curl · 매니저와 같은 길)
+//! - [`procjob`] — 자식 프로세스를 후손까지 한 번에 끝내기(Windows 작업 개체 · T-479)
 //!
 //! 의존 = nsql-json · nexa-license(`ed25519` 검증만). 서명 **생성**은 여기 없다(비밀키 = 발급 PC · nexa-license 규칙).
 
@@ -14,6 +15,7 @@ pub mod check;
 pub mod meta;
 pub mod net;
 pub mod pack;
+pub mod procjob;
 pub mod sha256;
 pub mod sig;
 
