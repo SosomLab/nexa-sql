@@ -517,8 +517,14 @@ impl DetailPanel {
                             ]);
                             r.push(vec!["default".into(), col.default.clone()]);
                             r.push(vec!["table".into(), format!("{}.{}", o.schema, o.name)]);
-                            // 주인 테이블 요약(T-225) — 서버 몫 전에는 탐색기가 아는 상태·변경 시각만(코멘트는 서버 몫과 함께 온다).
-                            r.extend(nsql_catalog::detail::owner_summary_rows(o, ""));
+                            // 주인 테이블 요약(T-225) — 서버 몫 전에도 아는 것은 다 보인다: 코멘트 = 코멘트 캐시(워머가 컬럼 코멘트와
+                            //   함께 읽어 둔 것 · 11-21 V1: 종전 = 빈 글이라 코멘트가 있는 테이블도 줄이 없었다) · 상태 · 변경 시각.
+                            let tc = self
+                                .comments
+                                .get(&self.owner_key(o))
+                                .and_then(|(tc, _)| tc.clone())
+                                .unwrap_or_default();
+                            r.extend(nsql_catalog::detail::owner_summary_rows(o, &tc));
                             r
                         }
                         _ => {

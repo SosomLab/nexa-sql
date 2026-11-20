@@ -119,7 +119,16 @@ fn usage() -> ! {
 }
 
 fn parse_opts() -> Opts {
-    let mut args = std::env::args().skip(1);
+    // ★ 명령 **앞**의 `--perf <모드>`(39 §4-5의 원 꼴 `nsql --perf low <명령>`)는 건너뛴다 — 적용은 [`apply_cli_perf`]가 한다.
+    let mut all: Vec<String> = std::env::args().skip(1).collect();
+    loop {
+        match all.first().map(String::as_str) {
+            Some("--perf") => drop(all.drain(..all.len().min(2))),
+            Some(a) if a.starts_with("--perf=") => drop(all.remove(0)),
+            _ => break,
+        }
+    }
+    let mut args = all.into_iter();
     let Some(cmd) = args.next() else { usage() };
     if cmd == "-h" || cmd == "--help" {
         help::print(None);
