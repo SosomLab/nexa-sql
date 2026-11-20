@@ -401,6 +401,11 @@ fn oracle_dbms_output_batch_keeps_every_line() {
                 _ => None,
             })
             .collect();
+        // 묶음 회수가 그 클라이언트에서 실패해 한 줄씩으로 물러났으면 사유를 남긴다(CI 로그 · `--nocapture` · 11-21 OCI 경로).
+        for m in msgs.iter().filter(|m| m.starts_with("SERVEROUTPUT:")) {
+            eprintln!("[dbms_output] {m}");
+        }
+        eprintln!("[dbms_output] messages = {}", msgs.len());
         let at = msgs.iter().position(|m| *m == "L1").expect("L1");
         let got = &msgs[at..];
         assert!(got.len() >= 1504, "줄 수 {}", got.len());

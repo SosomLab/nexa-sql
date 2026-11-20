@@ -219,8 +219,10 @@ fn reap(mut child: std::process::Child, job: KillJob) {
     let _ = std::thread::Builder::new()
         .name("ai-reap".into())
         .spawn(move || {
+            // 묶음은 이 스레드가 쥐고 있다가 종료 대기가 끝난 뒤(스코프 끝)에 닫는다 — `drop(job)`은 `KillJob`이 빈 값인
+            // 비Windows에서 clippy `drop_non_drop`에 걸린다(11-21 CI).
+            let _job = job;
             let _ = child.wait();
-            drop(job);
         });
 }
 

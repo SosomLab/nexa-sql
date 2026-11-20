@@ -148,6 +148,8 @@ pub struct OracleSession {
     dbms_line_cap: u32,
     /// 탐침이 4000으로 내렸을 때 사용자에게 한 번 알릴 글(다음 실행의 `messages` 첫 줄 · 보낸 뒤 비움).
     dbms_cap_note: Option<String>,
+    /// ★ 묶음 회수(T-49)가 이 클라이언트에서 실패했다 → 이 세션은 한 줄씩 읽는다(종전 길 · 11-21 CI: OCI 경로가 0줄).
+    dbms_batch_off: bool,
     fetch_size: u32,
     /// 페치 상한(0 = 무제한 · 세션 옵션 `max_rows`). 커서 지원 세션이므로 호스트는 상한을 그대로 넘긴다(초과 판정은 peek).
     max_rows: usize,
@@ -378,6 +380,7 @@ impl OracleSession {
             serveroutput: false,
             dbms_line_cap: 32767,
             dbms_cap_note: None,
+            dbms_batch_off: false,
             fetch_size: 500,
             max_rows: 0,
             open: None,
@@ -440,28 +443,74 @@ impl OracleSession {
     /// DBMS_OUTPUT 줄을 `max`줄쯤까지(묶음 단위라 조금 넘을 수 있다) — OUT 폭 = `cap` 바이트. `Err` = 바인드·실행이 클라이언트 쪽에서
     /// 실패(그때까지 읽은 줄은 버린다 · 호출자가 폭을 바꿔 다시 판단).
     ///
-    /// ★ T-49(11-21): 한 줄에 왕복 한 번(`GET_LINE`) → **묶음 회수**([`nsql_core::dbms_output_batch_sql`] · 왕복 한 번에 여러 줄).
+    /// ★ T-49(11-21): 한 줄에 왕복 한 번(`GET_LINE`) → **묶음 회수**([`Self::get_lines_batch`]). 묶음이 이 클라이언트에서 실패하면
+    ///   (11-21 CI: OCI 경로가 오류 없이 0줄 — 실패를 삼키고 있었다) 그 사유를 한 번 알리고 이 세션은 **한 줄씩**(종전 길)으로 읽는다.
     fn get_lines_with(&mut self, cap: u32, max: usize) -> Result<Vec<String>, ()> {
+        if !self.dbms_batch_off {
+            match self.get_lines_batch(cap, max) {
+                Ok(lines) => return Ok(lines),
+                Err(e) => {
+                    self.dbms_batch_off = true;
+                    self.dbms_cap_note = Some(format!(
+                        "SERVEROUTPUT: batched read failed, reading line by line ({e})"
+                    ));
+                }
+            }
+        }
+        self.get_lines_single(cap, max)
+    }
+
+    /// 한 줄에 왕복 한 번(`GET_LINE` · T-49 전의 길 · 묶음이 안 되는 클라이언트의 대체).
+    fn get_lines_single(&mut self, cap: u32, max: usize) -> Result<Vec<String>, ()> {
+        let mut lines = Vec::new();
+        let mut stmt = self
+            .conn
+            .statement("BEGIN DBMS_OUTPUT.GET_LINE(:line, :status); END;")
+            .build()
+            .map_err(|_| ())?;
+        for _ in 0..max {
+            stmt.bind("line", &OracleType::Varchar2(cap))
+                .map_err(|_| ())?;
+            stmt.bind("status", &OracleType::Number(0, 0))
+                .map_err(|_| ())?;
+            stmt.execute(&[]).map_err(|_| ())?;
+            let status: i64 = stmt.bind_value("status").unwrap_or(1);
+            if status != 0 {
+                break;
+            }
+            let line: Option<String> = stmt.bind_value("line").map_err(|_| ())?;
+            lines.push(line.unwrap_or_default());
+        }
+        Ok(lines)
+    }
+
+    /// 묶음 회수([`nsql_core::dbms_output_batch_sql`] · 왕복 한 번에 여러 줄) — `Err` = 실패한 단계와 드라이버 오류 글.
+    fn get_lines_batch(&mut self, cap: u32, max: usize) -> Result<Vec<String>, String> {
+        fn at(what: &'static str) -> impl Fn(oracle::Error) -> String {
+            move |e| format!("{what}: {e}")
+        }
         let mut lines = Vec::new();
         let mut stmt = self
             .conn
             .statement(&nsql_core::dbms_output_batch_sql(cap))
             .build()
-            .map_err(|_| ())?;
+            .map_err(at("prepare"))?;
         let parts: Vec<String> = (1..=nsql_core::dbms_output_carry_parts(cap))
             .map(|i| format!("c{i}"))
             .collect();
         while lines.len() < max {
             stmt.bind("buf", &OracleType::Varchar2(cap))
-                .map_err(|_| ())?;
+                .map_err(at("bind buf"))?;
             for c in &parts {
                 stmt.bind(c.as_str(), &OracleType::Varchar2(cap))
-                    .map_err(|_| ())?;
+                    .map_err(at("bind part"))?;
             }
-            stmt.bind("st", &OracleType::Number(0, 0)).map_err(|_| ())?;
-            stmt.execute(&[]).map_err(|_| ())?;
-            let st: i64 = stmt.bind_value("st").unwrap_or(1);
-            let buf: Option<String> = stmt.bind_value("buf").map_err(|_| ())?;
+            stmt.bind("st", &OracleType::Number(0, 0))
+                .map_err(at("bind st"))?;
+            stmt.execute(&[]).map_err(at("execute"))?;
+            // ★ 상태를 못 읽으면 "끝"으로 치지 않는다(종전 `unwrap_or(1)` = 읽기 실패가 0줄로 보였다) — 실패로 올려 한 줄씩으로 물러난다.
+            let st: i64 = stmt.bind_value("st").map_err(at("read st"))?;
+            let buf: Option<String> = stmt.bind_value("buf").map_err(at("read buf"))?;
             nsql_core::dbms_output_unpack(buf.as_deref().unwrap_or(""), &mut lines);
             if st != 2 {
                 break;
@@ -469,7 +518,7 @@ impl OracleSession {
             // 넘친 한 줄 = 조각을 그대로 이어 붙인다(빈 조각 = NULL).
             let mut line = String::new();
             for c in &parts {
-                let part: Option<String> = stmt.bind_value(c.as_str()).map_err(|_| ())?;
+                let part: Option<String> = stmt.bind_value(c.as_str()).map_err(at("read part"))?;
                 line.push_str(part.as_deref().unwrap_or(""));
             }
             lines.push(line);
