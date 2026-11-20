@@ -612,7 +612,7 @@ mod tests {
         };
         v.note_anchor(anchor(&tb, 4, Some(1)));
         assert_eq!(v.anchor_for(4, None), None, "열까지 같아야 한다");
-        let a = v.anchor_for(4, Some(1)).unwrap();
+        let a = v.anchor_for(4, Some(1)).expect("anchor");
         assert_eq!(follow_anchor(&tb, &a), Some(4), "편집 없음");
         // 위에 두 줄을 넣으면 4 → 6.
         let mut inv = Invalidations::default();
@@ -631,7 +631,7 @@ mod tests {
         assert_eq!(follow_anchor(&tb, &a), Some(5));
         // 같은 글의 새 닻이 이긴다(다시 실행).
         v.note_anchor(anchor(&tb, 4, Some(1)));
-        let b = v.anchor_for(4, Some(1)).unwrap();
+        let b = v.anchor_for(4, Some(1)).expect("anchor");
         assert_ne!(a.seq, b.seq);
         assert_eq!(follow_anchor(&tb, &b), Some(4));
         // 버퍼를 통째로 바꾸면(다시 읽기 등) 따라가지 않는다.
