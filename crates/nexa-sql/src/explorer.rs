@@ -151,6 +151,8 @@ fn ssms_group_children(db: Option<&str>, group: GroupKind, depth: usize) -> Vec<
             folder_node(None, ObjectKind::Endpoint, depth),
             folder_node(None, ObjectKind::LinkedServer, depth),
             folder_node(None, ObjectKind::ServerTrigger, depth),
+            // ★ 데이터베이스 스냅샷(T-272 · 사용자 11-21 · 목록만 — SSMS는 데이터베이스 아래지만 이 트리의 서버 수준 폴더 자리는 여기).
+            folder_node(None, ObjectKind::DbSnapshot, depth),
         ],
         GroupKind::ServerSecurity => vec![
             folder_node(None, ObjectKind::Login, depth),
@@ -2518,6 +2520,7 @@ fn folder_msg(kind: ObjectKind) -> Msg {
         ObjectKind::Filegroup => Msg::ExpFilegroups,
         ObjectKind::PartitionScheme => Msg::ExpPartitionSchemes,
         ObjectKind::PartitionFunction => Msg::ExpPartitionFunctions,
+        ObjectKind::DbSnapshot => Msg::ExpDbSnapshots,
     }
 }
 
@@ -2548,7 +2551,8 @@ fn kind_color(kind: ObjectKind, th: &Theme) -> Color {
         | ObjectKind::ServerTrigger
         | ObjectKind::Filegroup
         | ObjectKind::PartitionScheme
-        | ObjectKind::PartitionFunction => th.text_dim,
+        | ObjectKind::PartitionFunction
+        | ObjectKind::DbSnapshot => th.text_dim,
         ObjectKind::Aggregate => th.syn_keyword,
         ObjectKind::Sequence
         | ObjectKind::Index
@@ -3145,6 +3149,7 @@ impl Explorer {
                         | ObjectKind::Filegroup
                         | ObjectKind::PartitionScheme
                         | ObjectKind::PartitionFunction
+                        | ObjectKind::DbSnapshot
                 ) && !o.extra.is_empty()
                 {
                     s.push_str(" · ");
@@ -11337,7 +11342,15 @@ mod detail_cache_tests {
             }
         ));
         let sobj = super::ssms_group_children(None, super::GroupKind::ServerObjects, 2);
-        assert_eq!(sobj.len(), 4);
+        assert_eq!(sobj.len(), 5);
+        assert!(matches!(
+            sobj[4].kind,
+            super::NodeKind::Folder {
+                kind: nsql_catalog::ObjectKind::DbSnapshot,
+                ..
+            }
+        ));
+        assert!(nsql_catalog::ObjectKind::DbSnapshot.is_server_level());
         assert!(matches!(
             sobj[2].kind,
             super::NodeKind::Folder {

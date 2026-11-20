@@ -439,9 +439,10 @@ pub(crate) fn object_icon(kind: nsql_catalog::ObjectKind) -> IconKind {
         | ObjectKind::AuditSpec => IconKind::Property,
         ObjectKind::BackupDevice => IconKind::Package,
         ObjectKind::ServerTrigger => IconKind::Trigger,
-        ObjectKind::Filegroup | ObjectKind::PartitionScheme | ObjectKind::PartitionFunction => {
-            IconKind::Folder
-        }
+        ObjectKind::Filegroup
+        | ObjectKind::PartitionScheme
+        | ObjectKind::PartitionFunction
+        | ObjectKind::DbSnapshot => IconKind::Folder,
     }
 }
 

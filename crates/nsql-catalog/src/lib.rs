@@ -86,10 +86,12 @@ pub enum ObjectKind {
     PartitionScheme,
     /// 파티션 함수(`sys.partition_functions`) · `extra` = 파티션 수 · 경계 방향.
     PartitionFunction,
+    /// 데이터베이스 스냅샷(T-272 · 11-21 · `sys.databases.source_database_id` · 서버 수준 · 목록 + 속성만) · `extra` = 원본 DB.
+    DbSnapshot,
 }
 
 impl ObjectKind {
-    pub const ALL: [ObjectKind; 41] = [
+    pub const ALL: [ObjectKind; 42] = [
         ObjectKind::Table,
         ObjectKind::View,
         ObjectKind::MaterializedView,
@@ -131,6 +133,7 @@ impl ObjectKind {
         ObjectKind::Filegroup,
         ObjectKind::PartitionScheme,
         ObjectKind::PartitionFunction,
+        ObjectKind::DbSnapshot,
     ];
 
     /// CLI 인자 · 설정용 코드.
@@ -178,6 +181,7 @@ impl ObjectKind {
             ObjectKind::Filegroup => "filegroup",
             ObjectKind::PartitionScheme => "partition_scheme",
             ObjectKind::PartitionFunction => "partition_function",
+            ObjectKind::DbSnapshot => "db_snapshot",
         }
     }
 
@@ -226,6 +230,7 @@ impl ObjectKind {
             ObjectKind::Filegroup => "Filegroups",
             ObjectKind::PartitionScheme => "Partition Schemes",
             ObjectKind::PartitionFunction => "Partition Functions",
+            ObjectKind::DbSnapshot => "Database Snapshots",
         }
     }
 
@@ -278,6 +283,7 @@ impl ObjectKind {
             "filegroup" | "filegroups" => ObjectKind::Filegroup,
             "partition_scheme" | "partition_schemes" => ObjectKind::PartitionScheme,
             "partition_function" | "partition_functions" => ObjectKind::PartitionFunction,
+            "db_snapshot" | "db_snapshots" | "database_snapshots" => ObjectKind::DbSnapshot,
             _ => return None,
         })
     }
@@ -317,6 +323,7 @@ impl ObjectKind {
                 | ObjectKind::BackupDevice
                 | ObjectKind::Endpoint
                 | ObjectKind::ServerTrigger
+                | ObjectKind::DbSnapshot
         )
     }
 
@@ -2243,7 +2250,8 @@ fn oracle_type(kind: ObjectKind) -> &'static str {
         | ObjectKind::ServerTrigger
         | ObjectKind::Filegroup
         | ObjectKind::PartitionScheme
-        | ObjectKind::PartitionFunction => "",
+        | ObjectKind::PartitionFunction
+        | ObjectKind::DbSnapshot => "",
     }
 }
 
@@ -2303,7 +2311,7 @@ pub fn objects(
                 | ObjectKind::BackupDevice
                 | ObjectKind::Endpoint
                 | ObjectKind::ServerTrigger
-                | ObjectKind::Filegroup | ObjectKind::PartitionScheme | ObjectKind::PartitionFunction => return Ok(Vec::new()),
+                | ObjectKind::Filegroup | ObjectKind::PartitionScheme | ObjectKind::PartitionFunction | ObjectKind::DbSnapshot => return Ok(Vec::new()),
                 // ★ 인덱스 = 부가에 **테이블 이름**(탐색기 라벨 `테이블.인덱스` · 사용자 09-30 · PG/MSSQL과 같게) · 유효성은 ALL_OBJECTS.
                 ObjectKind::Index => Some(format!(
                     "SELECT i.index_name, NVL(o.status, ''), TO_CHAR(o.last_ddl_time, 'YYYY-MM-DD HH24:MI:SS'), i.table_name FROM all_indexes i LEFT JOIN all_objects o ON o.owner = i.owner AND o.object_name = i.index_name AND o.object_type = 'INDEX' WHERE i.owner = {} AND (i.index_name NOT LIKE 'BIN$%') ORDER BY i.index_name",
@@ -2386,6 +2394,8 @@ pub fn objects(
                 ObjectKind::Filegroup => "SELECT f.name, '', '', f.type_desc + CASE WHEN f.is_default = 1 THEN ' · DEFAULT' ELSE '' END + CASE WHEN f.is_read_only = 1 THEN ' · READ_ONLY' ELSE '' END, '' FROM sys.filegroups f ORDER BY f.name".to_string(),
                 ObjectKind::PartitionScheme => "SELECT ps.name, '', '', ISNULL(pf.name, ''), '' FROM sys.partition_schemes ps LEFT JOIN sys.partition_functions pf ON pf.function_id = ps.function_id ORDER BY ps.name".to_string(),
                 ObjectKind::PartitionFunction => "SELECT pf.name, '', CONVERT(varchar(19), pf.modify_date, 120), CONVERT(varchar(12), pf.fanout) + ' partitions · ' + CASE WHEN pf.boundary_value_on_right = 1 THEN 'RIGHT' ELSE 'LEFT' END, '' FROM sys.partition_functions pf ORDER BY pf.name".to_string(),
+                // ★ 데이터베이스 스냅샷(T-272 · 11-21 · 서버 수준) = 원본이 있는 DB · 수정 칸 = 뜬 시각 · 부가 = 원본 DB. 실서버 미검증(스냅샷 0).
+                ObjectKind::DbSnapshot => "SELECT d.name, CASE WHEN d.state_desc = 'ONLINE' THEN '' ELSE d.state_desc END, CONVERT(varchar(19), d.create_date, 120), ISNULL(src.name, ''), '' FROM sys.databases d LEFT JOIN sys.databases src ON src.database_id = d.source_database_id WHERE d.source_database_id IS NOT NULL ORDER BY d.name".to_string(),
                 // 스키마 목록(⑭ · 완성 `DB.` 뒤 · 보안 ▸ 스키마) — 메타 세션이 그 DB로 `USE`한 뒤 읽는다.
                 ObjectKind::Schema => "SELECT s.name, '', '', '', '' FROM sys.schemas s WHERE s.schema_id < 16384 AND s.name NOT IN ('sys','INFORMATION_SCHEMA','guest') ORDER BY s.name".to_string(),
                 _ => return Ok(Vec::new()),
@@ -3076,6 +3086,7 @@ pub fn server_object_props(
         ObjectKind::BackupDevice => "sys.backup_devices",
         ObjectKind::Endpoint => "sys.endpoints",
         ObjectKind::ServerTrigger => "sys.server_triggers",
+        ObjectKind::DbSnapshot => "sys.databases",
         _ => return Ok(Vec::new()),
     };
     let rs = query(

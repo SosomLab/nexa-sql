@@ -945,6 +945,7 @@ impl Intel {
                                     | ObjectKind::Filegroup
                                     | ObjectKind::PartitionScheme
                                     | ObjectKind::PartitionFunction
+                                    | ObjectKind::DbSnapshot
                             )
                         }) =>
                     {
@@ -3060,7 +3061,8 @@ fn icon_kind_of(c: &Cand, m: Option<&MetaView<'_>>) -> Option<IconKind> {
                 ObjectKind::ServerTrigger => IconKind::Trigger,
                 ObjectKind::Filegroup
                 | ObjectKind::PartitionScheme
-                | ObjectKind::PartitionFunction => IconKind::Folder,
+                | ObjectKind::PartitionFunction
+                | ObjectKind::DbSnapshot => IconKind::Folder,
             });
         }
     }
