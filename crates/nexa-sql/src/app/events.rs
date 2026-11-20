@@ -1059,7 +1059,8 @@ impl App {
                     });
                 }
             } else {
-                for e in nsql_run::log_entries(&ev) {
+                // 줄 번호 = 문서 기준(실행한 조각의 시작 줄을 더한다 · T-492 ② · Output·상태줄과 같게).
+                for e in nsql_run::log_entries_at(&ev, self.sess.run_line_base) {
                     if let Some(h) = &self.log_hub {
                         h.push(e.clone());
                     }

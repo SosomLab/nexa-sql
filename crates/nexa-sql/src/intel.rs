@@ -616,6 +616,12 @@ impl Intel {
             return false;
         }
         let t0 = Instant::now();
+        // ★ 열린 채 다시 거르는 요청이면 **고른 항목을 기억**해 둔다(T-487 · 11-20): 팝업을 다시 열면 선택이 풀려, ↓로 고른 뒤 한
+        //   글자(완성된 한글 음절 등)를 더 치고 Enter를 누르면 확정 대신 줄바꿈이 됐다(`intel.key_passthrough`). 같은 탭일 때만.
+        let keep = (self.menu.is_open() && self.tab == Some(tab))
+            .then(|| self.menu.hovered().and_then(|i| self.cands.get(i)))
+            .flatten()
+            .map(|c| (c.text.clone(), c.kind));
         self.needs.clear();
         self.need_objects.clear();
         self.need_kinds.clear();
@@ -864,6 +870,16 @@ impl Intel {
                 .position(|c| c.kind == CandKind::Column)
                 .unwrap_or(0);
             self.menu.select(i);
+        } else if let Some((text, kind)) = keep {
+            // 고른 항목이 새 목록(보이는 범위)에도 있으면 그대로 고른 채로(T-487) — 걸러져 사라졌으면 선택 없음(평소대로).
+            if let Some(j) = self
+                .cands
+                .iter()
+                .take(self.shown)
+                .position(|c| c.kind == kind && c.text == text)
+            {
+                self.menu.select(j);
+            }
         }
         self.due = None;
         let ms = t0.elapsed().as_millis();
@@ -3981,6 +3997,62 @@ mod tests {
             None,
             "건너편이 없으면 선택 없음(평소대로)"
         );
+    }
+
+    /// ★ T-487: 열린 팝업에서 고른 항목은 **다시 거르는 요청**(한 글자 더 침) 뒤에도 고른 채로 남는다 · 걸러져 사라지면 선택 없음 ·
+    /// 닫았다 새로 열면 선택 없음(평소대로) · 다른 탭의 요청은 잇지 않는다.
+    #[test]
+    fn selection_survives_a_refilter_request() {
+        let m = store();
+        let view = MetaView {
+            names: &m.names,
+            snap: m.snapshot(),
+        };
+        let mut it = Intel::new(cfg());
+        let host = Rect::new(0, 0, 800, 600);
+        let ask = |it: &mut Intel, tab: u64, doc: &str, caret: usize| {
+            it.request(
+                tab,
+                caret as u64,
+                doc,
+                caret,
+                Some(Dialect::Oracle),
+                Some(&view),
+                Some(Point { x: 0, y: 0 }),
+                host,
+                1.0,
+                &|_| None,
+            )
+        };
+        assert!(ask(&mut it, 1, "SELECT e. FROM emp e", 9));
+        assert_eq!(it.menu.hovered(), None);
+        let i = it
+            .cands
+            .iter()
+            .position(|c| c.text == "ENAME")
+            .expect("ENAME");
+        it.menu.select(i);
+        // 한 글자 더(`e.E`) = 열린 채 다시 거른다 → ENAME이 고른 채로(자리는 바뀔 수 있다).
+        assert!(ask(&mut it, 1, "SELECT e.E FROM emp e", 10));
+        let j = it.menu.hovered().expect("선택 유지");
+        assert_eq!(it.cands[j].text, "ENAME");
+        // 고른 항목이 걸러져 사라지면(`e.EMP`) 선택 없음.
+        assert!(ask(&mut it, 1, "SELECT e.EMP FROM emp e", 12));
+        assert!(it.cands.iter().all(|c| c.text != "ENAME"));
+        assert_eq!(it.menu.hovered(), None);
+        // 다른 탭의 요청은 잇지 않는다 · 닫았다 열어도 잇지 않는다.
+        let k = it
+            .cands
+            .iter()
+            .position(|c| c.text == "EMPNO")
+            .expect("EMPNO");
+        it.menu.select(k);
+        assert!(ask(&mut it, 2, "SELECT e.EMP FROM emp e", 12));
+        assert_eq!(it.menu.hovered(), None, "다른 탭");
+        it.menu.select(0);
+        it.close();
+        assert!(ask(&mut it, 2, "SELECT e.EMP FROM emp e", 12));
+        assert_eq!(it.menu.hovered(), None, "새로 연 팝업");
     }
 
     #[test]

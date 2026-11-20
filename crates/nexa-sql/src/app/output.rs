@@ -85,6 +85,17 @@ impl App {
     /// Output 오류 줄 → 편집기 줄(·열)로 캐럿.
     fn output_goto(&mut self, n: usize, col: Option<usize>) {
         {
+            // ★ T-492 ①(11-20): 그 오류가 온 뒤에 줄을 넣거나 지웠으면 글의 줄 번호는 낡았다 → 닻으로 지금 줄을 구한다. 닻이 없거나
+            //   (오래된 글) 실행한 탭이 지금 탭이 아니거나 변경 기록이 끊겼으면 글의 숫자 그대로(종전 동작).
+            let cur_tab = self.editors.tab_id(self.editors.active());
+            let n = self
+                .panel
+                .output
+                .as_ref()
+                .and_then(|v| v.anchor_for(n, col))
+                .filter(|a| a.tab == cur_tab)
+                .and_then(|a| crate::output::follow_anchor(self.editors.cur(), &a))
+                .unwrap_or(n);
             self.editors.cur_mut().goto_line(n);
             // ★ 11-19: 열이 있으면 그 글자로(줄 길이를 넘으면 줄 끝 · 실행 뒤 편집으로 줄이 짧아졌을 때).
             if let Some(c) = col {
@@ -337,8 +348,12 @@ impl App {
                 self.output_push(ed, OutKind::Warn, &text);
             }
             RunEvent::Error { index, line, error } => {
-                let text = self.error_output_text(*index, *line, error);
+                let (text, anchor) = self.error_output_text(*index, *line, error);
                 self.output_push(ed, OutKind::Error, &text);
+                // 두 번 클릭이 실행 뒤 편집을 따라가게 닻을 남긴다(T-492 ①).
+                if let (Some(a), Some(v)) = (anchor, self.output_view_mut(ed)) {
+                    v.note_anchor(a);
+                }
             }
             _ => {}
         }
@@ -352,7 +367,7 @@ impl App {
         index: usize,
         line: usize,
         error: &nsql_core::DbError,
-    ) -> String {
+    ) -> (String, Option<crate::output::ErrAnchor>) {
         let stmt_line = self.sess.run_line_base + line.max(1);
         let start = self.sess.last_run_starts.get(index).copied().flatten();
         let stmt_len = self
@@ -378,11 +393,26 @@ impl App {
                 .collect();
             Some((l + 1, col + 1, near))
         });
-        error_output_line(
+        // 닻 = 글에 찍히는 (줄, 열) + 지금 버퍼의 변경 번호(실행한 탭이 닫혔으면 없음).
+        let (a_line, a_col) = at
+            .as_ref()
+            .map_or((stmt_line, None), |(l, c, _)| (*l, Some(*c)));
+        let anchor = self.editors.buf_mut_by_id(ed).map(|tb| {
+            let buf = tb.buf();
+            crate::output::ErrAnchor {
+                tab: ed,
+                line: a_line,
+                col: a_col,
+                epoch: buf.epoch(),
+                seq: buf.change_seq(),
+            }
+        });
+        let text = error_output_line(
             stmt_line,
             at.as_ref().map(|(l, c, n)| (*l, *c, n.as_str())),
             &error.message,
-        )
+        );
+        (text, anchor)
     }
 
     /// 자체 시험(기동 명령 `output.dump:<파일>`): 활성 패널의 Output 본문(없으면 `none`) — 첫 줄 = `shown|lines`.

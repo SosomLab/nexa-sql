@@ -31,7 +31,39 @@ enum Btn {
     CopyAll,
 }
 
+/// ★ 오류 줄의 닻(T-492 ① · 11-20): Output 글에 굳힌 줄 번호는 **오류가 온 순간**의 것이라, 그 뒤 위쪽에 줄을 넣거나 지우면 두 번
+/// 클릭이 빗나갔다 → 글의 (줄, 열)마다 그때의 탭·버퍼 변경 번호를 기억해 두고, 이동할 때 그 뒤의 줄 변경을 접어 지금 줄을 구한다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ErrAnchor {
+    /// 실행한 편집기 탭 id.
+    pub tab: u64,
+    /// Output 글에 찍힌 줄(1부터) · 열(1부터 · 없으면 문장 시작 줄).
+    pub line: usize,
+    pub col: Option<usize>,
+    /// 그 순간 버퍼의 세대·변경 번호(`TextBuf::epoch` · `change_seq`).
+    pub epoch: u64,
+    pub seq: u64,
+}
+
+/// 기억하는 닻의 상한(오래된 것부터 버린다 · 닻이 없으면 글의 숫자 그대로 = 종전 동작).
+const ANCHOR_MAX: usize = 256;
+
+/// 닻의 줄이 지금 어디인가(1부터) — 버퍼가 통째로 바뀌었거나(세대) 변경 기록이 끊겼으면 `None`(글의 숫자로).
+/// 줄 단위 추적이다: 지워진 줄은 그 자리의 경계 줄로 · 같은 줄 안의 편집은 열을 옮기지 않는다(줄 끝에서 자른다).
+pub(crate) fn follow_anchor(tb: &TextBox, a: &ErrAnchor) -> Option<usize> {
+    let buf = tb.buf();
+    if buf.epoch() != a.epoch || a.line == 0 {
+        return None;
+    }
+    let line0 = buf.changes_since(a.seq)?.fold(a.line - 1, |l, c| {
+        nsql_bookmarks::shift_line(l, c.first, c.removed, c.inserted).0
+    });
+    Some(line0 + 1)
+}
+
 pub(crate) struct OutputView {
+    /// 오류 줄의 닻(새 것이 뒤 · [`ErrAnchor`]).
+    anchors: Vec<ErrAnchor>,
     bounds: Rect,
     scale: f32,
     body: TextBox,
@@ -74,6 +106,7 @@ impl OutputView {
             t(Msg::MnAiFixError),
         )]);
         Self {
+            anchors: Vec::new(),
             bounds: Rect::default(),
             scale: 1.0,
             body,
@@ -152,6 +185,23 @@ impl OutputView {
         self.goto.take()
     }
 
+    /// 방금 넣은 오류 줄의 닻을 기억한다(호스트 · T-492 ①).
+    pub(crate) fn note_anchor(&mut self, a: ErrAnchor) {
+        if self.anchors.len() >= ANCHOR_MAX {
+            self.anchors.remove(0);
+        }
+        self.anchors.push(a);
+    }
+
+    /// 글에 찍힌 (줄, 열)의 닻 — 같은 글이 여럿이면 가장 최근 것.
+    pub(crate) fn anchor_for(&self, line: usize, col: Option<usize>) -> Option<ErrAnchor> {
+        self.anchors
+            .iter()
+            .rev()
+            .find(|a| a.line == line && a.col == col)
+            .copied()
+    }
+
     /// ★ 캐럿 줄이 속한 오류 메시지의 위치(11-19): 그 줄이 오류 머리줄이 아니면(여러 줄 메시지의 이어지는 줄 · `위치:` 줄)
     /// **들여쓴 줄을 거슬러 올라가** 머리줄을 찾는다 — 메시지 어느 줄을 두 번 눌러도 같은 자리로.
     fn error_line_at_caret(&self) -> Option<(usize, Option<usize>)> {
@@ -218,6 +268,7 @@ impl OutputView {
 
     pub(crate) fn clear(&mut self) {
         self.lines.clear();
+        self.anchors.clear();
         self.dirty = true;
     }
 
@@ -542,6 +593,58 @@ mod tests {
         v.clear();
         assert!(v.is_empty());
         assert_eq!(v.text(), "");
+    }
+
+    /// ★ T-492 ①: 닻은 실행 뒤의 줄 넣기·지우기를 따라간다 · 같은 글이면 최근 것 · 버퍼가 통째로 바뀌면 포기(글의 숫자로).
+    #[test]
+    fn error_anchor_follows_line_edits() {
+        let mut tb = TextBox::new("").with_multiline();
+        tb.set_text("a\nb\nc\nd\ne");
+        // 포커스가 없으면 붙여넣기가 버려진다.
+        tb.set_focused(true);
+        let mut v = OutputView::new(100, false);
+        let anchor = |tb: &TextBox, line: usize, col: Option<usize>| ErrAnchor {
+            tab: 7,
+            line,
+            col,
+            epoch: tb.buf().epoch(),
+            seq: tb.buf().change_seq(),
+        };
+        v.note_anchor(anchor(&tb, 4, Some(1)));
+        assert_eq!(v.anchor_for(4, None), None, "열까지 같아야 한다");
+        let a = v.anchor_for(4, Some(1)).unwrap();
+        assert_eq!(follow_anchor(&tb, &a), Some(4), "편집 없음");
+        // 위에 두 줄을 넣으면 4 → 6.
+        let mut inv = Invalidations::default();
+        tb.select_range(0, 0, &mut inv);
+        tb.paste("x\ny\n", &mut inv);
+        assert_eq!(follow_anchor(&tb, &a), Some(6));
+        assert_eq!(tb.buf().line_text(5).trim_end(), "d");
+        // 아래쪽 편집은 영향 없음 · 위 한 줄을 지우면 5.
+        let end = tb.buf().len();
+        tb.select_range(end, end, &mut inv);
+        tb.paste("\nz", &mut inv);
+        assert_eq!(follow_anchor(&tb, &a), Some(6));
+        let l1 = tb.buf().line_start(1);
+        tb.select_range(0, l1, &mut inv);
+        tb.paste(" ", &mut inv);
+        assert_eq!(follow_anchor(&tb, &a), Some(5));
+        // 같은 글의 새 닻이 이긴다(다시 실행).
+        v.note_anchor(anchor(&tb, 4, Some(1)));
+        let b = v.anchor_for(4, Some(1)).unwrap();
+        assert_ne!(a.seq, b.seq);
+        assert_eq!(follow_anchor(&tb, &b), Some(4));
+        // 버퍼를 통째로 바꾸면(다시 읽기 등) 따라가지 않는다.
+        tb.set_text("q");
+        assert_eq!(follow_anchor(&tb, &a), None);
+        // 지우기 = 닻도 버린다 · 상한을 넘으면 오래된 것부터.
+        v.clear();
+        assert_eq!(v.anchor_for(4, Some(1)), None);
+        for i in 0..ANCHOR_MAX + 3 {
+            v.note_anchor(anchor(&tb, i + 1, None));
+        }
+        assert_eq!(v.anchor_for(1, None), None);
+        assert!(v.anchor_for(ANCHOR_MAX + 3, None).is_some());
     }
 
     #[test]

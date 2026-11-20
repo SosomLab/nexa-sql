@@ -386,13 +386,25 @@ pub enum RunEvent {
 }
 
 /// 이벤트 → 로그 엔트리(GUI 로그 창 · CLI `--log` 공용 매핑 · docs/26 §3). 타임스탬프는 엔트리 생성 시각.
+/// 줄 번호 = 실행한 글 안의 줄(CLI = 스크립트 줄 그대로).
 pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
+    log_entries_at(ev, 0)
+}
+
+/// [`log_entries`] + 줄 기준 옮기기(T-492 ② · 11-20): GUI가 문서의 **일부**(선택 · 캐럿 문장)를 실행하면 사건의 줄은 그 조각 안의
+/// 줄이라 로그 창에 `line 1:`로만 나왔다 → 조각이 시작하는 문서 줄(`line_base` · 0부터)을 더해 Output·상태줄과 같은 **문서 기준**으로.
+/// 줄을 모르는 사건(0 = 연결 오류 등)은 그대로 둔다.
+pub fn log_entries_at(ev: &RunEvent, line_base: usize) -> Vec<nsql_log::LogEntry> {
     use nsql_log::{LogEntry, LogKind};
+    let doc_line = |line: usize| if line == 0 { 0 } else { line_base + line };
     match ev {
         RunEvent::Begin { line, summary, .. } => {
             vec![LogEntry::new(
                 LogKind::Send,
-                tf(Msg::LogLineSummary, &[&line.to_string(), summary]),
+                tf(
+                    Msg::LogLineSummary,
+                    &[&doc_line(*line).to_string(), summary],
+                ),
             )]
         }
         RunEvent::ResultSet { rs, elapsed, .. } => {
@@ -485,7 +497,10 @@ pub fn log_entries(ev: &RunEvent) -> Vec<nsql_log::LogEntry> {
         | RunEvent::Binds { .. } => Vec::new(),
         RunEvent::Error { line, error, .. } => vec![LogEntry::new(
             LogKind::Error,
-            tf(Msg::LogLineSummary, &[&line.to_string(), &error.message]),
+            tf(
+                Msg::LogLineSummary,
+                &[&doc_line(*line).to_string(), &error.message],
+            ),
         )],
         RunEvent::Timing { timeline, .. } => timeline
             .spans
@@ -4715,6 +4730,15 @@ SELECT * FROM t;
             .expect("PRINT");
         let line = log_entries(print)[0].message.clone();
         assert_eq!(line, "PRINT V_N = 3 · V_TOKEN = ******", "{line}");
+        // ★ T-492 ②: 줄 기준을 주면 보낸 문장의 줄이 문서 기준으로 옮겨진다(SELECT = 조각의 5째 줄 · 조각이 문서 11째 줄에서 시작).
+        let begin = ev
+            .iter()
+            .rfind(|e| matches!(e, RunEvent::Begin { .. }))
+            .expect("Begin");
+        let at = |base: usize| log_entries_at(begin, base)[0].message.clone();
+        assert_eq!(at(0), log_entries(begin)[0].message);
+        assert!(at(0).contains('5') && !at(0).contains("15"), "{}", at(0));
+        assert!(at(10).contains("15"), "{}", at(10));
         let list = ev
             .iter()
             .find(|e| matches!(e, RunEvent::VarList { .. }))
