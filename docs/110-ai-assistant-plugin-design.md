@@ -692,3 +692,51 @@ AI 도구 호출(run_query · set_setting · run_command …)
 - **Codex 글 항목 경계** = `AiEvent::TextItem{done}`(agentMessage item/started·completed) → `ai_text_item`: steer 반영 뒤 완료 없이 새 항목이 시작되면 ① 반영 순간 적어 둔 "user 바로 뒤" 말풍선(버려진 항목의 늦은 델타) ② 앞 조각을 걷는다.
 - **제약** = 첨부가 있는 요청·`/` 명령은 steer하지 않는다(종전 대기열) · 다른 세션 대기 요청은 끼우지 않음(종전 필터).
 - **판정(협업 V1 · 실계정 · 격리 홈 · haiku / gpt-6-luna · effort low)** = ① CLI 도구 턴: user2가 도구 결과 뒤 1번 · 턴 1회 · busy 내려감 ② CLI 글 턴: result 뒤 busy 유지 → user2 → 둘째 답(BANANA) 1번 ③ Codex 도구 턴: user2 첫 도구 결과 뒤 · 답 "DONE1 BANANA" 하나 ④ Codex 글 턴: 1차 ✗(버려진 항목의 늦은 델타 "\n35\n36"이 남음) → 보강 → ✓(assistant 하나 = "1\n2\n3…400\nDONE1\nBANANA") ⑤ `ai.steer=off` = 턴 뒤 새 턴 ⑦ 모의 = `[steered 1 block(s)] done.` 종전 ⑧ 턴 중 `/clear` 뒤 claude·nsql mcp-bridge·codex app-server·codex-code-mode-host 0 · ⑥ 첨부·`/` = 코드 판정(steer 조건에서 제외).
+
+## 20. 11-15~16 변경 반영(T-489 · 근거 = [journal 11-15 §2·§5·§10·§17·§22](journal/2026-11-15.md) · [journal 11-16 §1~§7](journal/2026-11-16.md) · v0.8.2에 포함)
+
+> §19까지의 설계 위에 덧붙은 동작만 적는다. 코드 위치는 `crates/nexa-sql/src/ai/*` · `app/ai.rs` 기준이다.
+
+### 20-1. 멈춤(■) · 대화 세대 · 자식 프로세스 정리
+
+- **API 모드 ■**(T-476 · T-477 · 3327498b): `SseSink::with_stop`이 깃발이 서면 스트림 받기를 끊는다 · `run_turn`이 응답 뒤와 도구 요청마다 멈춤을 확인한다(■ 뒤 도구 미실행) · 전달 스레드는 멈춘 턴의 사건을 버린다 · `Host::api_gen` = 대화 세대.
+- ■ 직후 연속 user 두 개 = `start_api`가 `push_merged`로 하나로 합친다.
+- **모의 호스트 ■** = `Running::Mock { stop }` · 지연을 50 ms 조각으로 나눠 도구 루프 머리·결과 뒤·끝에서 `Done{stop:"cancelled"}`.
+- **기동 명령 `ai.stop`** = 헤드리스에서 ■과 같은 길(작성 상자에 대기 글 되돌림 · 대본 `[note] 멈춤`).
+- **CLI·Codex 자식 프로세스** = Unix는 `process_group(0)`로 띄우고 `reap`이 `kill(-pgid, SIGKILL)`을 먼저 보내 손자까지 정리 · **Windows는 직계 자식만**(작업 개체 = T-479).
+- **Claude CLI 재기동 세대**(11-16 §6-1): `Host::cli_gen` + `retire_cli()`(세대를 올리고 stop) · `start_cli` 출력 스레드는 자기 세대일 때만 줄 사건 · `cli exited` · `Done{stop:"exit"}`을 보낸다 → 내린 프로세스의 늦은 사건이 새 턴의 busy를 풀거나 메모 줄을 남기지 않는다 · ■ · 세션 전환은 종전 `stop()`.
+
+### 20-2. 모델 · 노력도 보정
+
+- **Claude CLI 도중 변경**(11-16 §6 ②): `AiState::cli_me` = 띄울 때의 모델·노력도 · `ai_cli_ensure`가 지금 보낼 값과 비교해 다르면 `retire_cli()` 뒤 `--resume <세션 id>`로 다시 띄운다(CLI는 `--model`을 띄울 때만 받는다) · 같으면 재사용.
+- **Codex 모델**(11-15 §22 ②): 모델을 `thread/start`·`thread/resume`·`turn/start` 모두에 싣는다(기존 스레드에도 화면 변경이 적용).
+- **Codex 계정 목록**(11-16 §4): `ai_send_codex`가 CLI 로그인 모드면 `ai_codex_login_probe()`를 한 번 건다(패널을 열지 않아도) · `ai_codex_fix_model()` = 세션 모델이 계정 목록에 없으면 계정 첫 모델로 바꾸고 대화가 있으면 `AiModelSwapped` 안내 한 줄(턴 중이면 미룸 · 부르는 곳 = `codexmodels:` 수신 · `AiEvent::Done`).
+- **Codex 노력도**(11-16 §5 A): `codex::ModelInfo` · `model_infos()`(`supportedReasoningEfforts` · `defaultReasoningEffort`) · `fit_effort` = 지원하면 그대로 · 목록을 모르면 그대로 · 아니면 원하는 값보다 높지 않은 가장 높은 지원 값 · 그것도 없으면 기본값 · 안내 `AiEffortSwapped` · 부르는 곳 = 패널 동작 뒤 · `/model`·`/effort`·`/auto` 뒤 · 보내기 직전 · 미리 띄우기. 설정 키 `ai.codex_effort`는 바꾸지 않는다(세션 값에만).
+- **첫 턴**(11-16 §6 ①): `AiState::codex_list_done`(조회가 성공·실패로 끝남 · 실패 = 빈 `codexmodels:`) 전에는 모델도 노력도도 싣지 않는다(Codex 기본값) · 조회 실패로 끝나면 고른 값을 그대로 보낸다.
+- **한계**: 보정은 **CLI 로그인 모드만** — Codex API 키 모드는 목록 조회·맞춤 미적용(T-486).
+
+### 20-3. 활동 패널 ↔ 작업 세션 분리 · 채팅 탭
+
+- `AiState::panel_tab` = 활동 패널에 보이는 제공자(11-16 §3 A) · `ai_toggle_panel`은 이것만 바꾸고 작업 세션(`tab`/`cur`)은 그대로 · `ai_sync_panel`은 작업 세션이 그 제공자 것일 때만 세션 값을, 아니면 그 제공자 설정 기본값을 보인다 · 활동 막대·메뉴·툴바 켜짐 표시도 `panel_tab`.
+- 채팅 탭에서 `/clear`·새 대화 = 그 탭의 보기 열쇠를 새 세션으로 바꾼다(`Editors::rekey_active_view` · `ai_rebind_chat_tab` · 11-15 §17 ③) — 종전에는 옛 세션 id 열쇠 때문에 `ai_follow_view`가 옛 세션으로 되돌렸다.
+- 툴바 `ai.side` 켜짐 표시 = `app/paint.rs` 그리기 직전에 `set_item_checked("ai.side", ai_side_on())`(활성 탭이 바뀌는 모든 길 공통 · 11-15 §10).
+- 활동 막대 Claude 탭 = 여덟 꼭지 별 · 툴바 `ai_side` = "AI" 글자(11-15 §2 · 3253f8bb).
+- **한계**: 활동 패널이 채팅 탭 전환을 따라가지 않는다(T-488) · 세션 둘에서 "패널에서 다른 세션을 열어도 분할 창은 원래 세션"은 사용자 실기 몫.
+
+### 20-4. 고르기 팝업(모델 칩 · 세션 [≡] · 프로필 모델/노력도)
+
+- 배치 = `place_popup_beside(…, avoid = anchor, …)`(아래 → 앵커 바로 위 → 둘 다 안 될 때만 일반 규칙) · 시험 `popup_never_covers_its_anchor`(11-16 §3-1).
+- 호스트 = 창 전체(`picker_host()` · 그릴 때 `dc.surface_size()`를 `self.surface`에 기록 · 모르면 뷰 영역) — 분할 창 팝업이 뷰 영역에 갇혀 칩을 덮던 것 해소 · 팝업은 팝업 층에 그리고 열린 동안 사건은 뷰가 먼저 받는다(`route_ai_view`의 `popup`).
+- **연 버튼 재클릭 = 닫기**: 바깥 클릭으로 닫힐 때 그 클릭이 팝업을 연 버튼 위면 삼킨다(다시 열리지 않음 · 11-16 §3 B).
+- 행 간격 = 그릴 때마다 `lh` 기록(맥 배율에서 좁던 간격 · 11-16 §2).
+- 입력란 아래 상태 글 = 자르기 영역을 남는 자리로(모델 칩과 겹침 해소 · 11-16 §5 B).
+
+### 20-5. 한글 조합 확정(AI 작성 상자 · 공통 입력)
+
+- AI 작성 상자 Enter = 조합 중 음절을 본문에 확정한 뒤 전송(`AiView::on_event`가 Enter를 가로채던 길 · 11-15 §22 ①) · 시험 `enter_sends_the_syllable_still_being_composed` · `commit_preedit_moves_system_ime_text_into_the_body`.
+- 공통 수거 = `app/input.rs` `settle_composition`(메인 창 입력란) · 보조 창은 창별 route에서 확정 · nexa-ctl TextBox `ime_late` · `try_commit` · `settle_composition(confirm)`(시스템 IME 뒤늦은 확정 중복 방지 · 11-16 §1).
+- **한계**: Windows 시스템 IME 경로는 실기 없이 완료 처리(T-490 · 확인용).
+
+### 20-6. 남은 것(TODO)
+
+- T-479 Windows 손자 정리(Job Object) · T-485 단위 시험 보강 4건(패널 분리 · CLI 재기동/세대 · Codex 목록 뒤 바로잡기 · 재클릭 닫기) · T-486 API 키 모드 보정 · T-487 자동완성 완성 음절 뒤 선택 유지 · T-488 패널이 채팅 탭 따라가기 · T-490 Windows IME 실기.
