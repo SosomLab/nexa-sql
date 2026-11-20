@@ -79,10 +79,17 @@ pub enum ObjectKind {
     Endpoint,
     /// 서버 트리거(`sys.server_triggers` · DDL/LOGON · 소스 = `sys.server_sql_modules`).
     ServerTrigger,
+    // ── 스토리지(T-272 · 11-21 · SSMS DB ▸ 스토리지 · SQL Server) — DB 수준 · 스키마 없음 · 목록만(상세·소스·삭제 없음).
+    /// 파일 그룹(`sys.filegroups`) · `extra` = 유형(· DEFAULT · READ_ONLY).
+    Filegroup,
+    /// 파티션 구성표(`sys.partition_schemes`) · `extra` = 파티션 함수 이름.
+    PartitionScheme,
+    /// 파티션 함수(`sys.partition_functions`) · `extra` = 파티션 수 · 경계 방향.
+    PartitionFunction,
 }
 
 impl ObjectKind {
-    pub const ALL: [ObjectKind; 38] = [
+    pub const ALL: [ObjectKind; 41] = [
         ObjectKind::Table,
         ObjectKind::View,
         ObjectKind::MaterializedView,
@@ -121,6 +128,9 @@ impl ObjectKind {
         ObjectKind::BackupDevice,
         ObjectKind::Endpoint,
         ObjectKind::ServerTrigger,
+        ObjectKind::Filegroup,
+        ObjectKind::PartitionScheme,
+        ObjectKind::PartitionFunction,
     ];
 
     /// CLI 인자 · 설정용 코드.
@@ -165,6 +175,9 @@ impl ObjectKind {
             ObjectKind::BackupDevice => "backup_device",
             ObjectKind::Endpoint => "endpoint",
             ObjectKind::ServerTrigger => "server_trigger",
+            ObjectKind::Filegroup => "filegroup",
+            ObjectKind::PartitionScheme => "partition_scheme",
+            ObjectKind::PartitionFunction => "partition_function",
         }
     }
 
@@ -210,6 +223,9 @@ impl ObjectKind {
             ObjectKind::BackupDevice => "Backup Devices",
             ObjectKind::Endpoint => "Endpoints",
             ObjectKind::ServerTrigger => "Triggers",
+            ObjectKind::Filegroup => "Filegroups",
+            ObjectKind::PartitionScheme => "Partition Schemes",
+            ObjectKind::PartitionFunction => "Partition Functions",
         }
     }
 
@@ -259,6 +275,9 @@ impl ObjectKind {
             "backup_device" | "backup_devices" => ObjectKind::BackupDevice,
             "endpoint" | "endpoints" => ObjectKind::Endpoint,
             "server_trigger" | "server_triggers" => ObjectKind::ServerTrigger,
+            "filegroup" | "filegroups" => ObjectKind::Filegroup,
+            "partition_scheme" | "partition_schemes" => ObjectKind::PartitionScheme,
+            "partition_function" | "partition_functions" => ObjectKind::PartitionFunction,
             _ => return None,
         })
     }
@@ -2221,7 +2240,10 @@ fn oracle_type(kind: ObjectKind) -> &'static str {
         | ObjectKind::AuditSpec
         | ObjectKind::BackupDevice
         | ObjectKind::Endpoint
-        | ObjectKind::ServerTrigger => "",
+        | ObjectKind::ServerTrigger
+        | ObjectKind::Filegroup
+        | ObjectKind::PartitionScheme
+        | ObjectKind::PartitionFunction => "",
     }
 }
 
@@ -2280,7 +2302,8 @@ pub fn objects(
                 | ObjectKind::AuditSpec
                 | ObjectKind::BackupDevice
                 | ObjectKind::Endpoint
-                | ObjectKind::ServerTrigger => return Ok(Vec::new()),
+                | ObjectKind::ServerTrigger
+                | ObjectKind::Filegroup | ObjectKind::PartitionScheme | ObjectKind::PartitionFunction => return Ok(Vec::new()),
                 // ★ 인덱스 = 부가에 **테이블 이름**(탐색기 라벨 `테이블.인덱스` · 사용자 09-30 · PG/MSSQL과 같게) · 유효성은 ALL_OBJECTS.
                 ObjectKind::Index => Some(format!(
                     "SELECT i.index_name, NVL(o.status, ''), TO_CHAR(o.last_ddl_time, 'YYYY-MM-DD HH24:MI:SS'), i.table_name FROM all_indexes i LEFT JOIN all_objects o ON o.owner = i.owner AND o.object_name = i.index_name AND o.object_type = 'INDEX' WHERE i.owner = {} AND (i.index_name NOT LIKE 'BIN$%') ORDER BY i.index_name",
@@ -2359,6 +2382,10 @@ pub fn objects(
                 ObjectKind::BackupDevice => "SELECT d.name, '', '', d.type_desc + CASE WHEN d.physical_name IS NOT NULL AND d.physical_name <> '' THEN ' · ' + d.physical_name ELSE '' END, '' FROM sys.backup_devices d ORDER BY d.name".to_string(),
                 ObjectKind::Endpoint => "SELECT e.name, CASE WHEN e.state_desc = 'STARTED' THEN '' ELSE e.state_desc END, '', e.type_desc + ' · ' + e.protocol_desc, '' FROM sys.endpoints e ORDER BY e.name".to_string(),
                 ObjectKind::ServerTrigger => "SELECT t.name, CASE WHEN t.is_disabled = 1 THEN 'DISABLED' ELSE '' END, CONVERT(varchar(19), t.modify_date, 120), t.type_desc, '' FROM sys.server_triggers t ORDER BY t.name".to_string(),
+                // ★ 스토리지(T-272 · 11-21) — 메타 세션이 그 DB로 `USE`한 뒤 읽는다 · 5열(이름 · 상태 · 수정 · 부가 · '').
+                ObjectKind::Filegroup => "SELECT f.name, '', '', f.type_desc + CASE WHEN f.is_default = 1 THEN ' · DEFAULT' ELSE '' END + CASE WHEN f.is_read_only = 1 THEN ' · READ_ONLY' ELSE '' END, '' FROM sys.filegroups f ORDER BY f.name".to_string(),
+                ObjectKind::PartitionScheme => "SELECT ps.name, '', '', ISNULL(pf.name, ''), '' FROM sys.partition_schemes ps LEFT JOIN sys.partition_functions pf ON pf.function_id = ps.function_id ORDER BY ps.name".to_string(),
+                ObjectKind::PartitionFunction => "SELECT pf.name, '', CONVERT(varchar(19), pf.modify_date, 120), CONVERT(varchar(12), pf.fanout) + ' partitions · ' + CASE WHEN pf.boundary_value_on_right = 1 THEN 'RIGHT' ELSE 'LEFT' END, '' FROM sys.partition_functions pf ORDER BY pf.name".to_string(),
                 // 스키마 목록(⑭ · 완성 `DB.` 뒤 · 보안 ▸ 스키마) — 메타 세션이 그 DB로 `USE`한 뒤 읽는다.
                 ObjectKind::Schema => "SELECT s.name, '', '', '', '' FROM sys.schemas s WHERE s.schema_id < 16384 AND s.name NOT IN ('sys','INFORMATION_SCHEMA','guest') ORDER BY s.name".to_string(),
                 _ => return Ok(Vec::new()),

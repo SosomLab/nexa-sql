@@ -942,6 +942,9 @@ impl Intel {
                                     | ObjectKind::BackupDevice
                                     | ObjectKind::Endpoint
                                     | ObjectKind::ServerTrigger
+                                    | ObjectKind::Filegroup
+                                    | ObjectKind::PartitionScheme
+                                    | ObjectKind::PartitionFunction
                             )
                         }) =>
                     {
@@ -3055,6 +3058,9 @@ fn icon_kind_of(c: &Cand, m: Option<&MetaView<'_>>) -> Option<IconKind> {
                 | ObjectKind::AuditSpec => IconKind::Property,
                 ObjectKind::BackupDevice => IconKind::Package,
                 ObjectKind::ServerTrigger => IconKind::Trigger,
+                ObjectKind::Filegroup
+                | ObjectKind::PartitionScheme
+                | ObjectKind::PartitionFunction => IconKind::Folder,
             });
         }
     }

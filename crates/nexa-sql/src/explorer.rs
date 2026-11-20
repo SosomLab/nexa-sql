@@ -61,6 +61,8 @@ enum GroupKind {
     SystemDbs,
     ExternalResources,
     Programmability,
+    /// ★ 스토리지(T-272 · 11-21 · SSMS DB ▸ 스토리지): 파일 그룹 · 파티션 구성표 · 파티션 함수.
+    Storage,
     Security,
     ServerObjects,
     /// ★ 서버 수준 보안(10-01 ㉖ · 데이터베이스와 같은 층): 로그인 · 서버 역할 · 자격 증명 · 암호화 공급자 · 감사 · 서버 감사 사양.
@@ -73,6 +75,7 @@ fn group_msg(g: GroupKind) -> Msg {
         GroupKind::SystemDbs => Msg::ExpSystemDbs,
         GroupKind::ExternalResources => Msg::ExpExternalResources,
         GroupKind::Programmability => Msg::ExpProgrammability,
+        GroupKind::Storage => Msg::ExpStorage,
         GroupKind::Security | GroupKind::ServerSecurity => Msg::ExpSecurity,
         GroupKind::ServerObjects => Msg::ExpServerObjects,
     }
@@ -107,7 +110,8 @@ fn group_node(db: Option<&str>, group: GroupKind, depth: usize) -> Node {
     }
 }
 
-/// ★ SSMS 골격의 DB 노드 자식(101 §2 · 순수): 테이블 · 뷰 · 외부 리소스 · 동의어 · 프로그래밍 기능 · 보안 — 스토리지·다이어그램·Service Broker는 1차 생략(D-247).
+/// ★ SSMS 골격의 DB 노드 자식(101 §2 · 순수): 테이블 · 뷰 · 외부 리소스 · 동의어 · 프로그래밍 기능 · 스토리지(T-272 · 11-21) · 보안 —
+/// 다이어그램·Service Broker는 생략(D-247).
 fn ssms_db_children(db: &str, depth: usize) -> Vec<Node> {
     vec![
         folder_node(Some(db), ObjectKind::Table, depth),
@@ -115,6 +119,7 @@ fn ssms_db_children(db: &str, depth: usize) -> Vec<Node> {
         group_node(Some(db), GroupKind::ExternalResources, depth),
         folder_node(Some(db), ObjectKind::Synonym, depth),
         group_node(Some(db), GroupKind::Programmability, depth),
+        group_node(Some(db), GroupKind::Storage, depth),
         group_node(Some(db), GroupKind::Security, depth),
     ]
 }
@@ -129,6 +134,11 @@ fn ssms_group_children(db: Option<&str>, group: GroupKind, depth: usize) -> Vec<
             folder_node(db, ObjectKind::SchemaTrigger, depth),
             folder_node(db, ObjectKind::Type, depth),
             folder_node(db, ObjectKind::Sequence, depth),
+        ],
+        GroupKind::Storage => vec![
+            folder_node(db, ObjectKind::Filegroup, depth),
+            folder_node(db, ObjectKind::PartitionScheme, depth),
+            folder_node(db, ObjectKind::PartitionFunction, depth),
         ],
         GroupKind::Security => vec![
             folder_node(db, ObjectKind::DbUser, depth),
@@ -2459,6 +2469,8 @@ pub(crate) fn sub_msg(sub: SubKind) -> Msg {
         SubKind::Methods => Msg::SubMethods,
         SubKind::Procedures => Msg::SubProcedures,
         SubKind::Functions => Msg::SubFunctions,
+        SubKind::Catalogs => Msg::SubCatalogs,
+        SubKind::LinkedTables => Msg::SubLinkedTables,
     }
 }
 
@@ -2503,6 +2515,9 @@ fn folder_msg(kind: ObjectKind) -> Msg {
         ObjectKind::BackupDevice => Msg::ExpBackupDevices,
         ObjectKind::Endpoint => Msg::ExpEndpoints,
         ObjectKind::ServerTrigger => Msg::ExpServerTriggers,
+        ObjectKind::Filegroup => Msg::ExpFilegroups,
+        ObjectKind::PartitionScheme => Msg::ExpPartitionSchemes,
+        ObjectKind::PartitionFunction => Msg::ExpPartitionFunctions,
     }
 }
 
@@ -2530,7 +2545,10 @@ fn kind_color(kind: ObjectKind, th: &Theme) -> Color {
         | ObjectKind::AuditSpec
         | ObjectKind::BackupDevice
         | ObjectKind::Endpoint
-        | ObjectKind::ServerTrigger => th.text_dim,
+        | ObjectKind::ServerTrigger
+        | ObjectKind::Filegroup
+        | ObjectKind::PartitionScheme
+        | ObjectKind::PartitionFunction => th.text_dim,
         ObjectKind::Aggregate => th.syn_keyword,
         ObjectKind::Sequence
         | ObjectKind::Index
@@ -4908,11 +4926,14 @@ impl Explorer {
                     match r {
                         Ok(list) => {
                             let depth = self.nodes[node].depth + 1;
-                            // ★ 패키지 멤버 잎(Procedures/Functions)은 Arguments 폴더를 가진다(사용자 09-29).
+                            // ★ 패키지 멤버 잎(Procedures/Functions)은 Arguments 폴더를 가진다(사용자 09-29) · 연결된 서버의
+                            //   카탈로그 잎은 Tables 폴더를 가진다(T-272 · 11-21).
                             let expandable = match (&self.nodes[node].kind, self.dialect) {
                                 (NodeKind::Sub { owner, sub }, Some(d)) => {
-                                    owner.kind == ObjectKind::Package
-                                        && !nsql_catalog::member_sub_kinds(d, *sub).is_empty()
+                                    matches!(
+                                        owner.kind,
+                                        ObjectKind::Package | ObjectKind::LinkedServer
+                                    ) && !nsql_catalog::member_sub_kinds(d, *sub).is_empty()
                                 }
                                 _ => false,
                             };
@@ -11254,7 +11275,27 @@ mod detail_cache_tests {
     #[test]
     fn ssms_tree_shapes() {
         let kids = super::ssms_db_children("APPDB_MS", 3);
-        assert_eq!(kids.len(), 6);
+        assert_eq!(kids.len(), 7);
+        // ★ T-272: 스토리지 = 프로그래밍 기능과 보안 사이 · 파일 그룹 · 파티션 구성표 · 파티션 함수.
+        assert!(matches!(
+            kids[5].kind,
+            super::NodeKind::Group { group: super::GroupKind::Storage, db: Some(ref d) } if d == "APPDB_MS"
+        ));
+        let storage = super::ssms_group_children(Some("APPDB_MS"), super::GroupKind::Storage, 4);
+        assert_eq!(
+            storage
+                .iter()
+                .filter_map(|n| match n.kind {
+                    super::NodeKind::Folder { kind, .. } => Some(kind),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            vec![
+                nsql_catalog::ObjectKind::Filegroup,
+                nsql_catalog::ObjectKind::PartitionScheme,
+                nsql_catalog::ObjectKind::PartitionFunction,
+            ]
+        );
         assert!(matches!(
             kids[0].kind,
             super::NodeKind::Folder {

@@ -47,10 +47,14 @@ pub enum SubKind {
     Procedures,
     /// 패키지 멤버 함수.
     Functions,
+    /// 연결된 서버의 카탈로그(T-272 · SQL Server `sp_catalogs`).
+    Catalogs,
+    /// 연결된 서버 카탈로그의 테이블·뷰(T-272 · `sp_tables_ex` · 잎의 부가 = 4부 이름).
+    LinkedTables,
 }
 
 impl SubKind {
-    pub const ALL: [SubKind; 18] = [
+    pub const ALL: [SubKind; 20] = [
         SubKind::Columns,
         SubKind::Constraints,
         SubKind::UniqueKeys,
@@ -69,6 +73,8 @@ impl SubKind {
         SubKind::Methods,
         SubKind::Procedures,
         SubKind::Functions,
+        SubKind::Catalogs,
+        SubKind::LinkedTables,
     ];
 
     /// 폴더 라벨(영어 고정 — DBMS 용어는 번역하지 않는다 · 사용자 09-19).
@@ -93,6 +99,8 @@ impl SubKind {
             SubKind::Methods => "Methods",
             SubKind::Procedures => "Procedures",
             SubKind::Functions => "Functions",
+            SubKind::Catalogs => "Catalogs",
+            SubKind::LinkedTables => "Tables",
         }
     }
 
@@ -118,6 +126,8 @@ impl SubKind {
             SubKind::Methods => "methods",
             SubKind::Procedures => "procedures",
             SubKind::Functions => "functions",
+            SubKind::Catalogs => "catalogs",
+            SubKind::LinkedTables => "linked_tables",
         }
     }
 
@@ -241,6 +251,8 @@ pub fn sub_kinds(dialect: Dialect, kind: ObjectKind) -> &'static [SubKind] {
             ObjectKind::Index,
         ) => &[],
         (_, ObjectKind::Index) => &[Columns],
+        // ★ 연결된 서버(T-272 · 11-21 · 101 §5): 펼침 = 카탈로그(`sp_catalogs`) → 카탈로그 잎 = 테이블(`sp_tables_ex`).
+        (Dialect::Mssql, ObjectKind::LinkedServer) => &[Catalogs],
         (Dialect::Oracle, ObjectKind::Type) => &[Attributes, Methods],
         (Dialect::Postgres, ObjectKind::Type) => &[Attributes],
         (Dialect::Oracle, ObjectKind::Package) => &[Procedures, Functions, Dependencies],
@@ -262,6 +274,8 @@ pub fn sub_kinds(dialect: Dialect, kind: ObjectKind) -> &'static [SubKind] {
 pub fn member_sub_kinds(dialect: Dialect, sub: SubKind) -> &'static [SubKind] {
     match (dialect, sub) {
         (Dialect::Oracle, SubKind::Procedures | SubKind::Functions) => &[SubKind::Arguments],
+        // 연결된 서버의 카탈로그 잎 = 그 카탈로그의 테이블(T-272).
+        (Dialect::Mssql, SubKind::Catalogs) => &[SubKind::LinkedTables],
         _ => &[],
     }
 }
@@ -269,6 +283,18 @@ pub fn member_sub_kinds(dialect: Dialect, sub: SubKind) -> &'static [SubKind] {
 /// 패키지 멤버 잎을 하위 폴더의 주인 객체로(이름 `패키지.멤버` · `routine_args`가 3부 이름을 패키지로 푼다).
 #[must_use]
 pub fn member_object(owner: &ObjectInfo, sub: SubKind, item: &SubItem) -> Option<ObjectInfo> {
+    // ★ 연결된 서버의 카탈로그 잎(T-272): 주인 = 그 서버 · **`schema` 자리에 카탈로그 이름**을 싣는다([`linked_tables`]가 읽는다).
+    if sub == SubKind::Catalogs {
+        return (owner.kind == ObjectKind::LinkedServer).then(|| ObjectInfo {
+            db: String::new(),
+            schema: item.name.clone(),
+            name: owner.name.clone(),
+            kind: ObjectKind::LinkedServer,
+            status: String::new(),
+            modified: String::new(),
+            extra: String::new(),
+        });
+    }
     let kind = match sub {
         SubKind::Procedures => ObjectKind::Procedure,
         SubKind::Functions => ObjectKind::Function,
@@ -286,6 +312,102 @@ pub fn member_object(owner: &ObjectInfo, sub: SubKind, item: &SubItem) -> Option
         modified: String::new(),
         extra: item.detail.clone(),
     })
+}
+
+/// `sp_catalogs` 호출문(순수 · 서버 이름은 리터럴로 — 이름에 든 `'`는 겹쳐 쓴다).
+#[must_use]
+pub fn linked_catalogs_sql(server: &str) -> String {
+    format!("EXEC sp_catalogs @server_name = N{}", super::lit(server))
+}
+
+/// `sp_tables_ex` 호출문(순수) — 그 카탈로그의 테이블·뷰 전부(유형은 받은 뒤 거른다 · 공급자마다 유형 글이 달라서).
+#[must_use]
+pub fn linked_tables_sql(server: &str, catalog: &str) -> String {
+    format!(
+        "EXEC sp_tables_ex @table_server = N{}, @table_catalog = N{}",
+        super::lit(server),
+        super::lit(catalog)
+    )
+}
+
+/// 4부 이름 `[서버].[카탈로그].[스키마].[테이블]`(순수 · 빈 스키마는 빈 칸 그대로 — `[s].[c]..[t]`).
+#[must_use]
+pub fn four_part_name(server: &str, catalog: &str, schema: &str, table: &str) -> String {
+    let q = |x: &str| super::quote_ident(Dialect::Mssql, x);
+    let sch = if schema.is_empty() {
+        String::new()
+    } else {
+        q(schema)
+    };
+    format!("{}.{}.{}.{}", q(server), q(catalog), sch, q(table))
+}
+
+/// ★ 연결된 서버의 카탈로그 목록(T-272 · 101 §5 · `sp_catalogs` = CATALOG_NAME · DESCRIPTION). 실패(권한 · 공급자가 카탈로그를
+/// 주지 않음 · 원격 접속 실패)는 **오류 그대로** 올린다 → 탐색기가 폴더에 `⚠ 메시지`로 보인다(빈 폴더 + ⚠).
+fn linked_catalogs(s: &mut dyn Session, d: Dialect, server: &str) -> Result<Vec<SubItem>, DbError> {
+    if d != Dialect::Mssql {
+        return Ok(Vec::new());
+    }
+    Ok(super::query(s, &linked_catalogs_sql(server))?
+        .rows
+        .iter()
+        .map(|r| item(super::col(r, 0), super::col(r, 1), SubIcon::Property))
+        .filter(|it| !it.name.is_empty())
+        .collect())
+}
+
+/// ★ 연결된 서버 카탈로그의 테이블·뷰(T-272 · `sp_tables_ex` = TABLE_CAT · TABLE_SCHEM · TABLE_NAME · TABLE_TYPE · REMARKS).
+/// 잎 = `스키마.이름` · 부가 = **4부 이름**(그대로 질의에 쓸 수 있다) · 시스템 테이블은 뺀다.
+fn linked_tables(
+    s: &mut dyn Session,
+    d: Dialect,
+    server: &str,
+    catalog: &str,
+) -> Result<Vec<SubItem>, DbError> {
+    if d != Dialect::Mssql {
+        return Ok(Vec::new());
+    }
+    Ok(super::query(s, &linked_tables_sql(server, catalog))?
+        .rows
+        .iter()
+        .filter_map(|r| {
+            linked_table_item(
+                server,
+                catalog,
+                &super::col(r, 1),
+                &super::col(r, 2),
+                &super::col(r, 3),
+            )
+        })
+        .collect())
+}
+
+/// `sp_tables_ex` 한 행 → 잎(순수 · 시험): 이름 없는 행·시스템 유형은 `None` · 뷰는 상태 칸에 `VIEW`.
+fn linked_table_item(
+    server: &str,
+    catalog: &str,
+    schema: &str,
+    table: &str,
+    ty: &str,
+) -> Option<SubItem> {
+    let ty = ty.trim().to_ascii_uppercase();
+    if table.is_empty() || ty.starts_with("SYSTEM") {
+        return None;
+    }
+    let name = if schema.is_empty() {
+        table.to_string()
+    } else {
+        format!("{schema}.{table}")
+    };
+    let mut it = item(
+        name,
+        four_part_name(server, catalog, schema, table),
+        SubIcon::Reference,
+    );
+    if ty == "VIEW" {
+        it.status = ty;
+    }
+    Some(it)
 }
 
 fn kind_char_label(k: char) -> &'static str {
@@ -378,6 +500,8 @@ pub fn sub_items(
         SubKind::References => references(s, d, schema, name),
         SubKind::Triggers => triggers(s, d, schema, name),
         SubKind::Partitions => partitions(s, d, schema, name),
+        SubKind::Catalogs => linked_catalogs(s, d, name),
+        SubKind::LinkedTables => linked_tables(s, d, name, schema),
         SubKind::Dependencies => dependencies(s, d, schema, name),
         SubKind::Rules => rules(s, d, schema, name),
         SubKind::Policies => policies(s, d, schema, name),
@@ -755,6 +879,61 @@ mod tests {
         );
         assert_eq!(member_overload("#"), None);
         assert_eq!(member_overload("#x1"), None);
+    }
+
+    /// ★ T-272: 연결된 서버 ▸ 카탈로그 ▸ 테이블 — 하위 종류 사슬 · 카탈로그 잎의 주인(`schema` 자리에 카탈로그) · 호출문 ·
+    /// 4부 이름 · `sp_tables_ex` 행 거르기(시스템 유형 · 이름 없는 행) · 뷰 표시.
+    #[test]
+    fn linked_server_catalogs_and_tables() {
+        assert_eq!(
+            sub_kinds(Dialect::Mssql, ObjectKind::LinkedServer),
+            &[SubKind::Catalogs]
+        );
+        assert!(sub_kinds(Dialect::Oracle, ObjectKind::LinkedServer).is_empty());
+        assert_eq!(
+            member_sub_kinds(Dialect::Mssql, SubKind::Catalogs),
+            &[SubKind::LinkedTables]
+        );
+        assert!(member_sub_kinds(Dialect::Mssql, SubKind::LinkedTables).is_empty());
+        let owner = |kind| ObjectInfo {
+            db: String::new(),
+            schema: String::new(),
+            name: "LNK".into(),
+            kind,
+            status: String::new(),
+            modified: String::new(),
+            extra: String::new(),
+        };
+        let cat = item("sales", "", SubIcon::Property);
+        let m = member_object(&owner(ObjectKind::LinkedServer), SubKind::Catalogs, &cat)
+            .expect("카탈로그 주인");
+        assert_eq!(
+            (m.kind, m.name.as_str(), m.schema.as_str()),
+            (ObjectKind::LinkedServer, "LNK", "sales")
+        );
+        assert!(member_object(&owner(ObjectKind::Table), SubKind::Catalogs, &cat).is_none());
+        assert_eq!(
+            linked_catalogs_sql("L'K"),
+            "EXEC sp_catalogs @server_name = N'L''K'"
+        );
+        assert_eq!(
+            linked_tables_sql("LNK", "sales"),
+            "EXEC sp_tables_ex @table_server = N'LNK', @table_catalog = N'sales'"
+        );
+        assert_eq!(
+            four_part_name("LNK", "sales", "dbo", "T]1"),
+            "[LNK].[sales].[dbo].[T]]1]"
+        );
+        assert_eq!(four_part_name("LNK", "c", "", "t"), "[LNK].[c]..[t]");
+        let t = linked_table_item("LNK", "sales", "dbo", "orders", "TABLE").expect("테이블");
+        assert_eq!(
+            (t.name.as_str(), t.detail.as_str(), t.status.as_str()),
+            ("dbo.orders", "[LNK].[sales].[dbo].[orders]", "")
+        );
+        let v = linked_table_item("LNK", "sales", "", "v1", "view").expect("뷰");
+        assert_eq!((v.name.as_str(), v.status.as_str()), ("v1", "VIEW"));
+        assert!(linked_table_item("LNK", "sales", "sys", "objects", "SYSTEM TABLE").is_none());
+        assert!(linked_table_item("LNK", "sales", "dbo", "", "TABLE").is_none());
     }
 
     /// 83 §1 표 — 방언별 테이블 하위 폴더 · 없는 조합은 빈 목록 · 모든 하위 종류는 코드로 왕복.
