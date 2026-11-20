@@ -3218,9 +3218,14 @@ impl Explorer {
 
     /// 폴더 개수 글자: 필터 중이면 "일치/전체"(사용자 09-25) · 아니면 전체.
     fn count_label(&self, n: &Node) -> String {
-        // 부분 폴더(84 §3) = 전체 수를 아직 모른다 → "일치/?".
+        // 부분 폴더(84 §3) = 전체 수를 아직 모른다 → "일치/?" · **지금 전체 목록을 읽는 중인 폴더**는 "?…"(T-220 · 84 §11 —
+        // 기다리면 숫자로 바뀐다는 표시 · 접힌 채 큐에 없는 부분 폴더는 "?" 그대로 = 펼쳐야 읽는다).
         let total = if n.state == LoadState::Partial {
-            "?".to_string()
+            let reading = self
+                .completing
+                .and_then(|c| self.nodes.get(c))
+                .is_some_and(|c| std::ptr::eq(c, n));
+            if reading { "?…" } else { "?" }.to_string()
         } else {
             n.children.len().to_string()
         };
@@ -7362,6 +7367,12 @@ impl Explorer {
         self.index_truncated
     }
 
+    /// 지금 인덱스가 읽고 있는 단위(스키마 · SSMS는 `DB.스키마`) — 헤더 "인덱싱 n/N (이름)"용(T-220 · 84 §11) · 진행 중이 아니면 None.
+    pub(crate) fn index_reading(&self) -> Option<&str> {
+        self.index_progress()?;
+        self.index_inflight.as_deref().filter(|s| !s.is_empty())
+    }
+
     /// 인덱스 진행(읽은 스키마, 전체) — 헤더 "인덱싱 n/N"용 · 검색 중이 아니거나 다 읽었으면 None.
     pub(crate) fn index_progress(&self) -> Option<(usize, usize)> {
         if self.filter.is_none() || !self.index_cfg.on || self.offline {
@@ -10682,7 +10693,8 @@ mod refresh_tests {
             LoadState::Partial,
             "안 읽은 폴더 = 부분"
         );
-        assert_eq!(ex.label(views).0, "Views (1/?)", "전체 수는 아직 모른다");
+        // 완성 큐가 이 폴더를 읽는 중 = "?…"(T-220 · 84 §11).
+        assert_eq!(ex.label(views).0, "Views (1/?…)", "전체 수는 아직 모른다");
         assert_eq!(
             ex.nodes[tables].children.len(),
             3,

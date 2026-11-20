@@ -1551,6 +1551,13 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                     "{sub} · {}",
                     tf(Msg::ExpIndexing, &[&d.to_string(), &t.to_string()])
                 );
+                // 지금 읽는 스키마 이름(T-220 · 84 §11) — 느린 서버에서 어디서 멈춰 있는지 보인다.
+                if let Some(name) = members
+                    .iter()
+                    .find_map(|&i| self.panes[i].ex.index_reading())
+                {
+                    sub = format!("{sub} ({name})");
+                }
             }
             if members.iter().any(|&i| self.panes[i].ex.index_truncated()) {
                 sub = format!("{sub} · {}", t(Msg::ExpIndexCapped));
