@@ -23,7 +23,7 @@
     │   │   ├ 📁 외부 리소스 ▸ 외부 테이블
     │   │   ├ 📁 동의어
     │   │   ├ 📁 프로그래밍 기능 ▸ 저장 프로시저 · 함수 · 데이터베이스 트리거 · 형식 · 시퀀스
-    │   │   ├ 📁 스토리지 ▸ 파일 그룹 · 파티션 구성표/함수            (2차)
+    │   │   ├ 📁 스토리지 ▸ 파일 그룹 · 파티션 구성표 · 파티션 함수   ✅ 11-21(T-272)
     │   │   └ 📁 보안 ▸ 사용자 · 역할 · 스키마
     │   ├ 🛢 JPN_POC · CUSTB_DEMO · PLANDB_MS · …
     ├ 📁 보안 ▸ 로그인 · 서버 역할                                  (2차)
@@ -51,7 +51,8 @@
 | `Req`/`Resp` | `Databases{gen,node}` · `Objects{…, db: Option<String>}` · `Columns/SubItems/Source{…, db}` · `UseDb{db}` · `Opened`에 `(dialect, desc, version, login, current_db)` · `LinkedServers{gen,node}` · `LinkedDetail{name}` |
 | `nsql-catalog` | **`Scope { db: Option<String> }`** 를 받는 `_in` 짝(`objects_in` · `columns_in` · `source_in` · `sub_items_in` · `name_index_in`) — 기존 함수는 `db: None`으로 위임(다른 방언 무영향). SQL Server SQL은 `{p}sys.objects`(`p` = `[db].` 또는 빈 문자열) · `OBJECT_ID('[db].[s].[n]')`(3부 지원) · `OBJECT_DEFINITION`은 현재 DB 전용이라 **`[db].sys.sql_modules`** 로 교체 · `SCHEMA_NAME()`·`DB_NAME()`은 현재 DB 질의에만 |
 | `nsql-catalog` 새 조회 | `databases(s)` = `sys.databases`(name · database_id · state_desc · is_system = `database_id <= 4` · owner · recovery · compatibility) · `server_info(s)` = `SERVERPROPERTY('ProductVersion'/'Edition'/'MachineName')` + `SUSER_SNAME()` + `DB_NAME()` · `linked_servers(s)` = `sys.servers WHERE is_linked = 1` · `linked_server_detail(s, name)` = sys.servers 열 전부 + `sys.linked_logins`(+ `server_principals`) · `db_users/db_roles/db_schemas(s, db)` · `filegroups/partitions`(2차) |
-| `ObjectKind` | `+ LinkedServer` · `+ DbUser` · `+ DbRole`(1차는 목록·상세만) |
+| `ObjectKind` | `+ LinkedServer` · `+ DbUser` · `+ DbRole`(1차는 목록·상세만) · ✅ 11-21 `+ Filegroup` · `+ PartitionScheme` · `+ PartitionFunction`(T-272 · ALL 41 · MSSQL 질의 3) |
+| `GroupKind` · `SubKind`(11-21 · T-272) | `GroupKind::Storage` = DB 자식 7(프로그래밍 기능 다음 · 폴더 = 파일 그룹 · 파티션 구성표 · 파티션 함수) · `SubKind::Catalogs`(연결된 서버 아래) · `SubKind::LinkedTables`(카탈로그 아래 · ALL 20) |
 | `nsql-run` | `RunEvent::DbChanged(String)` · `Session`에 `current_database()`는 두지 않는다(러너 파싱 + Open 1회로 충분 · 포트 최소) |
 | `Sess` | `current_db: Option<String>` · `ExplorerSet::set_current_db(spec, db)` → 칸의 표시 갱신 + `Req::UseDb` + 메타 리셋 |
 | 헤더 | `endpoint` 뒤 `(SQL Server {version} - {login})`(로그인이 여럿 = `- 로그인 N`) · i18n `ExpServerSql` |
@@ -60,7 +61,7 @@
 
 ## 5. 연결된 서버(Linked Servers) — 확인·수정·삭제
 
-- **목록**: 서버 개체 ▸ 연결된 서버 ▸ `[이름]`(제품 흐림 글). 펼침 = **카탈로그**(`EXEC sp_catalogs @server` · 실패 = 빈 폴더 + ⚠ · 2차 = 카탈로그 ▸ 테이블 4부 이름).
+- **목록**: 서버 개체 ▸ 연결된 서버 ▸ `[이름]`(제품 흐림 글). 펼침 = **카탈로그**(`EXEC sp_catalogs @server` · 실패 = 빈 폴더 + ⚠) ▸ **테이블**(4부 이름 `[서버].[카탈로그].[스키마].[테이블]`) — ✅ 11-21(T-272 · 6bd40bf5 · `SubKind::Catalogs` → `LinkedTables` · `member_object` = 카탈로그 잎의 주인은 서버 · schema 자리에 카탈로그 · `linked_catalogs_sql`/`linked_tables_sql`/`four_part_name`) · 실서버 미검증(연결된 서버 있는 서버 없음 · 만들 권한 없음) · 없는 서버 이름 = 서버 오류(7202) 그대로.
 - **확인**: 선택 = 상세 패널(§4 표) · 우클릭 ▸ 속성 → Output.
 - **수정** = 다른 객체와 같은 흐름(소스 열기 → 고쳐서 F5): 우클릭 ▸ **Open script** = 새 탭에 재생성 스크립트
   ```sql
@@ -107,4 +108,4 @@
 |---|---|---|---|
 | **T-270** | 1차 — Databases 층 + SSMS 골격(§2) · 현재 DB 추적·표시·메타 추종(§3) · 메타 세션 `USE` 전환(§4 단순화) · 서버 헤더 버전·로그인 · i18n · 순수 판정 시험 · 실서버 E2E `win-mssql-explorer-e2e.sh` 14/14 | 대 | ✅ 10-01(상세 패널 DB 절 = T-272) |
 | **T-271** | 연결된 서버(§5) — 목록 · 상세(속성 + 로그인 매핑) · Open source = 재생성 스크립트 · Generate SQL ▸ DDL · 삭제 모달(`sp_dropserver droplogins`) · CLI `cat source/detail linked_server` | 중 | ✅ 10-01([journal §17](journal/2026-09-30.md) · 실서버 권한 없어 E2E는 폴더 읽기만 · 카탈로그 펼침 = T-272) |
-| **T-272** | 2차 — ✅ 3부 접두 완성(`DB.`·`DB.스키마.`·`DB.스키마.테이블.` · 복합 열쇠 버킷 · [journal §21](journal/2026-09-30.md)) · ✅ 서버 보안·서버 개체(§5-1 · [journal §27](journal/2026-09-30.md)) · ✅ DB 용량(§5-1) · 남음 = 스토리지(파일 그룹·파티션) · 연결된 서버 카탈로그 ▸ 테이블 · 스냅샷 · 로그인/역할 편집 창 | 중 | 대부분 ✅ |
+| **T-272** | 2차 — ✅ 3부 접두 완성(`DB.`·`DB.스키마.`·`DB.스키마.테이블.` · 복합 열쇠 버킷 · [journal §21](journal/2026-09-30.md)) · ✅ 서버 보안·서버 개체(§5-1 · [journal §27](journal/2026-09-30.md)) · ✅ DB 용량(§5-1) · ✅ 11-21 스토리지(파일 그룹·파티션) · 연결된 서버 카탈로그 ▸ 테이블(6bd40bf5 · 연결된 서버 실서버 미검증) · 남음 = 스냅샷 · 로그인/역할 편집 창 · 메타 열쇠 `(db, 스키마)`(D-249) = 설계안 뒤 사용자 결정 | 중 | 대부분 ✅ |
