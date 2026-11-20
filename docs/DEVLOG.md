@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-21 밤 (Windows · 사용자 결정 D-483)** — T-90 39 §3 "(신설)" 키 6 전부 만들지 않음(원장 행 정정 · `net.license_check` 삭제) · `target/lite` 삭제(+4.8 GiB) · i-aud 점검 중단 · T-272 잔여 = 재질문 대기 · [journal 11-21 §13](journal/2026-11-21.md)
+
 - **2026-11-21 밤 (Windows · push · CI)** — 병합·push(nexa-ui 5e21883 ✓ · nexa-sql 805426d5) → CI ✗ 2건 = 비Windows clippy `drop_non_drop`(ai/host.rs reap) · T-49 OCI DBMS_OUTPUT 0줄 → d41a0469(clippy ✓ · OCI 사유 `DPI-1002: invalid OCI handle` · 대체도 0줄) → 6d5d8f15 묶음 OUT 바인드 8000글자 정적 바인드 → **ci ✓ · integration ✓(OCI·Thin `messages = 1504`)** · [journal 11-21 §12](journal/2026-11-21.md)
 
 - **2026-11-21 (Windows · 개발 × 협업 · `work/t49-batch-and-fixes`)** — 사용자 "지금 진행할 수 있는 개발 바로 진행" · 잔여 조사(하위 에이전트 병렬) → T-49 DBMS_OUTPUT 묶음 회수(넘친 줄 조각 · Thin 1,500줄 31 s → 66 ms · OCI 미검증) · T-356 B 운영 0행 안내 · T-263 필터 `type:`/`line:` · T-449 확장 상세 값 열 · T-225 컬럼 → 주인 요약 · T-220 진행 표시 · T-90 PERF 4 + `nsql --perf` · T-468 문구 · T-224 `gfx.partial_redraw`(기본 끔 · 기동 명령 `ui.active:`) · T-272 스토리지 · 연결된 서버 카탈로그 ▸ 테이블 · 닫음 T-178 · T-328 · T-474(교란 = 동시 cargo) · T-298(Release lite 측정 ≤ 0.035코어) · 사용자 결정 D-482(D-447 A 정정 포함) · V2 마지막 = 통합 48/0/1 · nexa-sql 675/0/6 · MSSQL 탐색기 E2E 34/0 · 병합·push = 사용자 결정대로 묶음 검증 뒤 · [journal 11-21](journal/2026-11-21.md)

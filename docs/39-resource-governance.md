@@ -111,7 +111,7 @@
 | 유휴 세션 닫기(서버 자원 회수 · 점검 30s 로컬) | 1800 s · 전용만 | `session.idle_secs`(0 = 끔) · `session.idle_shared` | — | — | — | `App::idle_tick` |
 | 탐색기 자동 새로 고침 | `explorer.refresh_secs` | `explorer.auto_refresh` | 끔 | 끔 | 끔 | `Explorer` |
 | 탐색기 노드 로드 | 펼친 노드만 | (구조 · 프리페치 0) | — | — | — | `Explorer::load` |
-| 인텔리전스 메타(T-57 예정) | — | `intel.prefetch`(신설 · schema/none) | schema | schema | none | T-57 |
+| 인텔리전스 메타(완성용 미리 읽기) | 접속 뒤 현재 스키마 메타 미리 읽기(켬일 때) | `intel.preload`(기존 키 · 11-21 D-483 = 원안 `intel.prefetch` 신설 안 함) | — | — | — | `Explorer::preload_meta` · BOOST 끔 |
 | 실행 전 빠른 판정 | 신호등 비초록일 때 SYN 1 | `probe.enabled` | — | — | — | `Cmd::Run.preflight` |
 | 자동 재접속 | 실행 시 1회 | `connect.auto_reconnect` | 켬 | 켬 | 끔 | 워커 |
 | ★ 호출 뒤 미커밋 확인(11-15) = 수동 모드 CALL·EXEC·블록 뒤 확인 질의 1(같은 세션 · Oracle·SQL Server·PostgreSQL만) | 호출 1회당 1 | `tx.call_probe` | 켬 | 켬 | 켬(데이터 안전 표시 · `perf.boost` 대상 아님) | `nsql-run` `call_probe_due` |
@@ -134,7 +134,6 @@
 | 드라이버 갱신 확인(10-23 · fbe5001) | 하루 1회 · 색인 캐시 24시간 초과 + 확장을 쓰는 빌드/설치일 때만 색인 GET 1 · 자동 교체 없음(상태줄 안내만) | `driver.check_updates`(기본 켬) | 켬 | 켬 | 끔 | `app` 기동 뒤 유휴 |
 | 접속 시 드라이버 자동 갱신(10-30 밤 · 185차 · D-423) | 사용자 접속 동작 안 1회 · 캐시 색인이 새 판을 말할 때만 자산 GET + 설치(디스크 = SxS 새 판 폴더 1) · 동시 1 · 재시도 없음 · 끄는 키 `driver.auto_upgrade` | — | — | — | — | — |
 | 삭제 대기 드라이버 정리(10-23 · a888ae2) | GUI·CLI 기동 직후 1회 · 표식 파일 `drivers/.delete-pending` stat 1(없으면 끝) · 있으면 적힌 폴더만 삭제 | (끄는 키 없음 = 비용 stat 1 · 사용자 삭제 동작의 뒷정리) | 켬 | 켬 | 켬 | `ext::sweep_pending` |
-| 라이선스 확인(T-32) | 설계 [23](23-license-activation.md) 주기 | `net.license_check`(신설 · 주기) | 설계값 | 설계값 | 최소 | T-32 |
 | 다중 인스턴스 배가 | 인스턴스당 | (수용 · 26 §8 5항) | — | — | — | — |
 | ClickHouse HTTP 드라이버(10-24 · T-415) | 상주 소켓 0 · 스레드 0(요청은 호출 스레드) · 요청마다 연결 | `db.statement_timeout`(공통 · 워커 취소 · 원안 표기 `db.query_timeout` = 없는 키 · 드라이버 자체 = 연결 15 s · 읽기 24 h 고정(설정 키 없음) · 11-01 정합) | — | — | — | `nsql-driver-clickhouse` |
 | ★ 메타 3층 L1/L2([85](85-metadata-layers.md) · [84](84-explorer-search-index.md)) | L1 접속 직후 스키마당 1 질의(250 ms 간격) · L2 현재 스키마 컬럼 ≤200(300 ms 간격) · L3 회수 30 s 점검(질의 0) | `explorer.search_index` · `explorer.index_prefetch` · `explorer.index_idle_ms` · `meta.warm_columns_max` · `meta.detail_max/detail_ttl_secs/cols_ttl_secs` | on | on | prefetch off · warm 0 | T-219·T-221 |
@@ -147,14 +146,14 @@
 | 부하원 | 지금 상한 | 키 | full | balanced | low | 근거 코드 |
 |---|---|---|---|---|---|---|
 | 미저장 파일 탭 백업 쓰기(10-31 · 192차 28차 · T-165 P3 ① · [70 §3·§4](70-autosave-and-restore.md)) | 스레드 `backup-writer` 1(작업 없으면 채널 대기 · CPU 0) · 틱당 만료분 최대 `project.backup_batch`(8)개 · 같은 탭은 큐에서 병합(변경 뒤 `project.autosave_change_ms` · 최대 `project.autosave_secs`) | `project.autosave`(off = 큐 미사용) · `project.backup_batch`(HIDDEN) · `project.unsaved_max_mb` | on 8 | on 8 | on 8 | `app/project.rs` `backup_tick` · `backups::Writer` |
-| 구문 강조(탭 전체 재분석) | 없음 | `editor.highlight`(신설 · on/off) · ~~`editor.highlight_max_kb`~~(09-22 폐기 · 미배선 — 컷오프 = `file.large_syntax_level` L2 · [72](72-size-limits-and-large-file-constraints.md)) | on 1024 | on 512 | on 128 | `editors::make_box` |
+| 구문 강조(탭 전체 재분석) | 큰 파일 단계로만 줄임(L2 = 평문) | `file.large_syntax_level` · `file.large_l1_mb`/`_l2_mb`/`_lines`(기존 키 · 11-21 D-483 = 원안 `editor.highlight` 신설 안 함 · 기능 상한이라 BOOST 제외) · ~~`editor.highlight_max_kb`~~(09-22 폐기) | — | — | — | `editors::make_box` · [72](72-size-limits-and-large-file-constraints.md) |
 | Ctrl+D 전체 선택 검색 | 없음 | `editor.max_occurrences`(신설 · HIDDEN) | 10000 | 5000 | 1000 | `select_next_occurrence` |
 | 결과 그리드 정렬·복사 | `grid.max_rows` 안 | (상한 공유) | — | — | — | `grid.rs` |
-| 파일 대화상자 열거 | 배치 256 · 워커 | `file.list_batch`(신설 · HIDDEN) | 256 | 256 | 512 | nexa-fs `lister` |
+| 파일 대화상자 열거 | 배치 256 · 워커 | (구조 · 11-21 D-483 = 설정 아님 · 배치는 메시지 단위라 총 작업량 불변) | — | — | — | nexa-fs `lister` |
 | 빈 폴더 셰브론 프로브 | 폴더마다 첫 일치 | `file.probe_chevrons`(신설) | 켬 | 켬 | 끔 | `ListOpts.skip_probe` |
 | OS 아이콘 서비스 | 워커 1 · 캐시 512 · 12 ms/확장자 | `file.os_icons`(신설) | 켬 | 켬 | 끔(코드 도형) | nexa-fs `shell` |
 | 파일 검색(T-81) | 설계 [36](36-find-in-files-and-project.md) | `search.threads` `search.max_file_kb` `search.gitignore`(신설) | CPU−1 · 1024 | CPU/2 · 512 | 1 · 256 | T-81 |
-| settings.json 감시 폴링 | 1 s · 열어 둔 뒤만 | `settings.watch_ms`(신설 · HIDDEN) | 1000 | 2000 | 5000 | `json_tick` |
+| settings.json 감시 폴링 | 1 s stat 1회 · 열어 둔 뒤만 | (상한 불필요 · 11-21 D-483 = `settings.watch_ms` 만들지 않음 · T-298 실측 정착 구간 ≤ 0.035코어) | — | — | — | `json_tick` |
 | 접속 테스트 스레드 | 요청당 1 | `connect.max_concurrent` | — | — | — | `spawn_test` |
 | 워커 패닉 격리 | `catch_unwind` | (구조) | — | — | — | 워커 |
 | 로그 창 줄 수 | 없음 | `log.max_lines`(신설) | 10000 | 5000 | 1000 | `log_win` |
@@ -184,7 +183,7 @@
 | ★ **플래시 메시지**(09-27 · nexa-ctl `Flash` · 클릭 복사 "복사됨" 등 · 유지 + 페이드 동안 **프레임마다** 그 창만 다시 그림 · 타이머 0) | 끝나면 0 | `ui.flash_hold_ms`(2000) · `ui.flash_ms`(3000) | 2000/3000 | 1000/1500 | **300/200** | `license_win.rs` · nexa-ctl `controls/flash.rs` |
 | 토스트 남은 시간 표시(왼쪽 상태 막대가 위에서부터 옅어짐 + 카드 진척 페이드 · 09-22) | 카드가 떠 있는 동안 30ms 틱(실행 카드는 끝난 뒤 카운트다운 동안만 · 새 타이머 0) | `ui.toast_progress`(신설) · `ui.toast_fade_to`·`ui.toast_bar_spent`(HIDDEN) | 켬 | 켬 | **끔**(향상 모드 = 종전 마지막 300ms 페이드만) | `toast` · `runtoast` |
 | 다시 그리기 단위 | 창 전체 · ✅ 11-21 캐럿 깜빡임만 편집기 영역(T-224 · 켬일 때) | **`gfx.partial_redraw`**(Bool · 기본 **끔** · 성능 분류 · 사용자 D-482) — 끄면 종전대로 전체 | 끔 | 끔 | 끔 | `app/damage.rs` `redraw_rect`/`frame_plan` · `app/paint.rs` 클립 · `present.rs` `present_damage` |
-| 글리프 서브픽셀(1/3 px) | 켬 | `ui.text_subpixel`(신설 · HIDDEN) | 켬 | 켬 | 끔(캐시 1/3) | nexa-gfx `GlyphKey.sub` |
+| 글리프 서브픽셀(1/3 px) | `ui.text_snap` 끔일 때만(Windows 기본 snap 켬 = 사실상 끔 · mac/Linux 기본 끔 = 켬) | `ui.text_snap`(기존 키 · 11-21 D-483 = 원안 `ui.text_subpixel` 신설 안 함 · 글자 품질이라 BOOST 제외) | — | — | — | nexa-gfx `GlyphKey.sub` |
 | 아이콘 사전 스케일 캐시 | 크기별 | (구조) | — | — | — | `IconImage::resized` |
 | DBMS 아이콘 PNG 디코드 + 축소(10-04) | 처음 보일 때 1회(지연 디코드 · 64/20 원본 → 표시 크기) · 그 뒤 캐시 | (구조 · 키 없음 — 아래 3-6) | — | — | — | `dbms_icons::image` · `explorer.rs` `draw_brand` |
 | HiDPI 배율 | OS | (구조) | — | — | — | `set_scale` |
@@ -362,7 +361,7 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 | 렌더링·애니메이션 | `ui.animations` off · `ui.max_fps` 30 · `editor.caret_blink` off · `ui.fade_fast/slow` 0 · `ui.fade_out_ms` 0 · `ui.slide_ms` 0 · `ui.hover_intent_ms` 120 · `ui.toast_progress` off · **`ui.flash_hold_ms` 300 · `ui.flash_ms` 200 · `input.ime_hint_watch` off**(09-27 · 11-01 정합 이름) | "렌더링 방식" | 다시 그리기 횟수를 줄인다 · `max_fps`·`caret_blink`는 배선 T-90c 뒤 효과 |
 | 아이콘·부가 표시 | `explorer.icons` off · `file.os_icons` off · `file.probe_chevrons` off · **`ui.menu_icons` off(우클릭 메뉴 아이콘 · 10-13 = 아이콘 생성·그리기 0 · 칸은 유지해 글 위치 불변)** · `tabs.tooltip` off · `editor.minimap` off · `editor.highlight_selection` off · **`objlink.tooltip` off(10-13 · hover 카드)** · **`ctrl.bookmark_label` off · `ctrl.desc_inline` off(10-13 · 111)** | "아이콘 표시 등 메모리 증가 · 우클릭 포함" | 메뉴 아이콘 = nexa-ctl `set_menu_icons`(토글 도형은 유지) · 툴팁·미니맵·선택어 강조는 추가 반영 |
 | 코드 완성(09-24 §187) | `intel.auto_activation` off · `intel.icons` off · `intel.detail_card` off · `intel.document_words` off · `intel.preload` off · `intel.from_routines` off | 팝업은 ⌃Space로만 · 아이콘 래스터·카드 조립·문서 훑기·접속 직후 카탈로그 질의(관계 4 + 함수 3 + 사전 1) 없음 · 수동 완성·시그니처 도움·`intel.match`·상한은 그대로(결과에 닿음) | 72 "코드 완성과 문서 크기" |
-| I/O·기동 | `statusbar.git` off(git 프로세스) · `editor.copy_rich` off(복사 시 HTML 생성) · **`ui.clipboard_probe` off(신설 · 우클릭마다 클립보드 읽기 → 붙여넣기 항상 활성)** · `log.open_at_start` off(둘째 창) | "파일/메모리 로딩(I/O) · 우클릭" · 목표 ① | 추가 반영 · `settings.watch_ms`는 미등록 키라 제외(T-90c) |
+| I/O·기동 | `statusbar.git` off(git 프로세스) · `editor.copy_rich` off(복사 시 HTML 생성) · **`ui.clipboard_probe` off(신설 · 우클릭마다 클립보드 읽기 → 붙여넣기 항상 활성)** · `log.open_at_start` off(둘째 창) | "파일/메모리 로딩(I/O) · 우클릭" · 목표 ① | 추가 반영 · `settings.watch_ms`는 만들지 않음(11-21 D-483) |
 | 메모리 | `file.icon_cache` 128 | 목표 ④ | 아이콘을 껐으므로 캐시도 최소 |
 | 폴링·시도 횟수·시간·스레드 | `probe.interval` 300 · `probe.max_inflight` 1 · `probe.max_retries` 1 · `probe.icmp` off  · `oracle.live.source` off · `oracle.live.interval_ms` 5000 | "Pooling 등의 시도 횟수, 시간" | 신호등은 남기되 드물게 · 라이브 로그는 표시용이라 끔 |
 
