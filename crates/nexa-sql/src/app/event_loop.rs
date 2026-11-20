@@ -294,7 +294,8 @@ impl ApplicationHandler<Wake> for App {
             //   맥은 창이 키 창이어도 **앱이 비활성**(뒤에 있음)이면 깜빡이지 않는다(`NSApplication.isActive`).
             let app_active = nexa_sys::layer_present::app_active().unwrap_or(true);
             if self.focus == Focus::Editor && self.main_active && app_active {
-                self.redraw();
+                // ★ T-224: 깜빡임은 편집기 영역만 바꾼다 → 그 사각형만(설정 `gfx.partial_redraw` 끔 = 종전대로 전체).
+                self.redraw_rect(self.editors.cur().bounds());
             }
         }
         // ★ IOSurface 유휴 해제(118차 mac · nexa-ui 193 · `gfx.mac_present_trim_ms` · 0 = 끔): 메인 창에 한동안 프레임이 없으면 풀을 앞 장만

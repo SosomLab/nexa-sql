@@ -622,6 +622,12 @@ struct App {
     headless_dirty: std::cell::Cell<bool>,
     /// ★ 헤드리스 캡처(기동 명령 `capture:<png>`): 다음 프레임을 그린 뒤 present 전에 PNG로 쓴다(한 번).
     capture_req: Option<std::path::PathBuf>,
+    /// ★ 더티 영역 present(T-224 · `app/damage.rs`): 전체 요청 · 사각형 요청(합집합) · 지난 프레임 사각형 이력(최신 먼저) ·
+    ///   이번 프레임의 클립(부분 프레임을 그리는 동안만 `Some`).
+    dmg_full: std::cell::Cell<bool>,
+    dmg_rect: std::cell::Cell<Option<Rect>>,
+    dmg_prev: std::collections::VecDeque<Vec<Rect>>,
+    frame_clip: Option<Rect>,
     /// `NSQL_TRACE_IME=1` — 키·IME 사건을 stderr로(T-139 진단).
     trace_ime: bool,
     /// 지금 한글을 앱이 조합하는가(`sync_hangul_mode` · None = 아직 안 맞춤).
@@ -1473,7 +1479,14 @@ impl App {
         }
     }
 
+    /// 창 **전체**를 다시 그려 달라(기본 길 · 영역을 아는 요청은 `redraw_rect` — `app/damage.rs`).
     fn redraw(&self) {
+        self.dmg_full.set(true);
+        self.request_frame();
+    }
+
+    /// 프레임 요청만(전체 표시는 건드리지 않는다 — `redraw` · `redraw_rect`가 함께 쓴다).
+    fn request_frame(&self) {
         if let Some(w) = &self.window {
             self.tmark("request_redraw");
             w.request_redraw();
@@ -2173,6 +2186,10 @@ fn main() {
         frame_trace: std::env::var_os("NSQL_TRACE_FRAMES").map(|_| FrameTrace::new(boot)),
         headless_dirty: std::cell::Cell::new(false),
         capture_req: None,
+        dmg_full: std::cell::Cell::new(true),
+        dmg_rect: std::cell::Cell::new(None),
+        dmg_prev: std::collections::VecDeque::new(),
+        frame_clip: None,
         trace_ime: std::env::var_os("NSQL_TRACE_IME").is_some(),
         hangul_app: None,
         input_at: None,

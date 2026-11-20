@@ -9,6 +9,7 @@ pub(crate) mod commands;
 pub(crate) mod compare;
 mod completion;
 mod connwin;
+pub(crate) mod damage;
 mod define;
 mod demo;
 pub(crate) mod drivers;

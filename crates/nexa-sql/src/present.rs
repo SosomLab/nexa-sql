@@ -241,8 +241,25 @@ impl Presenter {
 }
 
 impl Buffer<'_> {
+    /// 버퍼 나이(T-224): 0 = 내용 미정(새 표면 · 크기 변경 뒤) · 1 = 바로 지난 프레임 · n = n프레임 전 내용(IOSurface 삼중 회전 3).
+    pub(crate) fn age(&self) -> u8 {
+        match &self.inner {
+            Inner::Soft(b) => b.age(),
+            Inner::Layer(f) => f.age(),
+        }
+    }
+
     /// 화면에 낸다.
     pub(crate) fn present(self) -> Result<(), ()> {
+        self.finish(None)
+    }
+
+    /// 이 사각형들만 낸다(T-224 · softbuffer `present_with_damage` · IOSurface = 그 사각형만 알파 채움) — 쓸 사각형이 없으면 전체.
+    pub(crate) fn present_damage(self, rects: &[nexa_ctl::geom::Rect]) -> Result<(), ()> {
+        self.finish(Some(rects))
+    }
+
+    fn finish(self, damage: Option<&[nexa_ctl::geom::Rect]>) -> Result<(), ()> {
         // ★ T-459 2차: 요청된 창이면 present 직전 픽셀을 PNG로(보이든 숨었든 같은 픽셀 · 주 창은 `paint.rs`의 `capture_req` 길).
         if let Some(path) = &self.capture {
             let png = crate::png::encode(self.size.0, self.size.1, &self);
@@ -254,10 +271,34 @@ impl Buffer<'_> {
         if let Some(w) = &self.show {
             w.set_visible(true);
         }
-        let r = match self.inner {
-            Inner::Soft(b) => b.present().map_err(|_| ()),
-            Inner::Layer(f) => {
+        let r = match (self.inner, damage) {
+            (Inner::Soft(b), None) => b.present().map_err(|_| ()),
+            (Inner::Soft(b), Some(rects)) => {
+                let dmg: Vec<softbuffer::Rect> = rects
+                    .iter()
+                    .filter_map(|r| {
+                        Some(softbuffer::Rect {
+                            x: u32::try_from(r.x.max(0)).ok()?,
+                            y: u32::try_from(r.y.max(0)).ok()?,
+                            width: NonZeroU32::new(u32::try_from(r.w).ok()?)?,
+                            height: NonZeroU32::new(u32::try_from(r.h).ok()?)?,
+                        })
+                    })
+                    .collect();
+                if dmg.is_empty() {
+                    b.present().map_err(|_| ())
+                } else {
+                    b.present_with_damage(&dmg).map_err(|_| ())
+                }
+            }
+            (Inner::Layer(f), None) => {
                 f.present();
+                Ok(())
+            }
+            (Inner::Layer(f), Some(rects)) => {
+                let dmg: Vec<(i32, i32, i32, i32)> =
+                    rects.iter().map(|r| (r.x, r.y, r.w, r.h)).collect();
+                f.present_damage(&dmg);
                 Ok(())
             }
         };

@@ -7193,6 +7193,16 @@ pub const REGISTRY: &[Entry] = &[
     },
     // ★ IOSurface 유휴 해제(118차 mac · nexa-ui 193차 `LayerPresenter::trim_idle` · HIDDEN): 마지막 프레임 뒤 이 시간(ms) 프레임이 없으면
     //   메인 창 표면 풀을 앞 장만 남긴다(0 = 끔). 10초 이하 기본값 = ms 단위 규칙(94 §6-5).
+    // ★ 더티 영역 present(T-224 · D-375 · 11-21): 캐럿 깜빡임 같은 "영역을 아는" 프레임은 그 사각형만 그리고 낸다. 기본 끔 =
+    //   화면 일부가 옛 그림으로 남는 결함이 숨어 있을 수 있어 실기 확인 뒤 켠다(사용자 11-21).
+    Entry {
+        key: "gfx.partial_redraw",
+        cat: Msg::CatPerformance,
+        label: Msg::LblPartialRedraw,
+        desc: Msg::DescPartialRedraw,
+        kind: SettingKind::Bool,
+        default: "off",
+    },
     Entry {
         key: "gfx.mac_present_trim_ms",
         cat: Msg::CatPerformance,

@@ -2,6 +2,7 @@
 //!
 //! main.rs의 `impl App`에서 기능별로 옮긴 조각(docs/93 §4). 상태는 `App` 한 곳 · 여기는 동작만.
 
+use crate::app::damage::{ClipExt, FramePlan};
 use crate::*;
 
 /// `paint`가 표면을 빌리기 **전에** 셈해 둔 값과 프레임 공통 수치(221차 T-248 ④) — 세그먼트 메서드 `paint_seg_*`가 함께 본다(읽기 전용).
@@ -96,6 +97,13 @@ impl App {
         };
         let s = self.scale;
         let (wi, hi) = (size.width as i32, size.height as i32);
+        // ★ 더티 영역 present(T-224 · `gfx.partial_redraw`): 이 프레임의 이유가 사각형 요청뿐이면 그 사각형으로 클립해 그리고 그것만 낸다.
+        let win_rect = Rect::new(0, 0, wi, hi);
+        let (plan, own, content_full) = self.frame_plan_now(buf.age(), win_rect);
+        self.frame_clip = match &plan {
+            FramePlan::Full => None,
+            FramePlan::Partial(r) => r.iter().copied().reduce(|a, b| a.union(&b)),
+        };
         // ★ 탭별 분할 창(11-11): 활성 탭이 바뀌어 켬/끔이 달라졌으면 그리기 전에 배치를 다시 잡는다.
         if self.ai_enabled() {
             let want = self.ai_side_on() && self.editors.active_view().is_none();
@@ -205,8 +213,16 @@ impl App {
                 eprintln!("[capture] {}: {e}", path.display());
             }
         }
-        let _ = buf.present();
+        let clip = self.frame_clip.take();
+        let _ = match clip {
+            Some(c) => buf.present_damage(&[c]),
+            None => buf.present(),
+        };
+        self.frame_note(&own, win_rect, content_full);
         mark(&mut t_sec, &mut marks); // 5 = present
+        if let (Some(c), true) = (clip, self.frame_trace.is_some()) {
+            eprintln!("[frames] partial {}x{}+{}+{}", c.w, c.h, c.x, c.y);
+        }
         if let Some(tr) = &mut self.frame_trace {
             tr.add(t_frame.elapsed().as_micros() as u32, &marks);
             if let Some(t0) = self.input_at.take() {
@@ -250,6 +266,7 @@ impl App {
         } = *env;
         let prefs = FontPrefs::with_base(ui_px);
         let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s)
+            .clipped(self.frame_clip)
             .with_fonts(prefs)
             .with_caret_on(caret_on);
         dc.fill_rect(Rect::new(0, 0, wi, hi), th.window_bg);
@@ -555,6 +572,7 @@ impl App {
         } = *env;
         let prefs = FontPrefs::with_base(ui_px);
         let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s)
+            .clipped(self.frame_clip)
             .with_fonts(prefs)
             .with_caret_on(caret_on);
         let sy = hi - px(24.0, s);
@@ -705,6 +723,7 @@ impl App {
                         ..FontPrefs::default()
                     };
                     let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s)
+                        .clipped(self.frame_clip)
                         .with_fonts(vprefs)
                         .with_caret_on(caret_on);
                     if view_key.as_deref() != Some(self.ext_view_key.as_str()) {
@@ -732,6 +751,7 @@ impl App {
                         ..FontPrefs::default()
                     };
                     let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s)
+                        .clipped(self.frame_clip)
                         .with_fonts(vprefs)
                         .with_caret_on(caret_on);
                     let info = self.ai_view_info();
@@ -747,6 +767,7 @@ impl App {
                 // ★ 비교 탭(T-283 2단계) = 2-pane diff 뷰어(고정폭 글꼴 · 편집기 자리 전체).
                 None if diff_tab => {
                     let mut dc = RasterCtx::new(&mut *gfx, &self.mono_font, s)
+                        .clipped(self.frame_clip)
                         .with_fonts(prefs)
                         .with_caret_on(caret_on);
                     self.diff_view.set_bounds(self.editors.editor_bounds(), s);
@@ -754,6 +775,7 @@ impl App {
                 }
                 None => {
                     let mut dc = RasterCtx::new(&mut *gfx, &self.mono_font, s)
+                        .clipped(self.frame_clip)
                         .with_fonts(prefs)
                         .with_caret_on(caret_on);
                     self.editors.paint_bodies(&mut dc, &th);
@@ -780,6 +802,7 @@ impl App {
                     ..FontPrefs::default()
                 };
                 let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s)
+                    .clipped(self.frame_clip)
                     .with_fonts(vprefs)
                     .with_caret_on(caret_on);
                 let r = self.ai.side_rect;
@@ -803,7 +826,9 @@ impl App {
                 e => e,
             };
             let prefs = FontPrefs::with_base(exp_px);
-            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(prefs);
+            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s)
+                .clipped(self.frame_clip)
+                .with_fonts(prefs);
             self.objdetail.paint_body(&mut dc, &th);
         }
     }
@@ -873,7 +898,9 @@ impl App {
             // In selection 토글 = 편집기에 선택이 있거나 이미 범위가 잡혀 있을 때만(사용자 09-17).
             let sel_ok = self.find_scope.is_some() || self.editors.selection_summary().is_some();
             self.find.set_selection_available(sel_ok);
-            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(prefs);
+            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s)
+                .clipped(self.frame_clip)
+                .with_fonts(prefs);
             self.find.paint(&mut dc, &th);
             // 결과 도구줄 상태 글자 = 상태줄과 같은 UI 글꼴·크기(사용자 09-16).
             if !view_mode {
@@ -891,7 +918,9 @@ impl App {
                 e => e,
             };
             let prefs = FontPrefs::with_base(exp_px);
-            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(prefs);
+            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s)
+                .clipped(self.frame_clip)
+                .with_fonts(prefs);
             self.act_bar.paint(&mut dc, &th);
             self.explorer.set_font_px(exp_px);
             self.explorer.paint(&mut dc, &th);
@@ -919,7 +948,9 @@ impl App {
             let fpx = self.settings.font_px("ui.flash_font_size");
             let prefs = FontPrefs::with_base(if fpx > 0.0 { fpx } else { ui_px });
             let font = self.flash_font.as_ref().unwrap_or(&self.ui_font);
-            let mut dc = RasterCtx::new(&mut *gfx, font, s).with_fonts(prefs);
+            let mut dc = RasterCtx::new(&mut *gfx, font, s)
+                .clipped(self.frame_clip)
+                .with_fonts(prefs);
             self.project_panel.paint_flash(&mut dc, &th);
         }
     }
@@ -941,7 +972,7 @@ impl App {
         } = *env;
         // ── 스플리터(탐색기|편집기 · 편집기|결과) — 본문 위 · hover 시 1초에 걸쳐 진해지는 손잡이(사용자 09-16)
         {
-            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s);
+            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).clipped(self.frame_clip);
             self.split_v.paint(&mut dc, &th);
             if !view_mode {
                 self.split_h.paint(&mut dc, &th);
@@ -954,7 +985,9 @@ impl App {
         //    남았다(09-16 Windows 캡처). nexa-ctl `Toolbar::paint_tooltip` 규약대로 팝업 층에서.
         {
             let prefs = FontPrefs::with_base(ui_px);
-            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(prefs);
+            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s)
+                .clipped(self.frame_clip)
+                .with_fonts(prefs);
             // (툴바 버튼 툴팁은 메뉴바 뒤 최상위에서 — 아래 메뉴바 블록 · 11-11.)
             // 툴바 그룹 드래그 고스트 — 편집기 위까지 나가므로 팝업 층에.
             self.tool_dock.paint_drag_overlay(&mut dc, &th);
@@ -1090,7 +1123,9 @@ impl App {
                 },
                 ..FontPrefs::default()
             };
-            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s).with_fonts(prefs);
+            let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s)
+                .clipped(self.frame_clip)
+                .with_fonts(prefs);
             self.menubar.paint(&mut dc, &th);
             // ★ 툴바 버튼 툴팁 = 메뉴바 **뒤**(진짜 최상위 · 사용자 11-11 결정 A): 전역 툴팁 방향이 "위"(10-07 `ui.tooltip_above`)라
             //   맨 위 툴바의 툴팁은 메뉴바 띠에 놓이는데, 종전엔 메뉴바 패스가 그 뒤에 와서 덮어 **툴바 툴팁이 전부 안 보였다**.
