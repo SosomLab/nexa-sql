@@ -24,7 +24,7 @@
 | **TablePlus** | 네이티브(Swift/C++) · 드라이버 직접 | 1초 내 기동 · 큰 결과셋 스크롤 부드러움(네이티브 그리드 가상화) · 메모리 소비가 쿼리·전송에만 | 우리와 같은 방향(네이티브·자체 그리드) — **기본 결과 상한 + 스크롤 시 추가 페치**를 그대로 |
 | **DataGrip** | JVM · JDBC | **페이지 500행 기본**(`Limit page size`) · 다음 페이지 = `OFFSET`으로 **재질의**(메모리 대신 서버 왕복) · 서버 실행은 제한하지 않음(Athena 비용 주의) | 페이지 모델의 정직함 — 단, **커서 유지 페치**(Oracle/MSSQL은 서버 커서가 있다)를 1차로, OFFSET 재질의는 커서 없는 방언 폴백(D-43) |
 | **SQL*Plus / SQLcl** | 네이티브/JVM · OCI | `ARRAYSIZE` 기본 15 → 150행에 10회 왕복 · 50~2000으로 올리면 왕복 급감(대량 추출 스윗스팟 2000~3000) · `ROWPREFETCH`가 첫 페치를 실행과 합침 | **배열 페치 크기 = 1급 설정**(우리 Oracle 기본 500 · `SET FETCHSIZE`) · 첫 페치 프리페치 |
-| **Oracle DBMS_OUTPUT** | 서버 버퍼 → 클라이언트 폴링 | 대부분 클라이언트가 블록 종료 후 회수 · `GET_LINE` 줄마다 왕복 vs **`GET_LINES` 배열**(왕복 감소) · 기본 버퍼 20,000자 · SQL Developer는 폴링 패널 | 지금 구현 = `GET_LINE` 줄 단위(100k 상한) → **`GET_LINES(n)` 배열로 교체**(T-49) · 플러시 시간·줄 수를 `OutputFlush` 단계로 상시 표시 ✅ |
+| **Oracle DBMS_OUTPUT** | 서버 버퍼 → 클라이언트 폴링 | 대부분 클라이언트가 블록 종료 후 회수 · `GET_LINE` 줄마다 왕복 vs **`GET_LINES` 배열**(왕복 감소) · 기본 버퍼 20,000자 · SQL Developer는 폴링 패널 | ~~지금 구현 = `GET_LINE` 줄 단위(100k 상한) → `GET_LINES(n)` 배열로 교체~~ → ✅ **11-21 T-49 묶음 회수**(익명 블록 하나가 여러 줄을 OUT 버퍼 하나에 이어 돌려줌 · 배열 바인드 없음 · 넘친 줄은 `cap/4` 글자 조각 · 100k 상한 유지 · 실측 11-21(Thin · 사내 Oracle · Debug CLI `--timing` · 1,500줄) = 변경 전 30.9~31.1 s → 변경 뒤 62~70 ms(≈470배)) · 플러시 시간·줄 수를 `OutputFlush` 단계로 상시 표시 ✅ |
 | VS Code · Sublime(편집기) | 자체 렌더 · 가상화 | 보이는 줄만 레이아웃·셰이핑(줄 캐시) · 스크롤 = 인덱스 이동 | 편집기 E4([17](17-editor-incremental-plan.md)) · 그리드 가상화(nexa-dir2 `rows.rs` 이식 — 사용자 09-14 *"그리드는 dir2 grid 차용"*) |
 
 출처: [DBeaver #17962 큰 테이블 메모리](https://github.com/dbeaver/dbeaver/issues/17962) · [#38117 Memory Usage](https://github.com/dbeaver/dbeaver/issues/38117) · [#4590 600MB](https://github.com/dbeaver/dbeaver/issues/4590) · [#2275 fetch-size 무효](https://github.com/dbeaver/dbeaver/issues/2275) · [#1541 최대 메모리 제한](https://github.com/dbeaver/dbeaver/issues/1541) · [heap space 토론](https://github.com/orgs/dbeaver/discussions/12498) · [TablePlus vs DBeaver(Mako)](https://mako.ai/guides/tableplus-vs-dbeaver) · [QueryGlow 비교](https://queryglow.com/blog/tableplus-vs-dbeaver) · [DataGrip Rows/페이지](https://www.jetbrains.com/help/datagrip/rows.html) · [DataGrip 페이지 재질의](https://intellij-support.jetbrains.com/hc/en-us/community/posts/5036270349458-Does-Datagrip-query-again-when-I-change-the-page-in-a-result-tab-Does-it-always-happen) · [SQL*Plus ARRAYSIZE](https://www.oreilly.com/library/view/oracle-sql-plus-the/0596007469/re42.html) · [fetch size 튜닝](https://www.igorkromin.net/index.php/2014/05/21/tuning-the-sqlplus-fetch-size-for-better-performance/) · [ROWPREFETCH](https://connor-mcdonald.com/2020/04/24/sql-plus-the-sweet-spot/) · [DBMS_OUTPUT 문서](https://docs.oracle.com/en/database/oracle/oracle-database/19/arpls/DBMS_OUTPUT.html) · [DBMS_OUTPUT super fast](https://www.thatjeffsmith.com/archive/2016/04/getting-your-dbms_output-super-fast/)
@@ -52,7 +52,7 @@
 | **Render** | 프레임 그리기(첫 프레임·이후 프레임) | 호스트 · ✅ 그리드 푸터(매 프레임) | 행/셀 수 |
 | Navigate | 스크롤·추가 페치·페이지 전환 | 호스트 · ☐(T-48 페치 모델과 함께) | 추가 행 |
 | Cleanup | 수신 버퍼·캐시 해제 | 호스트 · ☐ | 회수 바이트 |
-| **OutputFlush** | `DBMS_OUTPUT` 회수(프로시저 로그) | 드라이버 · ✅ Oracle(줄 수 · `GET_LINE per line`) | 줄 수 |
+| **OutputFlush** | `DBMS_OUTPUT` 회수(프로시저 로그) | 드라이버 · ✅ Oracle(줄 수 · `GET_LINE batched` · T-49 11-21) | 줄 수 |
 | **Commit** | autocommit 커밋 | 러너 · ✅ | — |
 
 표시: CLI `nsql run --timing` → `⏱ execute 12.3ms · fetch 340.1ms (500 rows) 1.2 MB · output 3.2ms (12 lines) · commit 0.4ms · total 356ms` · GUI 상태줄 같은 문자열 · 그리드 푸터 `1–40 / 500 · load 0.8ms · render 6.2ms · ~1.2 MB`.
@@ -70,7 +70,7 @@
 | GUI | 상태줄 요약 · 그리드 푸터 · **실행 히스토리 패널**(항목별 Timeline 표 · 정렬 = 느린 단계) | T-48 |
 | 로그 파일 | `NSQL_LOG=timing` 이면 항목마다 한 줄(TSV: ts · 프로필 · 문장 요약 · 단계별 µs · 행 · 바이트) | `<설정 폴더>/logs/timing-YYYYMMDD.tsv` · 회전 · T-47 |
 | 예산 경고 | 단계가 예산(§5)을 넘으면 상태줄 색 + 힌트("fetch 3.1s — FETCHSIZE 500 → 2000?") | T-48 |
-| 프로시저 로그 | `OutputFlush` 줄 수·시간 · 버퍼 초과(ORA-20000) 감지 → "SET SERVEROUTPUT ON SIZE UNLIMITED" 힌트 | ✅ 단계 · 힌트 ☐ |
+| 프로시저 로그 | `OutputFlush` 줄 수·시간 · 버퍼 초과(ORA-20000) 감지 → "SET SERVEROUTPUT ON SIZE UNLIMITED" 힌트 | ✅ 단계 · 힌트 = 해당 없음(늘 `ENABLE(NULL)` = 무제한 · `SET SERVEROUTPUT SIZE n` 무시 = 사용자 11-21 D-482) |
 
 계측 원칙: 문자열 포맷은 **표시 시점**에만(경로 중엔 `Duration`·정수만) · `Timeline`은 항목당 1개 · 스팬 수 ≤ 16(고정 상한) — 계측이 성능을 깎지 않는다.
 
@@ -102,7 +102,7 @@
 - 유휴 시 큰 결과(> 예산) 경고 배지 · 사용자가 "비우기"로 회수 · `Cleanup` 스팬에 회수 바이트.
 
 ### 4-6. 프로시저 로그(DBMS_OUTPUT)
-- `GET_LINES(lines, numlines)` 배열 회수(왕복 1/100) · 실행 중 **주기 폴링 옵션**(SQL Developer식 — 긴 프로시저의 진행 로그를 보며 기다림) · 버퍼 `UNLIMITED` 기본 안내 · 시간·줄 수 상시 표시 ✅.
+- ✅ 묶음 회수(T-49 11-21 · 실측 11-21(Thin · 사내 Oracle · Debug CLI `--timing` · 1,500줄) = 변경 전 30.9~31.1 s → 변경 뒤 62~70 ms(≈470배)) · ~~실행 중 주기 폴링 옵션~~ = 접음(사용자 11-21 D-482 · T-71 `oracle.live.*`로 갈음) · 버퍼 = 늘 무제한(`ENABLE(NULL)` · `SIZE n` 무시) · 시간·줄 수 상시 표시 ✅.
 
 ---
 
@@ -115,7 +115,7 @@
 | Render(프레임) | ≤ 8 ms | 120 Hz 여유 |
 | 10만 행 메모리 | ≤ 행당 100 B + 문자열 실측 | 컬럼 저장소 목표 |
 | Fetch 왕복 | 1,000행 ≤ 2 왕복 | 배열 500 기본 |
-| OutputFlush | 1,000줄 ≤ 10 왕복 | `GET_LINES` 100줄 배열 |
+| OutputFlush | 1,000줄 ≤ 10 왕복 | ✅ 묶음 회수(T-49 · 1,500줄 62~70 ms · 종전 31 s) |
 | 기동 | ≤ 300 ms(폰트 로드 포함) | TablePlus "1초 내" 이상 |
 
 ---
