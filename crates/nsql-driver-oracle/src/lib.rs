@@ -448,11 +448,16 @@ impl OracleSession {
             .statement(&nsql_core::dbms_output_batch_sql(cap))
             .build()
             .map_err(|_| ())?;
+        let parts: Vec<String> = (1..=nsql_core::dbms_output_carry_parts(cap))
+            .map(|i| format!("c{i}"))
+            .collect();
         while lines.len() < max {
             stmt.bind("buf", &OracleType::Varchar2(cap))
                 .map_err(|_| ())?;
-            stmt.bind("carry", &OracleType::Varchar2(cap))
-                .map_err(|_| ())?;
+            for c in &parts {
+                stmt.bind(c.as_str(), &OracleType::Varchar2(cap))
+                    .map_err(|_| ())?;
+            }
             stmt.bind("st", &OracleType::Number(0, 0)).map_err(|_| ())?;
             stmt.execute(&[]).map_err(|_| ())?;
             let st: i64 = stmt.bind_value("st").unwrap_or(1);
@@ -461,8 +466,13 @@ impl OracleSession {
             if st != 2 {
                 break;
             }
-            let carry: Option<String> = stmt.bind_value("carry").map_err(|_| ())?;
-            lines.push(carry.unwrap_or_default());
+            // 넘친 한 줄 = 조각을 그대로 이어 붙인다(빈 조각 = NULL).
+            let mut line = String::new();
+            for c in &parts {
+                let part: Option<String> = stmt.bind_value(c.as_str()).map_err(|_| ())?;
+                line.push_str(part.as_deref().unwrap_or(""));
+            }
+            lines.push(line);
         }
         Ok(lines)
     }

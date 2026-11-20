@@ -386,7 +386,7 @@ fn oracle_session_variables_refcursor_and_dbms_output() {
 }
 
 /// ★ T-49(11-21): DBMS_OUTPUT **묶음 회수** — 1,500줄 + 빈 줄 + `:`·한글이 든 줄 + 예산을 넘는 긴 줄(따로 실려 온다) + 꼬리 줄이
-/// 순서·내용 그대로 온다(두 드라이버). 긴 줄은 OUT 폭이 4000으로 내려간 클라이언트(macOS IC 19.16)에서만 4000으로 잘린다.
+/// 순서·내용 그대로 온다(두 드라이버). 긴 줄은 OUT 폭이 4000으로 내려간 클라이언트(macOS IC 19.16)에서만 9,000글자로 잘린다.
 #[test]
 fn oracle_dbms_output_batch_keeps_every_line() {
     for_each_oracle(|mut r| {
@@ -410,7 +410,7 @@ fn oracle_dbms_output_batch_keeps_every_line() {
         assert_eq!(got[1500], "");
         assert_eq!(got[1501], "한글:1:2");
         assert!(
-            matches!(got[1502].len(), 20000 | 4000) && got[1502].bytes().all(|b| b == b'x'),
+            matches!(got[1502].len(), 20000 | 9000) && got[1502].bytes().all(|b| b == b'x'),
             "긴 줄 {}",
             got[1502].len()
         );

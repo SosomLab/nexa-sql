@@ -1460,29 +1460,45 @@ pub fn plsql_error_position(message: &str, sql: &str) -> Option<usize> {
 
 /// ★ DBMS_OUTPUT **묶음 회수** 블록(T-49 · 11-21 · Oracle 두 드라이버 공용): 종전 = `GET_LINE` 한 줄에 왕복 한 번(1,000줄 = 1,000왕복).
 /// 이 블록은 서버에서 `GET_LINE`을 돌며 줄을 `<글자 수>:<글>` 꼴로 `:buf` 하나에 이어 붙여 **왕복 한 번에 여러 줄**을 준다
-/// (컬렉션 바인드가 필요 없다 — 두 드라이버 crate 어디서나 되는 VARCHAR2 OUT 둘 + NUMBER OUT 하나).
+/// (컬렉션 바인드가 필요 없다 — 두 드라이버 crate 어디서나 되는 VARCHAR2 OUT 몇 개 + NUMBER OUT 하나).
 ///
-/// - `:buf` = 묶인 줄([`dbms_output_unpack`]) · 예산 = `cap / 4` 바이트(DB 문자셋 → 클라이언트 UTF-8로 늘어나도 OUT 폭 `cap` 안).
-/// - `:carry` = 예산에 들지 않아 **이미 꺼낸** 한 줄(되돌려 넣을 수 없다 → 따로 준다 · `cap` 바이트로 자른다 = 종전 4000 폭
-///   클라이언트는 긴 줄에서 ORA-06502로 뒤 줄까지 잃었다).
-/// - `:st` = 1 버퍼 끝 · 2 `:carry` 있음(더 남았을 수 있다 → 다시 부른다). 빈 줄(NULL)은 `0:`으로 보존된다.
+/// `cap` = 그 드라이버가 VARCHAR2 OUT 하나로 받을 수 있는 **바이트** 수(OCI 32767 · 4000으로 내려간 클라이언트 4000 · Thin 16000 =
+/// crate의 기본 OUT 폭 4000글자 × 4).
+/// - `:buf` = 묶인 줄([`dbms_output_unpack`]) · 예산 = `cap / 4` 바이트(DB 문자셋 → 클라이언트 UTF-8로 늘어나도 OUT 폭 안).
+/// - `:c1`‥`:cN`(N = [`dbms_output_carry_parts`]) = 예산에 들지 않아 **이미 꺼낸** 한 줄(되돌려 넣을 수 없다 → 따로 준다) —
+///   `cap / 4` **글자**씩 나눠 싣는다(글자당 최대 4바이트라 조각마다 OUT 폭 안 · 이어 붙이면 원문). ★ 한 덩이로 실으면 Thin에서
+///   16000바이트를 넘는 줄이 ORA-06502로 그 호출 전체(같이 꺼낸 줄 포함)를 잃었다(11-21 실서버 V2: 1,504줄 중 1,328줄).
+///   조각 수 상한(9)을 넘는 글자는 잘린다 = 4000 폭 클라이언트의 9,000글자 초과분뿐.
+/// - `:st` = 1 버퍼 끝 · 2 넘친 줄 있음(더 남았을 수 있다 → 다시 부른다). 빈 줄(NULL)은 `0:`으로 보존된다.
 #[must_use]
 pub fn dbms_output_batch_sql(cap: u32) -> String {
-    let budget = (cap / 4).max(64);
+    let unit = (cap / 4).max(64);
+    let mut carry = String::new();
+    for i in 0..dbms_output_carry_parts(cap) {
+        let from = i as u32 * unit + 1;
+        carry.push_str(&format!(":c{} := SUBSTR(l, {from}, {unit}); ", i + 1));
+    }
     format!(
-        "DECLARE l VARCHAR2(32767); s INTEGER; b VARCHAR2(32767); c VARCHAR2(32767); r PLS_INTEGER := 1; \
+        "DECLARE l VARCHAR2(32767); s INTEGER; b VARCHAR2(32767); r PLS_INTEGER := 1; \
          BEGIN \
            LOOP \
              DBMS_OUTPUT.GET_LINE(l, s); \
              EXIT WHEN s <> 0; \
-             IF NVL(LENGTHB(b), 0) + NVL(LENGTHB(l), 0) + 8 > {budget} THEN \
-               c := SUBSTRB(l, 1, {cap}); r := 2; EXIT; \
+             IF NVL(LENGTHB(b), 0) + NVL(LENGTHB(l), 0) + 8 > {unit} THEN \
+               {carry}r := 2; EXIT; \
              END IF; \
              b := b || TO_CHAR(NVL(LENGTH(l), 0)) || ':' || l; \
            END LOOP; \
-           :buf := b; :carry := c; :st := r; \
+           :buf := b; :st := r; \
          END;"
     )
+}
+
+/// [`dbms_output_batch_sql`]이 넘친 줄을 싣는 OUT 조각 수(`:c1`‥) — 줄 상한 32767글자를 `cap / 4` 글자씩 · 최대 9.
+#[must_use]
+pub fn dbms_output_carry_parts(cap: u32) -> usize {
+    let unit = (cap / 4).max(64);
+    (32767u32.div_ceil(unit) as usize).min(9)
 }
 
 /// [`dbms_output_batch_sql`]의 `:buf` → 줄들(`<글자 수>:<글>` 반복 · 글자 수 = Oracle `LENGTH` = 코드포인트). 꼴이 어긋나면
@@ -2163,12 +2179,19 @@ mod plsql_errpos_tests {
         // 글자 수가 남은 글보다 크면 끝까지 · 머리가 숫자가 아니면 남은 글 그대로.
         assert_eq!(un("9:abc"), vec!["abc"]);
         assert_eq!(un("1:xoops"), vec!["x", "oops"]);
-        // 예산 = 폭의 1/4(문자셋 변환 여유) · 넘는 줄은 폭으로 잘라 :carry로.
+        // 예산 = 폭의 1/4(문자셋 변환 여유) · 넘는 줄은 폭의 1/4 글자씩 조각으로(:c1‥ · 줄 상한 32767글자를 덮는다 · 최대 9).
+        use super::dbms_output_carry_parts as parts;
         let sql = dbms_output_batch_sql(32767);
-        assert!(sql.contains("> 8191 THEN") && sql.contains("SUBSTRB(l, 1, 32767)"));
+        assert_eq!(parts(32767), 5);
+        assert!(sql.contains("> 8191 THEN") && sql.contains(":c5 := SUBSTR(l, 32765, 8191);"));
+        assert!(!sql.contains(":c6"));
+        let sql = dbms_output_batch_sql(16000);
+        assert_eq!(parts(16000), 9);
+        assert!(sql.contains("> 4000 THEN") && sql.contains(":c9 := SUBSTR(l, 32001, 4000);"));
         let sql = dbms_output_batch_sql(4000);
-        assert!(sql.contains("> 1000 THEN") && sql.contains("SUBSTRB(l, 1, 4000)"));
-        assert!(sql.contains(":buf") && sql.contains(":carry") && sql.contains(":st"));
+        assert_eq!(parts(4000), 9);
+        assert!(sql.contains("> 1000 THEN") && sql.contains(":c1 := SUBSTR(l, 1, 1000);"));
+        assert!(sql.contains(":buf") && sql.contains(":st") && !sql.contains(":carry"));
     }
 
     /// ★ T-495: 닫지 않은 토큰이 **열린 자리**를 준다(문장 끝이 아니라) — 뒤 문장까지 삼킨 글에서도 · 한글 뒤에서도 글자 인덱스.

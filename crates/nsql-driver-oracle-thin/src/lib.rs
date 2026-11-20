@@ -281,20 +281,32 @@ impl ThinSession {
             return lines;
         }
         // ★ T-49(11-21): 한 줄에 왕복 한 번(`GET_LINE`) → 묶음 회수(왕복 한 번에 여러 줄 · OCI 어댑터와 같은 블록).
-        let sql = nsql_core::dbms_output_batch_sql(32767);
+        //   OUT 폭 = crate 기본(`DB_TYPE_VARCHAR` 4000글자 × 4 = 16000바이트 · 늘릴 길이 없다) → 넘친 줄은 4000글자 조각 9개로 받는다.
+        const CAP: u32 = 16_000;
+        let sql = nsql_core::dbms_output_batch_sql(CAP);
         let Ok(builder) = self.conn.statement(&sql) else {
             return lines;
         };
         let Ok(mut stmt) = builder.build() else {
             return lines;
         };
+        let parts: Vec<String> = (1..=nsql_core::dbms_output_carry_parts(CAP))
+            .map(|i| format!("c{i}"))
+            .collect();
+        let mut binds: Vec<(&str, &dyn oracledb::ToDbValue)> =
+            vec![("buf", &oracledb::DB_TYPE_VARCHAR)];
+        for c in &parts {
+            binds.push((c.as_str(), &oracledb::DB_TYPE_VARCHAR));
+        }
+        binds.push(("st", &oracledb::DB_TYPE_NUMBER));
         while lines.len() < 100_000 {
-            let Ok(mut r) = stmt.execute_named(&[
-                ("buf", &oracledb::DB_TYPE_VARCHAR),
-                ("carry", &oracledb::DB_TYPE_VARCHAR),
-                ("st", &oracledb::DB_TYPE_NUMBER),
-            ]) else {
-                break;
+            let mut r = match stmt.execute_named(&binds) {
+                Ok(r) => r,
+                Err(e) => {
+                    // 조용히 끊지 않는다 — 이 호출이 꺼낸 줄은 잃었다는 것을 Output에 남긴다(진단 글 = 영어 고정).
+                    lines.push(format!("SERVEROUTPUT: reading DBMS_OUTPUT failed ({e})"));
+                    break;
+                }
             };
             let row = r.out_bind_data();
             let st = out_index(&row, "st")
@@ -310,7 +322,13 @@ impl ThinSession {
             if st != 2 {
                 break;
             }
-            lines.push(text("carry").unwrap_or_default());
+            // 넘친 한 줄 = 조각을 그대로 이어 붙인다(빈 조각 = NULL).
+            lines.push(
+                parts
+                    .iter()
+                    .filter_map(|c| text(c.as_str()))
+                    .collect::<String>(),
+            );
         }
         lines
     }
