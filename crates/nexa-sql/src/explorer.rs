@@ -3136,9 +3136,16 @@ impl Explorer {
             NodeKind::Folder { schema, kind } => format!("{kind:?} · {schema}"),
             NodeKind::Object(o) => {
                 let mut s = format!("{:?} · {}.{}", o.kind, o.schema, o.name);
-                // 루틴 세부 타입(SQL Server `type_desc` · ㉛)·PG 서명은 툴팁에.
-                if matches!(o.kind, ObjectKind::Procedure | ObjectKind::Function)
-                    && !o.extra.is_empty()
+                // 루틴 세부 타입(SQL Server `type_desc` · ㉛)·PG 서명은 툴팁에 · 스토리지 종류(T-272)는 목록뿐이라 부가(유형 · DEFAULT ·
+                // 파티션 수)를 볼 자리가 여기뿐이다(11-21 V1: 파일 그룹 `PRIMARY`의 부가가 어디에도 안 보였다).
+                if matches!(
+                    o.kind,
+                    ObjectKind::Procedure
+                        | ObjectKind::Function
+                        | ObjectKind::Filegroup
+                        | ObjectKind::PartitionScheme
+                        | ObjectKind::PartitionFunction
+                ) && !o.extra.is_empty()
                 {
                     s.push_str(" · ");
                     s.push_str(&o.extra);
