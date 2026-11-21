@@ -169,6 +169,6 @@ oracle://u:p@10.0.0.5:1521/ORCL?ssh=me@bastion:2222&ssh_key=C:/keys/id_ed25519
 
 - **언제**: Oracle OS 인증(`/` · 외부 인증) · PostgreSQL `trust` · 비밀번호 없는 계정처럼 **비밀번호를 보내지 않는 것이 뜻**인 프로필. ★ 권장 D-115 "두지 않음"을 사용자가 뒤집은 결정(D-484 ①).
 - **저장**: 프로필 파일에 평문 키 `nopassword=on`(비밀이 아니므로 봉투 없음 · `secret=` 줄 없음) · 다시 읽으면 비밀번호 = `Some("")`(빈 값 명시) · 내보내기/가져오기에도 남는다(§13 · 봉투는 빠지지만 이 키는 남음).
-- **CLI**: 접속 문자열에서 비밀번호 칸을 비우면(`postgres://u:@h:5432/db` · `oracle://u:@h:1521/svc`) `nsql conn add`가 `nopassword=on`으로 저장 · `nsql conn show`는 `u/***`로 가린다(관찰 11-21: 빈 비밀번호도 `***` — 개발 판단 대기).
+- **CLI**: 접속 문자열에서 비밀번호 칸을 비우면(`postgres://u:@h:5432/db` · `oracle://u:@h:1521/svc`) `nsql conn add`가 `nopassword=on`으로 저장 · `nsql conn show`는 봉투가 있을 때만 `***` · nopassword 프로필은 `u@host`(2d066ff9 · 11-21 관찰 2 수정 · `conn add`의 "저장:" 안내 줄은 아직 `u/***`).
 - **GUI**: 접속 창 폼 사용자 줄 오른쪽 체크 **"비밀번호 없음"**(`no_pw`) — 켜면 접속 때 묻지 않고 빈 비밀번호를 보낸다 · 그 프로필을 폼에 채우면 체크된 채 열린다 · 목록 행의 Test/Connect 활성 판정(`row_ready`)은 이 체크를 비밀번호가 있는 것으로 본다(`no_pw_exempt` MC/DC).
 - **검증(11-21)**: V1 = 격리 홈 CLI 저장 · 프로필 파일 · 폼 체크(한/영 라벨 잘림 없음) ✓ · 실서버 접속(Oracle OS 인증 · PG trust) = 미검증(사내 DBMS 정지 · STATUS ⑦) · [journal 11-21 §20](journal/2026-11-21.md).
