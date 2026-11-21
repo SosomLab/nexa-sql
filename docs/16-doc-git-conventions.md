@@ -136,7 +136,7 @@ release: 0.11.0 승격(컬럼 리사이즈 단독 조절·Ctrl+V 대상 보완) 
 2. **커밋 전** = `cargo fmt --all -- --check` **두 작업공간**(nexa-sql · 바뀌었으면 nexa-ui — 파일별 rustfmt는 마지막 수정 뒤 빠지기 쉬움) · `git add <파일>`만 · `git diff --cached --stat`로 의도한 파일만 staged인지(`git mv`는 즉시 스테이징) · 메시지 끝 = 세션이 안내하는 `Co-Authored-By:` 줄 그대로 · 메시지에 실제 IP·계정·업무 코드 금지([61 §2-1](61-core-design-and-working-rules.md) 익명화).
 3. **빌드 요청·push 전** = `scripts/check-3os.sh --quick`(bin의 dead_code는 `clippy -p`로 안 잡힘) · push 전 전체 = `scripts/check-3os.sh`.
 4. `main`에 `--ff-only` 병합 → 로컬 브랜치 삭제 → `docs/BRANCHES.md`에 한 줄.
-5. **push = 사용자 요청 때만** · 형제 저장소를 함께 고쳤으면 **nexa-ui 먼저** · 버전 태그는 별도 승인.
+5. **push = 사용자 요청 때만**(★ 11-21 사용자 "진행 간 push도 진행" = 이번 작업 동안 **검증을 통과한 묶음은 병합할 때마다 push**로 대체 · push 전 점검(fmt · clippy · 관련 시험 · check-3os --quick)은 그대로 필수 · [journal 11-21 §30](journal/2026-11-21.md)) · 형제 저장소를 함께 고쳤으면 **nexa-ui 먼저** · 버전 태그는 별도 승인.
 6. **push 뒤 CI** = `gh run list --commit <전체 SHA>`(짧은 해시는 `git rev-parse`로 펼침 · 비인증 API 시간당 60회 한도) · 실패 = `gh run view <id> --log-failed` → 결과를 journal(+ BRANCHES 줄)에.
 7. **문서** = 한 작업 한 트랜잭션(journal → DEVLOG → STATUS → MILESTONES/TODO → BRANCHES) · 끝나면 STATUS 맨 위 "다음 세션 시작점"이 최신인지 본다(CLAUDE.md에는 차수 요약을 쌓지 않는다).
 8. **릴리스·개발 병행** = `main` 전용 워크트리 `../_rel` + 병합 전 rebase · 해시는 병합 뒤 문서에 · 릴리스 규칙 = [claude-release-rules](claude-release-rules.md).
