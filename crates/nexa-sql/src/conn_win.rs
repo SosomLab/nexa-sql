@@ -3253,7 +3253,10 @@ fn move_col(order: &mut Vec<usize>, pos: usize, mut to: usize) {
 
 /// 행 버튼(Test/Connect)에 쓸 자격이 있는가 — 비밀번호가 있거나 **비밀번호가 필요 없는 방언**(SQLite 파일 · 사용자 09-18/19).
 fn row_ready(p: &Profile, session: &SessionPw) -> bool {
-    pw_state(p, session) > 0 || p.spec.dialect == Some(nsql_core::Dialect::Sqlite)
+    // ★ T-133: 비밀번호 없음을 명시한 프로필(`nopassword=on` → `Some("")`)도 바로 쓸 수 있다.
+    pw_state(p, session) > 0
+        || p.spec.dialect == Some(nsql_core::Dialect::Sqlite)
+        || p.spec.password.as_deref() == Some("")
 }
 
 /// 접속 문자열(우리 형식 · `dialect://user@host:port/db?schema=x` · 비밀번호 없음 · 사용자 09-18) — 열 표시·복사·검색.

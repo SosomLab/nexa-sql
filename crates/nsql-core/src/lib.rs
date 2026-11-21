@@ -115,7 +115,8 @@ impl Dialect {
     /// 매니페스트가 같은 표를 본다. Save는 여기서 Password를 뺀 것(+ 프로필 이름). Port·Schema는 늘 선택(기본값/없음).
     pub fn login_required(self) -> &'static [LoginField] {
         match self {
-            // 서비스/SID 없이는 접속 불가 · OS 인증(`/`)은 미지원.
+            // 서비스/SID 없이는 접속 불가 · OS 인증(`/`) = 접속 창 "비밀번호 없음" + 빈 사용자(T-133 · OCI만 · Thin은 거부) —
+            //   그 면제는 폼 쪽(`no_pw_exempt`)이 한다(원장은 보통 접속 기준).
             Dialect::Oracle => &[
                 LoginField::Host,
                 LoginField::Database,

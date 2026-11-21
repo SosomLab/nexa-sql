@@ -368,9 +368,15 @@ impl Vault {
         if let Some(r) = spec.read_only {
             known.push(("readonly", if r { "on" } else { "off" }.to_string()));
         }
-        if let Some(pw) = &spec.password {
-            let env = sealed::seal(&Self::domain(name), &self.key, pw.as_bytes())?;
-            known.push(("secret", hex_encode(&env)));
+        // ★ 비밀번호 없음(T-133 · D-484 · 사용자 11-21): **명시한 빈 비밀번호**(`Some("")` = `user:@host` · 접속 창 "비밀번호 없음")는
+        //   봉투 대신 평문 키 `nopassword=on`으로 — 봉투는 내보내기에서 빠지지만 이 키는 남는다(비밀이 아니다).
+        match &spec.password {
+            Some(pw) if pw.is_empty() => known.push(("nopassword", "on".to_string())),
+            Some(pw) => {
+                let env = sealed::seal(&Self::domain(name), &self.key, pw.as_bytes())?;
+                known.push(("secret", hex_encode(&env)));
+            }
+            None => {}
         }
         let pairs: Vec<(&str, &str)> = known.iter().map(|(k, v)| (*k, v.as_str())).collect();
         // ★ 프로필 변수(`var.<이름>=값` · T-153 · 사용자 10-26)는 스펙 밖 줄 — 스펙만 다시 저장해도 그대로 남긴다.
@@ -641,8 +647,8 @@ impl Vault {
                 continue;
             }
             blocks += 1;
-            let (mut spec, _secret, name) = Self::parse_doc(&body);
-            spec.password = None;
+            // 봉투는 가져오지 않는다 — `parse_doc`가 주는 비밀번호는 `nopassword=on`의 빈 값뿐이라 그대로 둔다.
+            let (spec, _secret, name) = Self::parse_doc(&body);
             let Some(name) = name else {
                 rep.skipped.push("(no name)".into());
                 continue;
@@ -767,6 +773,12 @@ impl Vault {
                 "ssh_key" => spec.ssh_key = Some(v),
                 "autocommit" => spec.autocommit = nsql_script::parse_on_off(&v),
                 "readonly" => spec.read_only = nsql_script::parse_on_off(&v),
+                // 비밀번호 없음 = 명시한 빈 비밀번호(봉투가 따로 있으면 `get`이 그 값으로 덮는다).
+                "nopassword" => {
+                    if nsql_script::parse_on_off(&v) == Some(true) {
+                        spec.password = Some(String::new());
+                    }
+                }
                 "secret" => secret = Some(v),
                 _ => {}
             }
@@ -881,6 +893,40 @@ mod tests {
         assert_eq!(v.purge_deleted(0).unwrap(), 2);
         assert!(v.deleted().unwrap().is_empty());
         assert_eq!(v.purge_deleted(30).unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// ★ T-133: 빈 비밀번호를 명시한 프로필 = `nopassword=on`(봉투 없음) · 다시 읽으면 `Some("")` · 내보내기에도 남는다.
+    #[test]
+    fn explicit_empty_password_is_a_plain_key() {
+        let d = std::env::temp_dir().join(format!("nsql-vault-nopw-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let v = Vault::open(&d).unwrap();
+        v.save("trust", &spec(Some(""))).unwrap();
+        let got = v.get("trust").unwrap().unwrap();
+        assert_eq!(got.password.as_deref(), Some(""));
+        let p = v
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.name == "trust")
+            .unwrap();
+        assert!(!p.has_password, "봉투는 없다");
+        assert_eq!(p.spec.password.as_deref(), Some(""));
+        let text = v.export_text(&[]).unwrap();
+        assert!(
+            text.contains("nopassword=on") && !text.contains("secret="),
+            "{text}"
+        );
+        // 보통 프로필은 종전대로(봉투 · 목록의 스펙에는 비밀번호 없음).
+        v.save("normal", &spec(Some("pw"))).unwrap();
+        let n = v
+            .list()
+            .unwrap()
+            .into_iter()
+            .find(|p| p.name == "normal")
+            .unwrap();
+        assert!(n.has_password && n.spec.password.is_none());
         let _ = std::fs::remove_dir_all(&d);
     }
 

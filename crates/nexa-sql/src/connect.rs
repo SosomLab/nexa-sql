@@ -142,6 +142,13 @@ pub(crate) struct ConnectPanel {
     save_pw: Checkbox,
     /// ★ 읽기 전용 프로필(T-31b · D-458 · 11-04): 비밀번호 줄의 저장 체크 왼쪽 · 프로필 키 `readonly=` · 접속 문자열 `?readonly=on`.
     read_only: Checkbox,
+    /// ★ 비밀번호 없음(T-133 · D-484 · 사용자 11-21 — 문서 권장 D-115 "두지 않음"을 뒤집은 결정): 사용자 줄 오른쪽 · 켜면
+    ///   Password 필수 면제 + **빈 비밀번호를 명시**(`Some("")` = CLI `user:@host`와 같은 뜻 · 묻기 모달 없음) · Oracle은 User도
+    ///   면제(둘 다 비면 OS 인증 `/` — OCI 드라이버만 · Thin은 안내 오류) · 프로필 키 `nopassword=on`.
+    no_pw: Checkbox,
+    /// 불러온 프로필의 역할(`role=SYSDBA` …) — 폼에 칸은 없지만 **그대로 들고 있다가** 스펙에 돌려준다(종전에는 폼에서
+    ///   Save하면 사라졌다 · Oracle만 · 새 값은 접속 문자열/CLI로).
+    role: Option<String>,
     test_btn: Button,
     connect_btn: Button,
     save_btn: Button,
@@ -185,6 +192,7 @@ pub(crate) struct FormSnap {
     pub password: String,
     pub save_pw: bool,
     pub read_only: bool,
+    pub no_pw: bool,
     /// 서버 유형 저장 값(`none`·`dev`·`test`·`prod`).
     pub env: String,
     /// 프로필 변수(이름 대문자 · 값 글자 그대로 · 순서 포함).
@@ -206,6 +214,7 @@ pub(crate) enum Dirty {
     Password,
     SavePw,
     ReadOnly,
+    NoPw,
     Env,
     Vars,
 }
@@ -245,6 +254,11 @@ fn required_fields(dialect: Dialect, action: FormAction) -> Vec<Field> {
     out
 }
 
+/// ★ "비밀번호 없음" 체크가 면제하는 칸(순수 · T-133): Password(모든 방언) · Oracle은 User도(OS 인증 `/`).
+fn no_pw_exempt(dialect: Dialect, no_pw: bool, f: Field) -> bool {
+    no_pw && (f == Field::Password || (f == Field::User && dialect == Dialect::Oracle))
+}
+
 /// 빠진 필수 칸(순수 판정 · MC/DC: 방언 × 동작 × 칸별 빈 값) — 폼 순서대로.
 fn missing_fields(dialect: Dialect, action: FormAction, now: &FormSnap) -> Vec<Field> {
     let empty = |f: Field| match f {
@@ -259,7 +273,10 @@ fn missing_fields(dialect: Dialect, action: FormAction, now: &FormSnap) -> Vec<F
         Field::User => now.user.trim().is_empty(),
         Field::Password => now.password.is_empty(),
     };
-    let req = required_fields(dialect, action);
+    let req: Vec<Field> = required_fields(dialect, action)
+        .into_iter()
+        .filter(|f| !no_pw_exempt(dialect, now.no_pw, *f))
+        .collect();
     let mut out: Vec<Field> = Vec::new();
     for f in [Field::Name]
         .into_iter()
@@ -311,6 +328,9 @@ pub(crate) fn dirty_fields(base: &FormSnap, now: &FormSnap) -> Vec<Dirty> {
     }
     if base.read_only != now.read_only {
         out.push(Dirty::ReadOnly);
+    }
+    if base.no_pw != now.no_pw {
+        out.push(Dirty::NoPw);
     }
     if base.env != now.env {
         out.push(Dirty::Env);
@@ -491,6 +511,8 @@ impl ConnectPanel {
             env: Combo::new(env_items(), 0),
             save_pw: Checkbox::new(t(Msg::LblSavePassword), true),
             read_only: Checkbox::new(t(Msg::LblReadOnly), false),
+            no_pw: Checkbox::new(t(Msg::LblNoPassword), false),
+            role: None,
             test_btn: Button::new(t(Msg::BtnTest)),
             connect_btn: Button::new(t(Msg::BtnConnect)),
             save_btn: Button::new(t(Msg::BtnSave)),
@@ -522,6 +544,7 @@ impl ConnectPanel {
     pub(crate) fn relabel(&mut self) {
         self.save_pw = Checkbox::new(t(Msg::LblSavePassword), self.save_pw.is_checked());
         self.read_only = Checkbox::new(t(Msg::LblReadOnly), self.read_only.is_checked());
+        self.no_pw = Checkbox::new(t(Msg::LblNoPassword), self.no_pw.is_checked());
         let ev = self.env.selected_value();
         self.env = Combo::new(env_items(), 0);
         self.env.select_value(&ev);
@@ -645,6 +668,8 @@ impl ConnectPanel {
             .set_text(spec.password.as_deref().unwrap_or(""));
         self.save_pw.set_checked(spec.password.is_some());
         self.read_only.set_checked(spec.read_only == Some(true));
+        self.no_pw.set_checked(spec.password.as_deref() == Some(""));
+        self.role = spec.role.clone();
         self.name.set_text(name);
         let d = self.selected_dialect();
         self.apply_dialect(d);
@@ -680,6 +705,14 @@ impl ConnectPanel {
         spec.env = nsql_script::ConnEnv::from_name(&self.env.selected_value());
         // ★ 읽기 전용(T-31b · D-458): 켜졌을 때만 키를 쓴다(끔 = 키 없음 = 보통).
         spec.read_only = self.read_only.is_checked().then_some(true);
+        // ★ 비밀번호 없음(T-133): 빈 비밀번호를 **명시** — `from_parts`는 빈 칸을 `None`(= 묻는다)으로 만들기 때문에 여기서 덮는다.
+        if self.no_pw_on() {
+            spec.password = Some(String::new());
+        }
+        // 역할은 폼에 칸이 없다 — 불러온 값을 그대로 돌려준다(Oracle만).
+        if self.selected_dialect() == Dialect::Oracle {
+            spec.role = self.role.clone();
+        }
         // 드라이버 변형(Oracle Thin/OCI · 사용자 10-23 "접속 폼에 드라이버 선택") = 접속 문자열 `?driver=`와 같은 값.
         spec.driver = self.selected_driver();
         Ok(spec)
@@ -734,6 +767,8 @@ impl ConnectPanel {
         }
         self.save_pw.set_checked(false);
         self.read_only.set_checked(false);
+        self.no_pw.set_checked(false);
+        self.role = None;
         self.vars.clear();
         self.ssh_open = false;
         let d = self.selected_dialect();
@@ -796,9 +831,15 @@ impl ConnectPanel {
                 String::new()
             },
             user: self.user.text(),
-            password: self.password.text(),
+            // 비밀번호 없음이면 칸의 글은 쓰이지 않는다(숨긴 칸과 같은 규칙).
+            password: if self.no_pw_on() {
+                String::new()
+            } else {
+                self.password.text()
+            },
             save_pw: self.save_pw.is_checked(),
             read_only: self.read_only.is_checked(),
+            no_pw: self.no_pw_on(),
             env: self.env.selected_value(),
             vars: self.vars.clone(),
         }
@@ -940,6 +981,7 @@ impl ConnectPanel {
         self.env.set_scale(scale);
         self.save_pw.set_scale(scale);
         self.read_only.set_scale(scale);
+        self.no_pw.set_scale(scale);
         self.test_btn.set_scale(scale);
         self.connect_btn.set_scale(scale);
         self.save_btn.set_scale(scale);
@@ -950,6 +992,11 @@ impl ConnectPanel {
 
     fn file_based(&self) -> bool {
         self.selected_dialect().is_file_based()
+    }
+
+    /// "비밀번호 없음"이 켜져 있고 뜻이 있는가(파일 방언에는 칸이 없다).
+    fn no_pw_on(&self) -> bool {
+        self.no_pw.is_checked() && !self.file_based()
     }
 
     /// 라벨 위 · 필드 아래의 세로 폼. 반환: 상태줄 y.
@@ -1003,7 +1050,22 @@ impl ConnectPanel {
         if !self.db_in_last_row() {
             place(&mut self.database, &mut inv, &mut y, field_h);
         }
-        place(&mut self.user, &mut inv, &mut y, field_h);
+        // ★ 사용자 | [비밀번호 없음](T-133 · 네트워크 방언만 · 체크 폭 = 포트 칸의 1.5배 — 라벨이 길다).
+        if self.file_based() {
+            place(&mut self.user, &mut inv, &mut y, field_h);
+            self.no_pw.set_bounds(off, &mut inv);
+        } else {
+            y += label_h;
+            let nw = self.s(self.port_w) * 3 / 2;
+            let ch = self.s(22.0);
+            self.user
+                .set_bounds(Rect::new(x, y, w - nw - gap, field_h), &mut inv);
+            self.no_pw.set_bounds(
+                Rect::new(x + w - nw, y + (field_h - ch) / 2, nw, ch),
+                &mut inv,
+            );
+            y += field_h + gap;
+        }
         // 비밀번호 + "저장" 체크박스 한 줄(사용자 10-01) — 체크 칸 폭 = 포트 칸과 같은 열(오른쪽 끝 정렬).
         {
             y += label_h;
@@ -1163,6 +1225,7 @@ impl ConnectPanel {
         set(&mut self.vars_btn, hit == Some(7));
         set(&mut self.ssh_btn, hit == Some(8));
         set(&mut self.read_only, hit == Some(9));
+        set(&mut self.no_pw, hit == Some(10));
     }
 
     /// 눌린 지점이 어느 비텍스트 컨트롤인가(`own_focus`의 index).
@@ -1178,6 +1241,7 @@ impl ConnectPanel {
             self.vars_btn.bounds(),
             self.ssh_btn.bounds(),
             self.read_only.bounds(),
+            self.no_pw.bounds(),
         ]
         .iter()
         .position(|b| b.w > 0 && b.contains(p))
@@ -1503,6 +1567,7 @@ impl ConnectPanel {
             self.env.on_event(ev, inv);
             self.save_pw.on_event(ev, inv);
             self.read_only.on_event(ev, inv);
+            self.no_pw.on_event(ev, inv);
             self.test_btn.on_event(ev, inv);
             self.connect_btn.on_event(ev, inv);
             self.save_btn.on_event(ev, inv);
@@ -1708,6 +1773,7 @@ impl ConnectPanel {
         self.name.set_text(&snap.name);
         self.save_pw.set_checked(snap.save_pw);
         self.read_only.set_checked(snap.read_only);
+        self.no_pw.set_checked(snap.no_pw);
         self.env.select_value(&snap.env);
         let d = self.selected_dialect();
         self.apply_dialect(d);
@@ -1784,7 +1850,8 @@ impl ConnectPanel {
         }
         match self.build_spec() {
             Ok(mut spec) => {
-                if !self.save_pw.is_checked() {
+                // 비밀번호 없음(T-133)은 "저장 안 함"과 다르다 — 빈 값 명시를 그대로 저장한다(`nopassword=on`).
+                if !self.save_pw.is_checked() && !self.no_pw_on() {
                     spec.password = None;
                 }
                 // 불러온 프로필의 이름을 바꿨으면 "이름 변경"(옛 항목 제거) — 새로 만들지 않는다.
@@ -1989,6 +2056,12 @@ impl ConnectPanel {
         self.read_only.paint(dc, th);
         if is(Dirty::ReadOnly) {
             stripe(dc, self.read_only.bounds());
+        }
+        if self.no_pw.bounds().w > 0 {
+            self.no_pw.paint(dc, th);
+            if is(Dirty::NoPw) {
+                stripe(dc, self.no_pw.bounds());
+            }
         }
         if is(Dirty::Dialect) {
             stripe(dc, self.dialect.bounds());
@@ -2201,6 +2274,7 @@ mod dirty_tests {
             password: "p".into(),
             save_pw: true,
             read_only: false,
+            no_pw: false,
             env: "none".into(),
             vars: Vec::new(),
         }
@@ -2278,7 +2352,7 @@ mod dirty_tests {
         let b = base();
         assert!(dirty_fields(&b, &b).is_empty());
         type Mut = fn(&mut FormSnap);
-        let cases: [(Mut, Dirty); 14] = [
+        let cases: [(Mut, Dirty); 15] = [
             (|s| s.name = "B".into(), Dirty::Name),
             (|s| s.dialect = "pg".into(), Dirty::Dialect),
             (|s| s.host = "x".into(), Dirty::Host),
@@ -2291,6 +2365,7 @@ mod dirty_tests {
             (|s| s.password = "q".into(), Dirty::Password),
             (|s| s.save_pw = false, Dirty::SavePw),
             (|s| s.read_only = true, Dirty::ReadOnly),
+            (|s| s.no_pw = true, Dirty::NoPw),
             (|s| s.env = "prod".into(), Dirty::Env),
             (|s| s.vars.push(("X".into(), "1".into())), Dirty::Vars),
         ];
@@ -2397,6 +2472,33 @@ mod dirty_tests {
         let built = p.build_spec().expect("sqlite");
         assert_eq!((built.ssh, built.ssh_key), (None, None));
         assert_eq!(p.snapshot().ssh, "");
+    }
+
+    /// ★ T-133 MC/DC: "비밀번호 없음" × 칸 × 방언 — 체크가 Password를, Oracle에서는 User까지 면제한다(다른 칸은 그대로).
+    #[test]
+    fn no_password_exempts_password_and_oracle_user() {
+        assert!(no_pw_exempt(Dialect::Postgres, true, Field::Password));
+        assert!(!no_pw_exempt(Dialect::Postgres, false, Field::Password));
+        assert!(!no_pw_exempt(Dialect::Postgres, true, Field::User));
+        assert!(no_pw_exempt(Dialect::Oracle, true, Field::User));
+        assert!(!no_pw_exempt(Dialect::Oracle, false, Field::User));
+        assert!(!no_pw_exempt(Dialect::Oracle, true, Field::Host));
+        // 폼 판정: 비밀번호 빈 칸 = 보통은 빠짐 · 체크하면 통과.
+        let mut s = base();
+        s.password.clear();
+        assert_eq!(
+            missing_fields(Dialect::Postgres, FormAction::Connect, &s),
+            vec![Field::Password]
+        );
+        s.no_pw = true;
+        assert!(missing_fields(Dialect::Postgres, FormAction::Connect, &s).is_empty());
+        // OS 인증 모양(사용자도 빔): Oracle만 통과 · PG는 User가 빠진다.
+        s.user.clear();
+        assert!(missing_fields(Dialect::Oracle, FormAction::Connect, &s).is_empty());
+        assert_eq!(
+            missing_fields(Dialect::Postgres, FormAction::Connect, &s),
+            vec![Field::User]
+        );
     }
 
     /// 필수 칸 판정 MC/DC(22 §10): 방언 × 동작 × 칸별 빈 값 — 각 조건이 결과를 독립적으로 바꾼다.
