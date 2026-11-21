@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-21 밤 (Windows · OCI 로컬 · T-356 3방언)** — push 뒤 ci ✗(conn.rs:577 redundant clone · 개발 수정) · integration ✓ · Instant Client = 실행 설치본 없음(zip만) → `target/ic-1121` + `NSQL_ORACLE_CLIENT_DIR`로 OCI 로컬 판정 = 통합 oci·thin 48/0/1 · 오류 유형 E2E 104/0 · OS 인증 경로 ✓ · 운영 보류 시나리오 Oracle·SQL Server·PG 27/0 · 새 결함 후보 T-505 · D-487 · [journal 11-21 §22](journal/2026-11-21.md)
+
 - **2026-11-21 오후 (Windows · 사내 DBMS 복구 · 보완)** — 도달·로그인 ✓(사내 5) · 통합 48/0/1 · T-272 스냅샷 V1 ✓ · T-356 Oracle 운영 보류 시나리오 26/0 · T-504 SQL Server·ODBC 18456 · PG 28P01 ✓ · T-133 Oracle OS 인증 = OCI 필요 · Debug 재시작 31300 · [journal 11-21 §21](journal/2026-11-21.md)
 
 - **2026-11-21 밤 (Windows · 접속 묶음)** — T-462 ①② · T-359 · T-504 ①② · T-133 · D-482 ③ V2 ✓(nexa-sql 677/0/6) · V1 ✓(폼 '비밀번호 없음' 한/영 · `nopassword=on` · 탭 3개 · 셸 config 치환) · Debug 재시작 41460 · 실서버 미검증 = ⑦ (g) · [journal 11-21 §20](journal/2026-11-21.md)

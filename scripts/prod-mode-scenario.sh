@@ -13,7 +13,10 @@
 #     7 탐색기 ▸ 삭제(모달 2단) = 백업 뒤 DROP 전송(G6) · 보류 생략
 #     8 (옵션 -L) 보류 한도 = 1분 뒤 자동 롤백(설정 tx.prod_idle_limit_min=1 · 카운트다운 5 s)
 #     9 정리 = 임시 객체 삭제 · 격리 홈 유형 되돌림(none)
-# 사용: scripts/prod-mode-scenario.sh -P "$APPDATA/nexa-sql" [-c APPDB] [-d oracle|sqlite] [-o target/prod-scenario] [-i] [-k] [-s N] [-L]
+#   ★ 11-21(T-356 · 사용자 "확장한다" · D-487): `-d mssql|postgres` 추가 — 임시 객체 = NSQLT_HOLD_T(표) + NSQLT_HOLD_PRC(SQL Server 프로시저) /
+#     nsqlt_hold_fn(PG 함수 · 이름은 소문자로 접힘) · CLI 준비·정리 문장은 `SET AUTOCOMMIT ON` 아래(두 방언은 DDL도 트랜잭션) · 탐색기 경로 = 방언별
+#     (SQL Server = 현재 DB ▸ Programmability ▸ Stored Procedures · PG = 스키마 ▸ Functions) · 백업 파일 이름 대조는 대소문자 무시.
+# 사용: scripts/prod-mode-scenario.sh -P "$APPDATA/nexa-sql" [-c APPDB] [-d oracle|mssql|postgres|sqlite] [-o target/prod-scenario] [-i] [-k] [-s N] [-L]
 #   -i = 단계마다 멈춤(Enter = 다음 · q = 종료) · -k = GUI를 띄운 채 두고 Enter 뒤 닫음(직접 보기 · 창이 앞으로 옴) · -s N = 그 단계만(0·9는 늘)
 #   -d sqlite -c Local = 서버 없이 로컬 파일 DB로(프로필을 스크립트가 만든다 · -P 불필요)
 set -u
@@ -48,7 +51,8 @@ finish() { say ""; say "RESULT PASS $pass FAIL $fail · 보고 = $REPORT · 산�
 
 # ── CLI ───────────────────────────────────────────────────────────────────────────────────────────
 cli() { NSQL_HOME="$H" "$NSQL" run -c "$CONN" --no-prompt -f csv "$(m "$1")" 2>&1; }
-q() { printf '%s\n' "$1" > "$OUT/q.sql"; cli "$OUT/q.sql"; }
+AC_PREFIX=""; case "$DIALECT" in mssql|postgres) AC_PREFIX="SET AUTOCOMMIT ON;";; esac
+q() { { [ -n "$AC_PREFIX" ] && printf '%s\n' "$AC_PREFIX"; printf '%s\n' "$1"; } > "$OUT/q.sql"; cli "$OUT/q.sql"; }
 val() { q "SELECT V FROM NSQLT_HOLD_T WHERE ID = $1${FROM_DUAL_END}" | tail -1 | tr -d '\r"'; }
 if [ "$DIALECT" = "sqlite" ]; then
   FROM_DUAL_END=";"; DUAL=""; SCHEMA_Q="main"
@@ -61,6 +65,31 @@ if [ "$DIALECT" = "sqlite" ]; then
   }
   REPLACE_SQL="DROP VIEW NSQLT_HOLD_V;"                          # SQLite = 뷰 DROP(백업 대상)
   DDL_T2="CREATE TABLE NSQLT_HOLD_T2 (A INTEGER);"
+  DROP_OBJ="DROP VIEW NSQLT_HOLD_V;"
+elif [ "$DIALECT" = "mssql" ]; then
+  FROM_DUAL_END=""; DUAL=""; SCHEMA_Q=""
+  OBJ_KIND="PROCEDURE"; OBJ="NSQLT_HOLD_PRC"; FOLDER="Stored Procedures"
+  obj_exists() { q "SELECT COUNT(*) AS n FROM sys.objects WHERE name = 'NSQLT_HOLD_PRC'" | tail -1 | tr -d '\r"'; }
+  mk_objects() {
+    q "CREATE TABLE NSQLT_HOLD_T (ID INT PRIMARY KEY, V VARCHAR(20))" >/dev/null
+    printf "%s\nINSERT INTO NSQLT_HOLD_T VALUES (1,'o1');\nINSERT INTO NSQLT_HOLD_T VALUES (2,'o2');\nINSERT INTO NSQLT_HOLD_T VALUES (3,'o3');\n" "$AC_PREFIX" > "$OUT/ins.sql"; cli "$OUT/ins.sql" >/dev/null
+    q "CREATE PROCEDURE NSQLT_HOLD_PRC AS BEGIN SET NOCOUNT ON; END" >/dev/null
+  }
+  REPLACE_SQL="CREATE OR ALTER PROCEDURE NSQLT_HOLD_PRC AS BEGIN SET NOCOUNT ON; END"
+  DDL_T2="CREATE TABLE NSQLT_HOLD_T2 (A INT)"
+  DROP_OBJ="DROP PROCEDURE NSQLT_HOLD_PRC"
+elif [ "$DIALECT" = "postgres" ]; then
+  FROM_DUAL_END=""; DUAL=""; SCHEMA_Q=""
+  OBJ_KIND="FUNCTION"; OBJ="nsqlt_hold_fn"; FOLDER="Functions"
+  obj_exists() { q "SELECT COUNT(*) AS n FROM pg_proc WHERE proname = 'nsqlt_hold_fn'" | tail -1 | tr -d '\r"'; }
+  mk_objects() {
+    q "CREATE TABLE NSQLT_HOLD_T (ID INT PRIMARY KEY, V VARCHAR(20))" >/dev/null
+    printf "%s\nINSERT INTO NSQLT_HOLD_T VALUES (1,'o1');\nINSERT INTO NSQLT_HOLD_T VALUES (2,'o2');\nINSERT INTO NSQLT_HOLD_T VALUES (3,'o3');\n" "$AC_PREFIX" > "$OUT/ins.sql"; cli "$OUT/ins.sql" >/dev/null
+    q "CREATE OR REPLACE FUNCTION nsqlt_hold_fn() RETURNS integer LANGUAGE sql AS 'SELECT 1'" >/dev/null
+  }
+  REPLACE_SQL="CREATE OR REPLACE FUNCTION nsqlt_hold_fn() RETURNS integer LANGUAGE sql AS 'SELECT 1'"
+  DDL_T2="CREATE TABLE NSQLT_HOLD_T2 (A INT)"
+  DROP_OBJ="DROP FUNCTION IF EXISTS nsqlt_hold_fn()"
 else
   FROM_DUAL_END=""; DUAL=" FROM dual"; SCHEMA_Q=""
   OBJ_KIND="PROCEDURE"; OBJ="NSQLT_HOLD_PRC"; FOLDER="Procedures"
@@ -72,7 +101,9 @@ else
   }
   REPLACE_SQL="CREATE OR REPLACE PROCEDURE NSQLT_HOLD_PRC AS BEGIN NULL; END;"
   DDL_T2="CREATE TABLE NSQLT_HOLD_T2 (A NUMBER)"
+  DROP_OBJ="DROP PROCEDURE NSQLT_HOLD_PRC"
 fi
+bk_count() { ls "$BK" 2>/dev/null | grep -ic "${OBJ}_${OBJ_KIND}\."; }   # 백업 파일 이름 = 대소문자 무시(PG는 소문자로 접힌 이름)
 
 # ── GUI(격리 홈 · 기동 명령 · 키 주입 0) ───────────────────────────────────────────────────────────
 GUI_PID=""
@@ -121,11 +152,22 @@ ENV=$(NSQL_HOME="$H" "$NSQL" conn env "$CONN" 2>&1)
 say "  \$ nsql conn env $CONN                ← $ENV"
 echo "$ENV" | grep -qi "Production\|PRD" && ok "0 프로필 사본 = 운영(PRD) · 실제 프로필($PROF)은 그대로" || { bad "0 유형 변경 실패" "$ENV"; finish; }
 q "DROP TABLE NSQLT_HOLD_T${FROM_DUAL_END}" >/dev/null 2>&1
-if [ "$DIALECT" = "sqlite" ]; then q "DROP VIEW NSQLT_HOLD_V;" >/dev/null 2>&1; else q "DROP PROCEDURE NSQLT_HOLD_PRC" >/dev/null 2>&1; q "DROP TABLE NSQLT_HOLD_T2" >/dev/null 2>&1; fi
+q "$DROP_OBJ" >/dev/null 2>&1; [ "$DIALECT" = "sqlite" ] || q "DROP TABLE NSQLT_HOLD_T2" >/dev/null 2>&1
 mk_objects
 [ "$(val 1)" = "o1" ] && ok "0 임시 객체 생성(NSQLT_HOLD_T 3행 · $OBJ)" || { bad "0 임시 객체 생성 실패" "$(q "SELECT COUNT(*) AS n FROM NSQLT_HOLD_T${FROM_DUAL_END}")"; finish; }
-SCHEMA=$(if [ "$DIALECT" = "sqlite" ]; then echo main; else q "SELECT USER AS u${DUAL}" | tail -1 | tr -d '\r"'; fi)
-BK="$H/backups/objects"; say "  · 스키마 = $SCHEMA · 백업 폴더 = $BK"
+case "$DIALECT" in
+  sqlite) SCHEMA=main ;;
+  mssql) SCHEMA=$(q "SELECT DB_NAME() AS u" | tail -1 | tr -d '\r"') ;;          # SQL Server 탐색기 = 현재 DB 행
+  postgres) SCHEMA=$(q "SELECT current_schema() AS u" | tail -1 | tr -d '\r"') ;;
+  *) SCHEMA=$(q "SELECT USER AS u${DUAL}" | tail -1 | tr -d '\r"') ;;
+esac
+# 단계 7 탐색기 펼침 경로·선택 라벨(방언별 · 라벨 경로 `A/B` = 보이는 행 기준 · SQL Server 객체 행 = `스키마.이름`).
+# ★ 11-21: 단계 3 Commit 클릭을 14 s 뒤로(종전 6 s) — 다른 세션 CLI 읽기(접속 ≈1.5 s)가 클릭 뒤로 밀려 "미커밋" 판정이 경합하던 것.
+#   ★ 단계 1 첫 실행 · 단계 3 첫 Commit 직전 `ui.move` 1회 = 접속 뒤나 10 s 넘게 입력이 없다가 들어온 첫 실행/Commit은 2단 무장 창이 곧바로 만료되는
+#     앱 결함 후보(개발 세션에 보고 · "within 0 s" · 사건 하나가 있으면 정상 3 s / 5 s) — 이 시나리오는 보류 경로를 보려는 것이라 우회하고 결함은 따로 추적.
+OBJ_SEL="$OBJ"; [ "$DIALECT" = "mssql" ] && OBJ_SEL="$(q "SELECT SCHEMA_NAME() AS u" | tail -1 | tr -d '\r"').$OBJ"
+if [ "$DIALECT" = "mssql" ]; then EXP1="$SCHEMA/Programmability"; EXP2="$FOLDER"; else EXP1="$SCHEMA"; EXP2="$FOLDER"; fi
+BK="$H/backups/objects"; say "  · 스키마(SQL Server = 현재 DB) = $SCHEMA · 백업 폴더 = $BK"
 # 워밍업(갓 빌드된 exe 첫 기동).
 gui_start warm "@after:1200:ui.move:10/10"; sleep 3; kill "$GUI_PID" 2>/dev/null; wait "$GUI_PID" 2>/dev/null; GUI_PID=""
 pause
@@ -134,7 +176,7 @@ pause
 if step_on 1; then
 hr; say "▶ 1. 운영 2단 재실행(DDL) — 첫 실행은 무장만(빨간 토스트 · 서버로 안 감) · 3 s 안 두 번째 실행 = 실행"
 sqlf s1 "$DDL_T2"
-gui_start s1 "@connected:open:$(D s1.sql),@connected:@after:1500:run.all,@connected:@after:2500:status.dump:$(D s1a.st),@connected:@after:2700:toast.dump:$(D s1a.toast),@connected:@after:3000:run.all,@connected:@after:6000:output.dump:$(D s1b.out),@connected:@after:6200:status.dump:$(D s1b.st)"
+gui_start s1 "@connected:open:$(D s1.sql),@connected:@after:1300:ui.move:20/20,@connected:@after:1500:run.all,@connected:@after:2500:status.dump:$(D s1a.st),@connected:@after:2700:toast.dump:$(D s1a.toast),@connected:@after:3000:run.all,@connected:@after:6000:output.dump:$(D s1b.out),@connected:@after:6200:status.dump:$(D s1b.st)"
 wait_file s1a.st 20 && show "첫 실행 상태줄" s1a.st
 has s1a.st "run again\|again\|Production" && ok "1 첫 실행 = 무장만(상태줄 안내)" || bad "1 무장 안내 없음" "$(cat "$OUT/s1a.st" 2>/dev/null)"
 wait_file s1b.out 12; show "두 번째 실행 Output" s1b.out
@@ -150,7 +192,7 @@ sqlf s2 "$REPLACE_SQL"
 gui_start s2 "@connected:open:$(D s2.sql),@connected:@after:1500:run.all,@connected:@after:3000:run.all,@connected:@after:9000:output.dump:$(D s2.out),@connected:@after:9200:objbk.dump:$(D s2.objbk)"
 wait_file s2.out 22; show "Output" s2.out
 has s2.out "Object backup: " && ok "2 Output에 백업 줄(객체 → 파일)" || bad "2 백업 줄 없음" "$(cat "$OUT/s2.out" 2>/dev/null)"
-f=$(ls "$BK"/*"${OBJ}_${OBJ_KIND}."* 2>/dev/null | head -1)
+f=$(ls "$BK" 2>/dev/null | grep -i "${OBJ}_${OBJ_KIND}\." | head -1); [ -n "$f" ] && f="$BK/$f"
 if [ -n "$f" ]; then ok "2 백업 파일 = $(basename "$f")"; say "  · 머리 주석: $(head -2 "$f" | tr '\n' ' ')"; else bad "2 백업 파일 없음" "$(ls "$BK" 2>/dev/null)"; fi
 gui_end
 pause; fi
@@ -159,14 +201,19 @@ pause; fi
 if step_on 3; then
 hr; say "▶ 3. 운영 보류 — UPDATE 1행은 커밋되지 않고 보류(주황 카드 · 대기 1) → 상단 Commit 첫 클릭 = 빨간 무장 · 두 번째 = 커밋"
 sqlf s3 "UPDATE NSQLT_HOLD_T SET V = 'x1' WHERE ID = 1${FROM_DUAL_END}"
-gui_start s3 "@connected:open:$(D s3.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D s3a.tx),@connected:@after:5500:toast.dump:$(D s3a.toast),@connected:@after:6000:run.commit,@connected:@after:6500:tx.dump:$(D s3b.tx),@connected:@after:6700:toast.dump:$(D s3b.toast),@connected:@after:7500:run.commit,@connected:@after:10500:tx.dump:$(D s3c.tx)"
+gui_start s3 "@connected:open:$(D s3.sql),@connected:@after:1500:run.all,@connected:@after:4500:tx.dump:$(D s3a.tx),@connected:@after:5500:toast.dump:$(D s3a.toast),@connected:@after:13700:ui.move:20/20,@connected:@after:14000:run.commit,@connected:@after:14500:tx.dump:$(D s3b.tx),@connected:@after:14700:toast.dump:$(D s3b.toast),@connected:@after:15500:run.commit,@connected:@after:18500:tx.dump:$(D s3c.tx)"
 wait_file s3a.tx 20; show "보류 상태(tx.dump)" s3a.tx; wait_file s3a.toast 8; show "카드(toast.dump)" s3a.toast
 has s3a.tx "pending=1|held=stmts=1 rows=1" && ok "3 UPDATE = 보류(대기 1 · 1행 · 커밋 안 됨)" || bad "3 보류 안 됨" "$(cat "$OUT/s3a.tx" 2>/dev/null)"
 has s3a.toast "commit pending" && ok "3 주황 고정 카드 [Commit]" || bad "3 카드 없음" "$(cat "$OUT/s3a.toast" 2>/dev/null)"
-if [ "$DIALECT" != "sqlite" ]; then v=$(val 1); [ "$v" = "o1" ] && ok "3 다른 세션(CLI)에서는 아직 o1(미커밋)" || bad "3 CLI 값 $v(커밋됐으면 결함)"; fi
-wait_file s3b.tx 8; show "첫 클릭 뒤" s3b.tx
+if [ "$DIALECT" = "mssql" ]; then
+  # SQL Server(기본 READ COMMITTED · 잠금) = 다른 세션 읽기는 커밋까지 **기다린다** → 기다리면 GUI의 Commit(6~7.5 s) 뒤 값을 읽어 판정이 틀어진다(11-21 첫 실행).
+  #   잠금 대기 1.5 s 상한으로 읽어 1222(Lock request time out)면 = 행이 아직 미커밋 보류 중.
+  r=$(q "SET LOCK_TIMEOUT 1500; SELECT V FROM NSQLT_HOLD_T WHERE ID = 1")
+  echo "$r" | grep -qi "1222\|lock request time" && ok "3 다른 세션(CLI) 읽기 = 잠금 대기 초과(1222 · 미커밋 보류)" || bad "3 CLI 읽기 결과(잠금 없음 = 커밋됐으면 결함)" "$r"
+elif [ "$DIALECT" != "sqlite" ]; then v=$(val 1); [ "$v" = "o1" ] && ok "3 다른 세션(CLI)에서는 아직 o1(미커밋)" || bad "3 CLI 값 $v(커밋됐으면 결함)"; fi
+wait_file s3b.tx 20; show "첫 클릭 뒤" s3b.tx
 has s3b.tx "armed=true" && ok "3 Commit 첫 클릭 = 무장(빨간 카드 · 초 줄어듦)" || bad "3 무장 안 됨" "$(cat "$OUT/s3b.tx" 2>/dev/null)"
-wait_file s3c.tx 8; show "두 번째 클릭 뒤" s3c.tx
+wait_file s3c.tx 10; show "두 번째 클릭 뒤" s3c.tx
 has s3c.tx "pending=0|held=none" && ok "3 두 번째 클릭 = 커밋(대기 0)" || bad "3 커밋 안 됨" "$(cat "$OUT/s3c.tx" 2>/dev/null)"
 gui_end
 v=$(val 1); [ "$v" = "x1" ] && ok "3 서버 값 = x1(커밋 반영)" || bad "3 서버 값 $v"
@@ -219,13 +266,13 @@ pause; fi
 if step_on 7; then
 hr; say "▶ 7. 탐색기 ▸ 삭제… — 모달 2단 확인 → DDL 백업 → DROP 전송(운영 · 첫 호출에 실제 전송 = G6) · 보류 생략"
 [ "$DIALECT" = "sqlite" ] && q "CREATE VIEW NSQLT_HOLD_V AS SELECT ID FROM NSQLT_HOLD_T;" >/dev/null 2>&1
-before=$(ls "$BK" 2>/dev/null | grep -c "${OBJ}_${OBJ_KIND}\.")
+before=$(bk_count)
 # 첫 펼침은 접속 **1 s 뒤**(130차 mac · 10-17): 지연 0의 `@connected:explorer.expand`는 SQLite처럼 스키마 행이 아직 안 그려진 순간에 들어가 ok=false →
 #   뒤 단계가 전부 빗나갔다(Oracle은 시점이 달라 통과). 규칙 = 탐색기 명령은 접속 뒤 첫 그리기 이후(61 §4).
-gui_start s7 "@connected:@after:1000:explorer.expand:$SCHEMA,@connected:@after:3500:explorer.expand:$FOLDER,@connected:@after:6000:explorer.select:$OBJ,@connected:@after:6500:explorer.pick:drop,@connected:@after:8000:drop.confirm,@connected:@after:14000:drop.dump:$(D s7.dump),@connected:@after:14300:output.dump:$(D s7.out)"
+gui_start s7 "@connected:@after:1000:explorer.expand:$EXP1,@connected:@after:3500:explorer.expand:$EXP2,@connected:@after:5800:explorer.dump:$(D s7.tree),@connected:@after:6000:explorer.select:$OBJ_SEL,@connected:@after:6500:explorer.pick:drop,@connected:@after:8000:drop.confirm,@connected:@after:14000:drop.dump:$(D s7.dump),@connected:@after:14300:output.dump:$(D s7.out)"
 wait_file s7.dump 32; show "삭제 창" s7.dump
 has s7.dump "open=true" && (has s7.dump "sent" || has s7.dump "Done") && ok "7 삭제 창 = 전송됨(G6 · 첫 호출에 실제 전송)" || bad "7 창 단계" "$(cat "$OUT/s7.dump" 2>/dev/null)"
-after=$(ls "$BK" 2>/dev/null | grep -c "${OBJ}_${OBJ_KIND}\.")
+after=$(bk_count)
 [ "$after" -gt "$before" ] && ok "7 DROP 전 백업 파일 +1($before → $after)" || bad "7 백업 파일 안 늘음($before → $after)" "$(ls "$BK" 2>/dev/null)"
 gui_end
 [ "$(obj_exists)" = "0" ] && ok "7 서버에서 $OBJ 사라짐(DROP 실제 전송)" || bad "7 객체 남음" "$(cat "$OUT/s7.out" 2>/dev/null | head -6)"
@@ -246,7 +293,12 @@ pause; fi
 # ═══ 9. 정리 ════════════════════════════════════════════════════════════════════════════════════
 hr; say "▶ 9. 정리 — 임시 객체 삭제 · 격리 홈 유형 되돌림"
 q "DROP TABLE NSQLT_HOLD_T${FROM_DUAL_END}" >/dev/null 2>&1
-if [ "$DIALECT" = "sqlite" ]; then q "DROP VIEW NSQLT_HOLD_V;" >/dev/null 2>&1; else q "DROP PROCEDURE NSQLT_HOLD_PRC" >/dev/null 2>&1; q "DROP TABLE NSQLT_HOLD_T2" >/dev/null 2>&1; fi
+q "$DROP_OBJ" >/dev/null 2>&1; [ "$DIALECT" = "sqlite" ] || q "DROP TABLE NSQLT_HOLD_T2" >/dev/null 2>&1
+# 정리 확인(11-21): 임시 객체가 서버에 남지 않았는지(SQLite는 격리 홈 파일이라 생략).
+if [ "$DIALECT" != "sqlite" ]; then
+  left_t=$(q "SELECT COUNT(*) AS n FROM NSQLT_HOLD_T${FROM_DUAL_END}" 2>&1 | grep -c "^[0-9]")
+  [ "$left_t" = "0" ] && [ "$(obj_exists)" = "0" ] && ok "9 서버 임시 객체 0(표 · $OBJ)" || bad "9 임시 객체 남음 — 수동 정리 필요" "표 조회 행 $left_t · $OBJ $(obj_exists)"
+fi
 NSQL_HOME="$H" "$NSQL" conn env "$CONN" none >/dev/null 2>&1
 say "  \$ nsql conn env $CONN none           ← $(NSQL_HOME="$H" "$NSQL" conn env "$CONN" 2>&1)"
 ok "9 임시 객체 정리 · 사본 유형 none(실제 프로필은 처음부터 그대로)"
