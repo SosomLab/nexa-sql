@@ -566,21 +566,20 @@ fn add(o: &Opts, name: &str, target: Option<&str>) -> i32 {
         );
         return 1;
     }
+    // 빈 비밀번호 명시(`nopassword=on` · T-133)는 `***` 없이 — 비밀번호가 저장된 것처럼 보이지 않게.
+    let has_password = spec.password.is_some();
+    let mut shown = spec;
+    if shown.password.as_deref() == Some("") {
+        shown.password = None;
+    }
     println!(
         "{}",
         nsql_i18n::tf(
             nsql_i18n::Msg::CliConnSaved,
             &[
                 name,
-                // 빈 비밀번호 명시(`nopassword=on` · T-133)는 `***` 없이 — 비밀번호가 저장된 것처럼 보이지 않게.
-                &{
-                    let mut shown = spec.clone();
-                    if shown.password.as_deref() == Some("") {
-                        shown.password = None;
-                    }
-                    shown.redacted()
-                },
-                &if spec.password.is_some() {
+                &shown.redacted(),
+                &if has_password {
                     String::new()
                 } else {
                     nsql_i18n::t(nsql_i18n::Msg::CliConnNoPassword).to_string()
