@@ -172,3 +172,9 @@ oracle://u:p@10.0.0.5:1521/ORCL?ssh=me@bastion:2222&ssh_key=C:/keys/id_ed25519
 - **CLI**: 접속 문자열에서 비밀번호 칸을 비우면(`postgres://u:@h:5432/db` · `oracle://u:@h:1521/svc`) `nsql conn add`가 `nopassword=on`으로 저장 · `nsql conn show`는 봉투가 있을 때만 `***` · nopassword 프로필은 `u@host`(2d066ff9 · 11-21 관찰 2 수정 · `conn add`의 "저장:" 안내 줄은 아직 `u/***`).
 - **GUI**: 접속 창 폼 사용자 줄 오른쪽 체크 **"비밀번호 없음"**(`no_pw`) — 켜면 접속 때 묻지 않고 빈 비밀번호를 보낸다 · 그 프로필을 폼에 채우면 체크된 채 열린다 · 목록 행의 Test/Connect 활성 판정(`row_ready`)은 이 체크를 비밀번호가 있는 것으로 본다(`no_pw_exempt` MC/DC).
 - **검증(11-21)**: V1 = 격리 홈 CLI 저장 · 프로필 파일 · 폼 체크(한/영 라벨 잘림 없음) ✓ · 실서버 접속(Oracle OS 인증 · PG trust) = 미검증(사내 DBMS 정지 · STATUS ⑦) · [journal 11-21 §20](journal/2026-11-21.md).
+
+## 15. Oracle 역할 `role=`(11-21 · D-487 ③ · a4a0ac9d)
+
+- 프로필 키 `role=SYSDBA|SYSOPER`(대문자 · 비면 일반 접속) · 접속 문자열 꼬리 `?role=sysdba`도 받는다(저장은 대문자) · CLI 표시 = `… AS SYSDBA`.
+- GUI = 접속 창 폼 DB 종류 줄 오른쪽 **"역할/Role"** 콤보(Oracle일 때만) · 폼 저장 왕복에서 유지된다(11-21 V1 · `conn.var:` 저장 길).
+- 실서버 SYSDBA/SYSOPER 접속은 권한 있는 계정이 필요해 미확인(사용자 실기 몫) · [journal 11-21 §26](journal/2026-11-21.md).

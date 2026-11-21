@@ -38,7 +38,7 @@
 | Performance | `mem.` `perf.` `gfx.` `clipboard.` `editor.undo_*`(5) | 되돌리기 5개는 편집기 ▸ 되돌리기로(78) |
 | Connection | `conn.`(7 · 로그인 창 UI) `connect.`(4 · 접속 동작) `probe.`(8) `net.` | **`conn.`/`connect.` 두 표기**(§5) · probe = "서버 상태" 카테고리 후보 |
 | Explorer | `explorer.`(23) `meta.`(14) `gen.`(5) | meta = 메타 갱신·캐시(같은 화면의 일이라 접두를 남긴다) |
-| Files | `file.`(18) `search.`(7) | 파일 검색 카테고리 신설 후보(78) |
+| Files | `file.`(18) `search.`(7) | ~~파일 검색 카테고리 신설 후보(78)~~ → ✅ 11-21 "외부 변경"(`file.external_*` 8) · "파일 검색"(`search.*` 7) 분류 신설(99c4c4e8 · Editors ▸ 큰 파일 바로 뒤 · 키 이름 그대로) |
 | Appearance | `ui.`(33) `toolbar.` `tabs.` | — |
 | Log | `log.` `txlog.` `demo.` | `demo.prompted` = HIDDEN |
 | Grid | `grid.` `sql.`(1) `export.`(3 · 11-04 D-448) | `sql.copy_keys`류 1개 → `grid.`로 · `export.format`/`name_pattern`/`source` = 결과 내보내기(원칙 3 "의미 직관 > 위치 연계" · 그리드 우클릭에서 쓰는 일이라 Result Sets에 동거) |

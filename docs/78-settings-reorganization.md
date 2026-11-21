@@ -58,8 +58,8 @@
 ### 3-3. 파일·프로젝트(Files & Project)
 - **파일(Files)** — 대화상자 절: `file.show_hidden`·`file.show_dot`·`file.open_max`·`file.os_icons` ▸ `file.probe_chevrons` · 저장 절: `file.eol_new`·`file.eol_save`·`file.overwrite_confirm_ms` · (`file.last_dir`·`file.recent` HIDDEN)
 - **큰 파일(Large files)** *(신설)* — `file.large_ask_mb` · `file.large_l1_mb`·`file.large_l1_lines` · `file.large_l2_mb`·`file.large_l2_lines` · `file.large_ext_level`·`file.large_syntax_level` · `file.large_head_mb` · `file.async_load_mb` ▸ `file.load_progress_ms` · `file.run_file`
-- **외부 변경(External changes)** *(신설)* — `file.external_change` ▸ `file.external_poll_ms`·`file.external_settle_ms` ▸ `file.external_merge`(=auto일 때) ▸▸ `file.external_merge_max_kb`·`file.external_backup_keep`
-- **파일 검색(Find in Files)** *(신설)* — `search.threads`·`search.max_file_kb`·`search.gitignore`·`search.excludes` · 이력 절: `search.history_max`(0 = 끔) ▸ `search.history_view`·`search.history_rows`
+- **외부 변경(External changes)** ✅ *11-21 적용(99c4c4e8 · T-250 · D-488 ②)* — `file.external_change` ▸ `file.external_poll_ms`·`file.external_settle_ms` ▸ `file.external_merge`(=auto일 때) ▸▸ `file.external_merge_max_kb`·`file.external_backup_keep`
+- **파일 검색(Find in Files)** ✅ *11-21 적용(99c4c4e8 · T-250 · D-488 ②)* — `search.threads`·`search.max_file_kb`·`search.gitignore`·`search.excludes` · 이력 절: `search.history_max`(0 = 끔) ▸ `search.history_view`·`search.history_rows`
 - **프로젝트(Project)** — 시작 절: `project.restore_last` · 탐색기 절: `project.preview_tab`·`project.icons`·`project.auto_reveal` · 필터 절: `project.scan_max`·`project.scan_threads`·`project.exclude`(10-07 · T-290) · 저장 절: `project.autosave` ▸ `project.autosave_secs`·`project.backup_days` · (`project.last`·`project.recent` HIDDEN)
 
 ### 3-4. 접속·세션(Connections)
