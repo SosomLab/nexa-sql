@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-21 오후 (Windows · 사내 DBMS 복구 · 보완)** — 도달·로그인 ✓(사내 5) · 통합 48/0/1 · T-272 스냅샷 V1 ✓ · T-356 Oracle 운영 보류 시나리오 26/0 · T-504 SQL Server·ODBC 18456 · PG 28P01 ✓ · T-133 Oracle OS 인증 = OCI 필요 · Debug 재시작 31300 · [journal 11-21 §21](journal/2026-11-21.md)
+
 - **2026-11-21 밤 (Windows · 접속 묶음)** — T-462 ①② · T-359 · T-504 ①② · T-133 · D-482 ③ V2 ✓(nexa-sql 677/0/6) · V1 ✓(폼 '비밀번호 없음' 한/영 · `nopassword=on` · 탭 3개 · 셸 config 치환) · Debug 재시작 41460 · 실서버 미검증 = ⑦ (g) · [journal 11-21 §20](journal/2026-11-21.md)
 
 - **2026-11-21 밤 (Windows · T-102 #7 측정 · D-486)** — wrap 켬 타이핑 프레임 = 보통 47 ms · 2 MB 224 ms(끔 18~21 · Debug · 본문 비례) · D-486(T-102 #7 측정부터 · #2 닫음 · #3·#4 보류 · #6 Linux 때 · T-132 보완 → T-504) · 102 §0 todo-check · [journal 11-21 §19](journal/2026-11-21.md)
