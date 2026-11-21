@@ -148,7 +148,10 @@ pub(crate) struct ConnectPanel {
     no_pw: Checkbox,
     /// 불러온 프로필의 역할(`role=SYSDBA` …) — 폼에 칸은 없지만 **그대로 들고 있다가** 스펙에 돌려준다(종전에는 폼에서
     ///   Save하면 사라졌다 · Oracle만 · 새 값은 접속 문자열/CLI로).
-    role: Option<String>,
+    role_other: Option<String>,
+    /// ★ Oracle 역할 콤보(D-487 ③ · 사용자 11-21): 일반 / SYSDBA / SYSOPER — DBMS 줄 오른쪽 · Oracle일 때만 보인다 ·
+    ///   값 = 드라이버가 받는 대문자 그대로(`none` = 역할 없음). 콤보에 없는 역할(SYSASM 등)은 `role_other`가 보존한다.
+    role: Combo,
     test_btn: Button,
     connect_btn: Button,
     save_btn: Button,
@@ -193,6 +196,8 @@ pub(crate) struct FormSnap {
     pub save_pw: bool,
     pub read_only: bool,
     pub no_pw: bool,
+    /// Oracle 역할 콤보 값(`none`·`SYSDBA`·`SYSOPER` · Oracle이 아니면 `none`).
+    pub role: String,
     /// 서버 유형 저장 값(`none`·`dev`·`test`·`prod`).
     pub env: String,
     /// 프로필 변수(이름 대문자 · 값 글자 그대로 · 순서 포함).
@@ -215,6 +220,7 @@ pub(crate) enum Dirty {
     SavePw,
     ReadOnly,
     NoPw,
+    Role,
     Env,
     Vars,
 }
@@ -332,6 +338,9 @@ pub(crate) fn dirty_fields(base: &FormSnap, now: &FormSnap) -> Vec<Dirty> {
     if base.no_pw != now.no_pw {
         out.push(Dirty::NoPw);
     }
+    if base.role != now.role {
+        out.push(Dirty::Role);
+    }
     if base.env != now.env {
         out.push(Dirty::Env);
     }
@@ -352,6 +361,15 @@ fn env_items() -> Vec<ComboItem> {
             )
         })
         .collect()
+}
+
+/// 역할 콤보 항목 — 값 = 드라이버가 받는 대문자(`none` = 없음).
+fn role_items() -> Vec<ComboItem> {
+    vec![
+        ComboItem::new("none", t(Msg::RoleNormal)),
+        ComboItem::new("SYSDBA", "SYSDBA"),
+        ComboItem::new("SYSOPER", "SYSOPER"),
+    ]
 }
 
 fn env_value(e: Option<nsql_script::ConnEnv>) -> &'static str {
@@ -512,7 +530,8 @@ impl ConnectPanel {
             save_pw: Checkbox::new(t(Msg::LblSavePassword), true),
             read_only: Checkbox::new(t(Msg::LblReadOnly), false),
             no_pw: Checkbox::new(t(Msg::LblNoPassword), false),
-            role: None,
+            role_other: None,
+            role: Combo::new(role_items(), 0),
             test_btn: Button::new(t(Msg::BtnTest)),
             connect_btn: Button::new(t(Msg::BtnConnect)),
             save_btn: Button::new(t(Msg::BtnSave)),
@@ -549,6 +568,10 @@ impl ConnectPanel {
         self.env = Combo::new(env_items(), 0);
         self.env.select_value(&ev);
         self.env.set_scale(self.scale);
+        let rv = self.role.selected_value();
+        self.role = Combo::new(role_items(), 0);
+        self.role.select_value(&rv);
+        self.role.set_scale(self.scale);
         self.test_btn.set_label(t(Msg::BtnTest));
         self.save_btn.set_label(t(Msg::BtnSave));
         self.update_connect_label();
@@ -669,7 +692,7 @@ impl ConnectPanel {
         self.save_pw.set_checked(spec.password.is_some());
         self.read_only.set_checked(spec.read_only == Some(true));
         self.no_pw.set_checked(spec.password.as_deref() == Some(""));
-        self.role = spec.role.clone();
+        self.set_role(spec.role.as_deref());
         self.name.set_text(name);
         let d = self.selected_dialect();
         self.apply_dialect(d);
@@ -711,7 +734,7 @@ impl ConnectPanel {
         }
         // 역할은 폼에 칸이 없다 — 불러온 값을 그대로 돌려준다(Oracle만).
         if self.selected_dialect() == Dialect::Oracle {
-            spec.role = self.role.clone();
+            spec.role = self.role_value();
         }
         // 드라이버 변형(Oracle Thin/OCI · 사용자 10-23 "접속 폼에 드라이버 선택") = 접속 문자열 `?driver=`와 같은 값.
         spec.driver = self.selected_driver();
@@ -768,7 +791,7 @@ impl ConnectPanel {
         self.save_pw.set_checked(false);
         self.read_only.set_checked(false);
         self.no_pw.set_checked(false);
-        self.role = None;
+        self.set_role(None);
         self.vars.clear();
         self.ssh_open = false;
         let d = self.selected_dialect();
@@ -840,6 +863,11 @@ impl ConnectPanel {
             save_pw: self.save_pw.is_checked(),
             read_only: self.read_only.is_checked(),
             no_pw: self.no_pw_on(),
+            role: if self.selected_dialect() == Dialect::Oracle {
+                self.role.selected_value()
+            } else {
+                "none".to_string()
+            },
             env: self.env.selected_value(),
             vars: self.vars.clone(),
         }
@@ -979,6 +1007,7 @@ impl ConnectPanel {
         }
         self.dialect.set_scale(scale);
         self.env.set_scale(scale);
+        self.role.set_scale(scale);
         self.save_pw.set_scale(scale);
         self.read_only.set_scale(scale);
         self.no_pw.set_scale(scale);
@@ -992,6 +1021,28 @@ impl ConnectPanel {
 
     fn file_based(&self) -> bool {
         self.selected_dialect().is_file_based()
+    }
+
+    /// 역할을 폼에 싣는다(순수하지 않은 얇은 창구): 아는 값(대소문자 무관) = 콤보 · 모르는 값 = `role_other`에 보존 · 없음 = `none`.
+    fn set_role(&mut self, role: Option<&str>) {
+        self.role.select_value("none");
+        self.role_other = None;
+        if let Some(r) = role {
+            let up = r.trim().to_ascii_uppercase();
+            if up == "SYSDBA" || up == "SYSOPER" {
+                self.role.select_value(&up);
+            } else if !up.is_empty() {
+                self.role_other = Some(r.to_string());
+            }
+        }
+    }
+
+    /// 스펙에 실을 역할 — 콤보가 `none`이면 보존해 둔 모르는 역할(없으면 없음).
+    fn role_value(&self) -> Option<String> {
+        match self.role.selected_value().as_str() {
+            "none" => self.role_other.clone(),
+            v => Some(v.to_string()),
+        }
     }
 
     /// "비밀번호 없음"이 켜져 있고 뜻이 있는가(파일 방언에는 칸이 없다).
@@ -1029,8 +1080,20 @@ impl ConnectPanel {
         }
         // 접속 명칭(프로필 이름) — 필수(사용자 09-14).
         place(&mut self.name, &mut inv, &mut y, field_h);
-        place(&mut self.dialect, &mut inv, &mut y, field_h);
         let off = Rect::new(0, 0, 0, 0);
+        // ★ DBMS | [역할](Oracle만 · D-487 ③) — 역할 폭 = 포트 칸의 1.5배 · 그 밖의 방언은 DBMS가 줄 전체.
+        if self.selected_dialect() == Dialect::Oracle {
+            y += label_h;
+            let rw = self.s(self.port_w) * 3 / 2;
+            self.dialect
+                .set_bounds(Rect::new(x, y, w - rw - gap, field_h), &mut inv);
+            self.role
+                .set_bounds(Rect::new(x + w - rw, y, rw, field_h), &mut inv);
+            y += field_h + gap;
+        } else {
+            place(&mut self.dialect, &mut inv, &mut y, field_h);
+            self.role.set_bounds(off, &mut inv);
+        }
         if self.file_based() {
             self.host.set_bounds(off, &mut inv);
             self.port.set_bounds(off, &mut inv);
@@ -1226,6 +1289,7 @@ impl ConnectPanel {
         set(&mut self.ssh_btn, hit == Some(8));
         set(&mut self.read_only, hit == Some(9));
         set(&mut self.no_pw, hit == Some(10));
+        set(&mut self.role, hit == Some(11));
     }
 
     /// 눌린 지점이 어느 비텍스트 컨트롤인가(`own_focus`의 index).
@@ -1242,6 +1306,7 @@ impl ConnectPanel {
             self.ssh_btn.bounds(),
             self.read_only.bounds(),
             self.no_pw.bounds(),
+            self.role.bounds(),
         ]
         .iter()
         .position(|b| b.w > 0 && b.contains(p))
@@ -1278,7 +1343,9 @@ impl ConnectPanel {
             | self.quick_btn.tick(now_ms)
             | self.vars_btn.tick(now_ms)
             | self.ssh_btn.tick(now_ms);
-        let d = self.dialect.tick_hover(now_ms) | self.env.tick_hover(now_ms);
+        let d = self.dialect.tick_hover(now_ms)
+            | self.env.tick_hover(now_ms)
+            | self.role.tick_hover(now_ms);
         // 입력란 hover 페이드(회색 · Slow).
         let mut e = false;
         for f in FIELDS {
@@ -1304,6 +1371,7 @@ impl ConnectPanel {
             || self.ssh_btn.is_animating()
             || self.dialect.hover_animating()
             || self.env.hover_animating()
+            || self.role.hover_animating()
             || self.copy.next_tick(std::time::Instant::now()).is_some()
             || FIELDS.iter().any(|&f| self.textbox_ref(f).is_animating())
             || self.status_bars_visible()
@@ -1359,7 +1427,7 @@ impl ConnectPanel {
     }
 
     pub(crate) fn popup_open(&self) -> bool {
-        self.dialect.is_open() || self.env.is_open()
+        self.dialect.is_open() || self.env.is_open() || self.role.is_open()
     }
 
     /// Port 입력란 폭 지정(설정 주입).
@@ -1460,6 +1528,10 @@ impl ConnectPanel {
         }
         if self.env.is_open() {
             self.env.on_event(ev, inv);
+            return self.after_combo();
+        }
+        if self.role.is_open() {
+            self.role.on_event(ev, inv);
             return self.after_combo();
         }
         // 상태 메시지 스크롤(휠 · 썸 드래그) — 넘칠 때만 소비.
@@ -1565,6 +1637,7 @@ impl ConnectPanel {
         ) {
             self.dialect.on_event(ev, inv);
             self.env.on_event(ev, inv);
+            self.role.on_event(ev, inv);
             self.save_pw.on_event(ev, inv);
             self.read_only.on_event(ev, inv);
             self.no_pw.on_event(ev, inv);
@@ -1658,6 +1731,7 @@ impl ConnectPanel {
         }
         // 서버 유형은 값만 바뀐다(바뀜 표식 → Save로 영속).
         let _ = self.env.take_changed();
+        let _ = self.role.take_changed();
         None
     }
 
@@ -1775,6 +1849,7 @@ impl ConnectPanel {
         self.read_only.set_checked(snap.read_only);
         self.no_pw.set_checked(snap.no_pw);
         self.env.select_value(&snap.env);
+        self.role.select_value(&snap.role);
         let d = self.selected_dialect();
         self.apply_dialect(d);
         self.snap = snap;
@@ -2094,6 +2169,27 @@ impl ConnectPanel {
         if is(Dirty::Env) {
             stripe(dc, self.env.bounds());
         }
+        // 역할 라벨(Oracle만 · 콤보 = 늘 값이 있다) + 바뀜 원 · 띠.
+        {
+            let r = self.role.bounds();
+            if r.w > 0 {
+                let y = r.y - label_h + self.s(1.0);
+                let text = t(Msg::LblRole);
+                dc.text(r.x, y, b, text, th.text_dim);
+                if is(Dirty::Role) {
+                    let w = dc.text_width(text);
+                    let cy = y + dc.text_height() / 2 + self.s(1.0);
+                    mark_dot(
+                        dc,
+                        r.x + w + self.s(MARK_GAP),
+                        cy,
+                        self.s(MARK_D),
+                        th.accent,
+                    );
+                    stripe(dc, r);
+                }
+            }
+        }
         self.quick_btn.paint(dc, th);
         // 프로필 변수 버튼 — 바뀜(목록이 저장본과 다름)은 콤보·체크와 같은 왼쪽 띠.
         self.vars_btn.paint(dc, th);
@@ -2178,12 +2274,13 @@ impl ConnectPanel {
         self.status_bars
             .paint(dc, th, sr, sr.w, content_h.max(sr.h), 0, scroll, self.scale);
         // 콤보는 팝업을 스스로 그린다 — 열린 것이 최상위가 되게 마지막에.
-        if self.dialect.is_open() {
-            self.env.paint(dc, th);
-            self.dialect.paint(dc, th);
-        } else {
-            self.dialect.paint(dc, th);
-            self.env.paint(dc, th);
+        //   (콤보가 셋이 되어 일반화 — 닫힌 것 먼저 · 열린 것 마지막 · 숨긴 역할 콤보는 건너뛴다).
+        let mut combos = [&self.dialect, &self.env, &self.role];
+        combos.sort_by_key(|c| c.is_open());
+        for c in combos {
+            if c.bounds().w > 0 {
+                c.paint(dc, th);
+            }
         }
         // 입력란 팝업은 여기서 그리지 않는다 — 창이 맨 마지막에 `paint_popups`로(최상위).
     }
@@ -2280,6 +2377,7 @@ mod dirty_tests {
             save_pw: true,
             read_only: false,
             no_pw: false,
+            role: "none".into(),
             env: "none".into(),
             vars: Vec::new(),
         }
@@ -2357,7 +2455,7 @@ mod dirty_tests {
         let b = base();
         assert!(dirty_fields(&b, &b).is_empty());
         type Mut = fn(&mut FormSnap);
-        let cases: [(Mut, Dirty); 15] = [
+        let cases: [(Mut, Dirty); 16] = [
             (|s| s.name = "B".into(), Dirty::Name),
             (|s| s.dialect = "pg".into(), Dirty::Dialect),
             (|s| s.host = "x".into(), Dirty::Host),
@@ -2371,6 +2469,7 @@ mod dirty_tests {
             (|s| s.save_pw = false, Dirty::SavePw),
             (|s| s.read_only = true, Dirty::ReadOnly),
             (|s| s.no_pw = true, Dirty::NoPw),
+            (|s| s.role = "SYSDBA".into(), Dirty::Role),
             (|s| s.env = "prod".into(), Dirty::Env),
             (|s| s.vars.push(("X".into(), "1".into())), Dirty::Vars),
         ];
@@ -2657,6 +2756,45 @@ mod dirty_tests {
         assert_eq!(q.database.bounds().w, q.user.bounds().w);
         assert!(q.database.bounds().y < q.user.bounds().y);
         assert_eq!(q.env.bounds().w, q.user.bounds().w);
+    }
+
+    /// ★ 역할 콤보(D-487 ③): Oracle만 보인다 · 불러온 값(대소문자 무관) 표시 · 바꾸면 바뀜 · 스펙에 실림 · 모르는 역할은 보존 ·
+    ///   다른 방언의 스펙에는 역할이 없다.
+    #[test]
+    fn role_combo_roundtrip() {
+        let mut p = ConnectPanel::new(vec![Dialect::Oracle, Dialect::Mssql]);
+        p.set_bounds(Rect::new(0, 0, 292, 600), 1.0);
+        let mut spec = ConnectSpec::from_parts(Dialect::Oracle, "h", Some(1521), "svc", "u", "pw")
+            .expect("spec");
+        spec.role = Some("sysdba".into());
+        p.fill("A", &spec, Vec::new());
+        let (d, r) = (p.dialect.bounds(), p.role.bounds());
+        assert!(
+            r.w > 0 && r.x > d.right() && (r.y, r.h) == (d.y, d.h),
+            "{d:?} {r:?}"
+        );
+        assert_eq!(p.role.selected_value(), "SYSDBA");
+        assert!(!p.is_dirty());
+        assert_eq!(
+            p.build_spec().expect("spec").role.as_deref(),
+            Some("SYSDBA")
+        );
+        p.role.select_value("none");
+        assert_eq!(p.dirty(), vec![Dirty::Role]);
+        assert_eq!(p.build_spec().expect("spec").role, None);
+        p.discard_changes();
+        assert_eq!(p.role.selected_value(), "SYSDBA");
+        // 콤보에 없는 역할은 `none`으로 보이되 스펙에는 그대로.
+        spec.role = Some("SYSASM".into());
+        p.fill("A", &spec, Vec::new());
+        assert_eq!(p.role.selected_value(), "none");
+        assert_eq!(
+            p.build_spec().expect("spec").role.as_deref(),
+            Some("SYSASM")
+        );
+        p.clear();
+        assert_eq!(p.role.selected_value(), "none");
+        assert_eq!(p.snapshot().role, "none");
     }
 
     /// 서버 유형 콤보(사용자 10-01): 불러온 값 표시 · 바꾸면 바뀜 · Save 스펙에 실림 · 목록 메뉴(이미 저장)는 바뀜 아님.
