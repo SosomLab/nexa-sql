@@ -74,7 +74,7 @@ impl App {
                     return;
                 }
                 if let Some(pw) = spec.password.as_deref() {
-                    self.conn_win.remember_pw(&name, pw);
+                    self.conn_win.remember_pw(&name, &spec, pw);
                 }
                 self.conn_win
                     .set_connect_mark(&name, Some(ConnectMark::Connecting));
@@ -100,7 +100,7 @@ impl App {
             PanelAction::Test(spec) => {
                 let name = self.conn_win.panel.profile_name();
                 if let Some(pw) = spec.password.as_deref() {
-                    self.conn_win.remember_pw(&name, pw);
+                    self.conn_win.remember_pw(&name, &spec, pw);
                 }
                 self.start_test(&name, spec);
             }
@@ -116,7 +116,7 @@ impl App {
             } => {
                 // 저장하지 않더라도 입력된 비밀번호는 세션에 보관(사용자 09-14).
                 let typed = self.conn_win.panel.password_text();
-                self.conn_win.remember_pw(&name, &typed);
+                self.conn_win.remember_pw(&name, &spec, &typed);
                 // ★ 저장은 파일 쓰기뿐 — 워커(순차 · Test/Connect 뒤에 줄 섬)를 거치지 않고 즉시(사용자 09-14
                 //   "Save에서 접속 테스트를 하지 않도록": 실제로는 앞선 Test의 20초 타임아웃을 기다리던 것). 접속 검증 없음 · 포트가 틀려도 저장.
                 // 이름 변경(사용자 09-16): 새 이름으로 저장이 성공한 뒤에만 옛 항목을 지운다(실패 시 옛 프로필 보존).

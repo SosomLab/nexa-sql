@@ -168,11 +168,30 @@ const COL_TARGET_MIN: f32 = 408.0;
 const COL_PASSWORD: usize = 3;
 const MIN_COL_W: i32 = 24;
 
+/// ★ 이 실행 동안 입력된 비밀번호의 창구(T-132 보완 · 사용자 11-21) — **세션 자격 금고**(nsql-vault `session` · 메모리 봉투)를
+/// 그대로 본다. 종전에는 이 창이 프로필 이름 → 평문 `String` 사본을 따로 들고 있어 ① 서버가 거부해도 지워지지 않아 틀린 값을
+/// 행 Test/Connect가 계속 다시 썼고 ② 종료 때 0으로 덮이지 않았다. 이제 자리(같은 서버·계정)는 금고 하나뿐 — 거부되면 워커가
+/// 비우고(`stale_password`) 종료 때 금고가 지운다 · 설정 `connect.remember_session_password`를 끄면 여기도 기억하지 않는다.
+#[derive(Default)]
+pub(crate) struct SessionPw;
+
+impl SessionPw {
+    /// 프로필의 자격 자리 이름(워커 [`crate::worker::cred_id`]와 같은 열쇠).
+    fn slot(spec: &ConnectSpec) -> String {
+        crate::worker::cred_id(spec, spec.dialect.unwrap_or(nsql_core::Dialect::Oracle))
+    }
+
+    /// 그 프로필의 서버·계정에 이번 실행 동안 입력된 비밀번호가 있는가(봉투를 열지 않는다).
+    fn has(&self, p: &Profile) -> bool {
+        nsql_vault::session::has(&Self::slot(&p.spec))
+    }
+}
+
 /// 비밀번호 상태 — 2 = 저장됨(봉투) · 1 = 이 실행 동안 입력됨(세션 보관) · 0 = 없음.
-fn pw_state(p: &Profile, session: &HashMap<String, String>) -> u8 {
+fn pw_state(p: &Profile, session: &SessionPw) -> u8 {
     if p.has_password {
         2
-    } else if session.contains_key(&p.name) {
+    } else if session.has(p) {
         1
     } else {
         0
@@ -180,7 +199,7 @@ fn pw_state(p: &Profile, session: &HashMap<String, String>) -> u8 {
 }
 
 /// 행의 열 텍스트(그리기·정렬·필터 공용). 비밀번호 열은 상태 숫자(정렬용 · 그리기는 체크박스).
-fn cell_of(p: &Profile, col: usize, session: &HashMap<String, String>) -> String {
+fn cell_of(p: &Profile, col: usize, session: &SessionPw) -> String {
     match col {
         0 => p.name.clone(),
         1 => p
@@ -203,7 +222,7 @@ fn sort_shown(
     profiles: &[Profile],
     shown: &mut [usize],
     keys: &[(usize, bool)],
-    session: &HashMap<String, String>,
+    session: &SessionPw,
 ) {
     if keys.is_empty() {
         return;
@@ -301,7 +320,7 @@ pub(crate) struct ConnWin {
     conn_marks: HashMap<String, ConnectMark>,
     /// ★ 세션 비밀번호(프로필 이름 → 입력값) — 저장하지 않은 비밀번호도 프로그램이 도는 동안 보관해
     /// Test/Connect·폼 채우기에 쓴다(사용자 09-14). 디스크에 쓰지 않는다.
-    session_pw: HashMap<String, String>,
+    session_pw: SessionPw,
     /// 이 시각에 창을 닫는다(접속 성공 초록을 잠시 보여 준 뒤).
     close_at: Option<Instant>,
     /// ★ 접속 중 막(사용자 09-19 "접속이 느리면 아무 메시지 없이 기다린다"): 창 전체를 반투명으로 덮고 입력을 막은 채
@@ -389,7 +408,7 @@ impl ConnWin {
             bars: ScrollBars::new(),
             test_marks: HashMap::new(),
             conn_marks: HashMap::new(),
-            session_pw: HashMap::new(),
+            session_pw: SessionPw,
             close_at: None,
             veil: None,
             tip: None,
@@ -1491,18 +1510,23 @@ impl ConnWin {
     }
 
     /// 입력된 비밀번호를 세션에 보관(빈 값은 무시 · 프로필 이름이 있을 때만).
-    pub(crate) fn remember_pw(&mut self, name: &str, pw: &str) {
-        if !name.is_empty() && !pw.is_empty() {
-            self.session_pw.insert(name.to_string(), pw.to_string());
+    pub(crate) fn remember_pw(&mut self, name: &str, spec: &ConnectSpec, pw: &str) {
+        if !name.is_empty() && !pw.is_empty() && crate::worker::remember_session_password() {
+            nsql_vault::session::remember(
+                &SessionPw::slot(spec),
+                &nsql_core::Secret::new(pw.to_string()),
+            );
             self.redraw();
         }
     }
 
     /// 스펙에 비밀번호가 없으면 세션 보관값을 채운다(Test/Connect/폼 채우기).
-    pub(crate) fn with_session_pw(&self, name: &str, mut spec: ConnectSpec) -> ConnectSpec {
-        if spec.password.as_deref().unwrap_or("").is_empty() {
-            if let Some(pw) = self.session_pw.get(name) {
-                spec.password = Some(pw.clone());
+    ///
+    /// ★ `Some("")` = **비밀번호 없음을 명시**한 프로필(T-133)이라 채우지 않는다 — 없을 때(`None`)만.
+    pub(crate) fn with_session_pw(&self, _name: &str, mut spec: ConnectSpec) -> ConnectSpec {
+        if spec.password.is_none() {
+            if let Some(pw) = nsql_vault::session::recall(&SessionPw::slot(&spec)) {
+                spec.password = Some(pw.expose().to_string());
             }
         }
         spec
@@ -3228,7 +3252,7 @@ fn move_col(order: &mut Vec<usize>, pos: usize, mut to: usize) {
 }
 
 /// 행 버튼(Test/Connect)에 쓸 자격이 있는가 — 비밀번호가 있거나 **비밀번호가 필요 없는 방언**(SQLite 파일 · 사용자 09-18/19).
-fn row_ready(p: &Profile, session: &HashMap<String, String>) -> bool {
+fn row_ready(p: &Profile, session: &SessionPw) -> bool {
     pw_state(p, session) > 0 || p.spec.dialect == Some(nsql_core::Dialect::Sqlite)
 }
 
@@ -3296,7 +3320,7 @@ mod tests {
             prof("B", None),
         ];
         let mut shown: Vec<usize> = (0..4).collect();
-        let none = HashMap::new();
+        let none = SessionPw;
         sort_shown(&ps, &mut shown, &[(0, true)], &none);
         assert_eq!(shown, vec![1, 0, 3, 2], "이름 대소문자 무관(A · b · B · c)");
         sort_shown(&ps, &mut shown, &[(2, true), (0, false)], &none);

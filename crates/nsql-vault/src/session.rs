@@ -73,6 +73,12 @@ pub fn recall(id: &str) -> Option<Secret> {
     String::from_utf8(plain).ok().map(Secret::new)
 }
 
+/// 그 자리에 값이 들어 있는가 — 봉투를 **열지 않는다**(목록 그리기·정렬처럼 자주 묻는 자리 · 평문이 생기지 않는다).
+#[must_use]
+pub fn has(id: &str) -> bool {
+    matches!(vault().map(Mutex::lock), Some(Ok(g)) if g.items.contains_key(id))
+}
+
 /// 그 자리에 든 값이 `candidate`와 같은가(자리가 비었으면 `false`) — "같은 서버에 **다른 자격**으로 다시 접속하려는가"의 판정.
 #[must_use]
 pub fn matches(id: &str, candidate: &str) -> bool {
