@@ -116,9 +116,8 @@ impl Profile {
     #[must_use]
     pub fn describe(&self) -> String {
         let mut s = self.spec.clone();
-        if self.has_password {
-            s.password = Some(String::new());
-        }
+        // 봉투가 있을 때만 `***` — 비밀번호 없음(`nopassword=on` · T-133)은 `user@host`로(비밀번호가 있는 것처럼 보이지 않게).
+        s.password = self.has_password.then(String::new);
         s.redacted()
     }
 }

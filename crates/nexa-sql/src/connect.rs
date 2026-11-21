@@ -1892,7 +1892,12 @@ impl ConnectPanel {
             }
         };
         // 필수 칸 = 라벨 뒤 `*`(Azure Data Studio식 · 22 §10) — 방언을 바꾸면 따라 바뀐다 · 빠진 칸은 경고색.
-        let req = required_fields(self.selected_dialect(), FormAction::Connect);
+        // ★ "비밀번호 없음"(T-133)이 면제한 칸은 필수 표시도 뗀다(11-21 V1 관찰 — 체크해도 비밀번호 라벨의 필수 점이 남았다).
+        let (d, no_pw) = (self.selected_dialect(), self.no_pw_on());
+        let req: Vec<Field> = required_fields(d, FormAction::Connect)
+            .into_iter()
+            .filter(|f| !no_pw_exempt(d, no_pw, *f))
+            .collect();
         let req_name = true; // 프로필 이름은 Save에 필수.
         let warn = self.warn.clone();
         self.label_hits.borrow_mut().clear();
