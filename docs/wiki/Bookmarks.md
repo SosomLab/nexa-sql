@@ -1,55 +1,57 @@
-# 북마크
+# Bookmarks
 
-줄에 표식을 남기고 돌아오는 기능입니다. 편집·외부 수정 뒤에도 **줄 본문과 앞뒤 문맥**으로 자리를 다시 찾습니다(못 찾으면 "무효"로 남기고, 30일 뒤 정리).
+**English** | [한국어](Bookmarks-ko)
 
-## 키
+Leave a mark on a line and come back to it. After edits and external changes, the position is found again from **the line text and the lines around it** (if it cannot be found, the bookmark stays as "invalid" and is cleaned up after 30 days).
 
-| 동작 | Windows/Linux | macOS |
+## Keys
+
+| Action | Windows/Linux | macOS |
 |---|---|---|
-| 토글 | Ctrl+F2 · **Ctrl+K, Ctrl+K** | ⌘F2 · **⌘K, ⌘K** |
-| 다음 / 이전 | F2 / Shift+F2 · **Ctrl+K, Ctrl+N / Ctrl+K, Ctrl+P** | F2 / ⇧F2 · **⌘K, ⌘N / ⌘K, ⌘P** |
-| 이 문서의 북마크 전부 지우기 | Ctrl+Shift+F2 · **Ctrl+K, Ctrl+X** | ⌘⇧F2 · **⌘K, ⌘X** |
-| 북마크 줄 전부 멀티커서 선택 | Alt+F2 | ⌥F2 |
-| **니모닉 지정** 0~9 | Ctrl+Shift+숫자 | ⌘⇧숫자 |
-| 니모닉으로 이동 | Ctrl+숫자 | ⌘숫자 |
-| 북마크 패널 | Ctrl+Shift+B | ⌘⇧B |
+| Toggle | Ctrl+F2 · **Ctrl+K, Ctrl+K** | ⌘F2 · **⌘K, ⌘K** |
+| Next / previous | F2 / Shift+F2 · **Ctrl+K, Ctrl+N / Ctrl+K, Ctrl+P** | F2 / ⇧F2 · **⌘K, ⌘N / ⌘K, ⌘P** |
+| Clear all bookmarks in this document | Ctrl+Shift+F2 · **Ctrl+K, Ctrl+X** | ⌘⇧F2 · **⌘K, ⌘X** |
+| Select all bookmarked lines with multiple carets | Alt+F2 | ⌥F2 |
+| **Set mnemonic** 0–9 | Ctrl+Shift+digit | ⌘⇧digit |
+| Go to mnemonic | Ctrl+digit | ⌘digit |
+| Bookmarks panel | Ctrl+Shift+B | ⌘⇧B |
 
-니모닉을 지정할 때 그 줄에 북마크가 없으면 만들어서 지정합니다. 메뉴에서 **이미 쓰이는 번호**에는 ✓와 그 북마크의 줄 번호(예 `✓ 3  12줄`)가 붙습니다. 다른 북마크가 쓰는 번호를 고르면(메뉴 또는 Ctrl+Shift+숫자) 바로 가져오고 안내 토스트에 **[복원하기]**가 뜹니다 — 누르면 방금 지정을 취소하고 원래 북마크로 되돌립니다(설정 ▸ 북마크 `bookmark.mnemonic_notice`를 끄면 안내 없이 가져옴). 같은 줄에 같은 번호를 다시 지정하면 니모닉만 해제되고 북마크는 남습니다. 굵은 키는 Visual Studio식 **두 단계 코드**(Ctrl+K를 누른 뒤 다음 키) — HHKB처럼 Ctrl+F1~F4를 키보드 펌웨어가 가로채는 키보드용 두 번째 바인딩입니다(둘 다 됩니다 · Preferences ▸ Keys에서 바꿀 수 있음).
+When you set a mnemonic on a line without a bookmark, one is created and the mnemonic is set. In the menu, **numbers already in use** carry ✓ and the line number of that bookmark (e.g. `✓ 3  line 12`). Choosing a number used by another bookmark (from the menu or with Ctrl+Shift+digit) takes it over right away, and the notice toast shows **[Restore]** — pressing it cancels the assignment you just made and gives the number back to the original bookmark (turn off Preferences ▸ Bookmarks ▸ Behavior & storage `bookmark.mnemonic_notice` to take numbers over without a notice). Setting the same number on the same line again clears only the mnemonic; the bookmark stays. The bold keys are Visual Studio-style **two-step chords** (press Ctrl+K, then the next key) — a second binding for keyboards such as the HHKB, whose firmware intercepts Ctrl+F1–F4 (both work · you can change them in Preferences ▸ Keys).
 
-편집기 왼쪽 배치는 **북마크 영역(색 띠 · 니모닉 상자) → 줄 번호 → 본문 → 미니맵** 순입니다. 줄 번호를 꺼도(`editor.line_numbers` off) 북마크 영역은 그대로 남고, 줄 변경 표시(초록/노랑 막대)는 줄 번호 오른쪽에 따로 있어 북마크와 겹치지 않습니다. 거터를 완전히 없애고 싶으면 대신 미니맵 점과 줄 끝 라벨(`bookmark.inline_label`)로 위치를 확인하세요.
+The left side of the editor is laid out as **bookmark area (color bar · mnemonic box) → line numbers → text → minimap**. Turning line numbers off (`editor.line_numbers` off) keeps the bookmark area, and the line change marks (green/yellow bars) sit separately to the right of the line numbers, so they do not overlap bookmarks. If you want no gutter at all, check positions with the minimap dots and the line-end labels (`bookmark.inline_label`) instead.
 
-## 거터에서 마우스로
+## Using the mouse in the gutter
 
-편집기 왼쪽 **북마크 영역(색 띠·니모닉 상자)이나 줄 번호**를 우클릭하면 작은 메뉴가 뜹니다 — 맨 위 **Bookmarks**(왼쪽 북마크 패널 열기)는 늘 있고, 줄 위에서는 **Toggle Bookmark**(있으면 ✓ · 한 항목으로 추가/제거)와 **Mnemonic ▸ 1~9**(없으면 만들어서 지정 · 지금 것은 ✓ · 같은 번호 다시 = 해제) · 그 바로 아래 **Clear mnemonic**(니모닉이 있을 때만)이 붙습니다. 마지막 줄 아래 빈 영역에서는 Bookmarks 항목만 나옵니다. 본문 우클릭은 종전대로 편집 메뉴입니다.
+Right-click the **bookmark area (color bar · mnemonic box) or the line numbers** on the left of the editor to open a small menu — **Bookmarks** at the top (opens the bookmarks panel on the left) is always there; over a line, **Toggle Bookmark** (✓ when present · add/remove with one item) and **Mnemonic ▸ 1–9** (creates the bookmark if needed and sets it · the current one has ✓ · the same number again = clear) are added, with **Clear mnemonic** right below (only when there is a mnemonic). In the empty area below the last line, only the Bookmarks item appears. Right-clicking the text still opens the edit menu as before.
 
-## 표시
+## Display
 
-- 거터 색 띠(무효 = 흐림) · 니모닉 숫자 상자 · **미니맵 오른쪽 가장자리 점** · **줄 끝 라벨**(`◆ 라벨` · 흐린 글) — 설정 Bookmarks ▸ Display에서 각각 끌 수 있고, 라벨 길이 상한은 `bookmark.inline_label_chars`(40).
-- 상태줄 `BM 3/12` = 이 문서 / 전체.
+- Gutter color bar (invalid = dimmed) · mnemonic number box · **dots on the right edge of the minimap** · **line-end labels** (`◆ label` · dimmed text) — each can be turned off in Preferences ▸ Bookmarks ▸ Display, and the label length limit is `bookmark.inline_label_chars` (40).
+- Status bar `BM 3/12` = this document / total.
 
-## 패널(활동 막대 ▸ 북마크)
+## Panel (activity bar ▸ Bookmarks)
 
-![북마크 패널 · 거터의 니모닉(1 · 2)과 표식](images/bookmarks.png)
+![Bookmarks panel · mnemonics (1 · 2) and marks in the gutter](images/bookmarks.png)
 
-*북마크 패널 · 거터의 니모닉(1 · 2)과 표식*
+*Bookmarks panel · mnemonics (1 · 2) and marks in the gutter*
 
-그룹 → 문서 → 항목 트리 · 필터(Aa · ab · (.*) 토글 · 한글은 조합 중 자모("ㄱ"·"기")로도 바로 걸립니다) · **이름 있는 북마크는 이름이 강조색·굵게** 보이고 줄 본문은 흐리게 뒤따릅니다(이름 없는 것은 본문만) · 이름 편집(메뉴 ▸ 이름 · `bookmark.label`)은 니모닉·줄번호 다음 **이름 자리에만** 입력 상자가 뜹니다 · **한 번 클릭 = 미리보기 탭**으로 열어 그 줄로(편집하면 정식 탭) · **더블클릭 · Enter · 메뉴 Open = 정식 탭**(프로젝트 탐색기와 같은 규칙 · 이미 미리보기로 열려 있으면 승격) · 우클릭: 열기 · 니모닉 · 그룹 이동 · 제거(5초 안에 토스트 클릭 = 되돌리기) · 문서/그룹 메뉴(전부 선택 · 이름 바꾸기 · 기본 그룹 · 켜기/끄기 · 삭제) · 무효 북마크 전부 지우기 · **타입어헤드**(목록 포커스에서 글자 = 그룹/문서/북마크 이름으로 이동 · 한글 · [탐색기와 필터](Explorers-and-Filters.md#타입어헤드--글자를-치면-그-이름으로)).
+Tree of group → document → item · filter (Aa · ab · (.*) toggles · Hangul matches right away by jamo while still being composed ("ㄱ" · "기")) · **a named bookmark shows its name in the accent color and bold**, followed by the dimmed line text (unnamed ones show only the text) · renaming (menu ▸ Rename Bookmark · command `bookmark.label`) opens an input box **only in the name slot**, after the mnemonic and line number · **single click = open in a preview tab** at that line (becomes a regular tab when you edit) · **double-click · Enter · menu Open = regular tab** (same rules as the Project Explorer · promoted if already open as a preview) · right-click: Open · Mnemonic · Move to group · Remove (click the toast within 5 seconds = undo) · document/group menus (select all · rename · default group · enable/disable · delete) · Remove invalid bookmarks · **type-ahead** (letters with the list focused = jump to a group/document/bookmark name · Hangul · [Explorers and filters](Explorers-and-Filters.md#type-ahead--type-letters-to-jump-to-a-name)).
 
-## 저장 위치
+## Where they are stored
 
-작업 모드에 따라 셋으로 나뉩니다(설정과 같은 층 구조):
+There are three cases depending on the work mode (the same layering as settings):
 
-| 모드 | 어떻게 켜나 | 북마크 자리 |
+| Mode | How to enter it | Where bookmarks go |
 |---|---|---|
-| **파일 모드** | 그냥 실행(또는 파일만 인자로) | 전역 — 사용자 설정 폴더(`%APPDATA%\nexa-sql`)의 `workspaces/default.nsql-workspace` |
-| **폴더 모드** | `nexa-sql .` · `nexa-sql c:\users\user\project` | 그 폴더의 **`.nsql/workspaces/default.nsql-workspace`**(첫 저장 때 `.nsql/`을 만듦 · 폴더째 옮기면 따라감) |
-| **프로젝트 모드** | `.nsql-project`를 열거나 인자로 | **프로젝트 파일** 안(`bookmarks`) — 프로젝트와 함께 이동·공유 |
+| **File mode** | Just start it (or with only files as arguments) | Global — `workspaces/default.nsql-workspace` in the user settings folder (`%APPDATA%\nexa-sql`) |
+| **Folder mode** | `nexa-sql .` · `nexa-sql c:\users\user\project` | **`.nsql/workspaces/default.nsql-workspace`** in that folder (`.nsql/` is created on the first save · moves with the folder) |
+| **Project mode** | Open a `.nsql-project` or pass it as an argument | Inside the **project file** (`bookmarks`) — moves and is shared with the project |
 
-파일 모드에서 "새 프로젝트 저장"을 하면 그때의 북마크는 프로젝트로 **옮겨지고** 로컬 파일은 비워집니다(프로젝트를 닫으면 로컬은 비어 있음). 이미 있는 프로젝트를 열 때는 로컬 북마크를 건드리지 않습니다.
+When you do "Save New Project" in file mode, the bookmarks at that time are **moved** into the project and the local file is emptied (after you close the project, the local one is empty). Opening an existing project does not touch local bookmarks.
 
-**이름 없는 탭(Script_N)의 북마크**: 프로젝트 모드에서는 탭 본문과 함께 프로젝트 파일에 담겨 다시 열면 그 줄에 붙지만, 파일·폴더 모드에서는 그 탭이 임시라 **메모리에만** 두고 파일에는 쓰지 않습니다(앱을 다시 켜면 사라짐). 이런 북마크는 탭의 **id**로만 묶여 있어서, 탭 이름을 바꿔도(우클릭 ▸ 이름 바꾸기) 북마크 패널의 문서 행은 늘 **지금 탭 이름**을 보여 줍니다 — 만들 때의 이름이 남지 않습니다. 탭을 닫아 이름을 알 수 없으면 `(closed tab #id)`로 보입니다.
+**Bookmarks of untitled tabs (Script_N)**: in project mode they are stored in the project file together with the tab text and attach to the same line when reopened; in file and folder modes those tabs are temporary, so the bookmarks are kept **in memory only** and not written to a file (they are gone after a restart). Such bookmarks are tied only to the tab's **id**, so even if you rename the tab (right-click ▸ Rename tab), the document row of the bookmarks panel always shows **the current tab name** — the name at creation time is not kept. When the tab is closed and its name is unknown, it shows as `(closed tab #id)`.
 
-**저장 시점**: 바꾼 뒤 1초(연속으로 바꾸면 최대 5초) 안에 자동으로 씁니다 — 앱이 가만히 있어도 그 시각에 스스로 깨어 저장합니다. 창을 닫거나 File ▸ Exit로 끝낼 때도 디바운스를 기다리지 않고 바로 씁니다.
+**When they are saved**: automatically within 1 second of a change (up to 5 seconds when changes keep coming) — the app wakes up on its own at that time to save even when it is idle. Closing the window or quitting with File ▸ Exit writes them immediately without waiting for the debounce.
 
 ## CLI
 
@@ -60,4 +62,4 @@ nsql bookmark rm <id> [--project <file>]
 nsql bookmark prune [--days N] [--project <file>]
 ```
 
-`--project x.nsql-project`를 주면 그 프로젝트 파일 안의 북마크를 읽고 씁니다(다른 내용은 그대로).
+With `--project x.nsql-project`, the bookmarks inside that project file are read and written (the rest of its content is left as is).

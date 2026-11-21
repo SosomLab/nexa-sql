@@ -1,38 +1,41 @@
-# 파일로 넣기 · 내보내기 (대량 적재)
+# Import and export files (bulk load)
 
-CSV · TSV · JSON Lines 파일을 표에 **넣고**(import), 조회 결과를 파일로 **내보냅니다**(export). GUI와 CLI가 같은 코드를 쓰므로 결과와 안내 문구가 같습니다.
+**English** | [한국어](Bulk-Import-Export-ko)
 
-> 넣기는 **INSERT만** 합니다. 기존 행을 고치거나 지우지 않습니다(UPDATE·DELETE는 [결과 그리드에서 데이터 편집](Data-Editing.md)의 안전 규칙을 따릅니다).
+You can **import** CSV, TSV, JSON, JSON Lines, Excel (xlsx) and Parquet files into a table, and **export** query results to a file. The GUI and the CLI use the same code, so the results and messages are the same.
 
-## 1. 화면에서 넣기 (Import 창)
+> Import only runs **INSERT** (plus `CREATE TABLE` when you import into a new table). It never changes or deletes existing rows (UPDATE and DELETE follow the safety rules in [Editing data in the result grid](Data-Editing.md)).
 
-![Import 창](images/import-window.png)
+## 1. Import from the GUI (Import Data window)
 
-*Import 창 — 대상 표 · 첫 줄 = 열 이름 · 열 매핑 · 배치/커밋 간격 · 파일 미리보기*
+![Import window](images/import-window.png)
 
-1. 탐색기에서 **표**를 우클릭 ▸ **Import Data…**
-2. 파일을 고릅니다(csv · tsv · jsonl · ndjson).
-3. Import 창에서 미리보기와 옵션을 확인하고 **Start**.
+*Import window — target table · First row = column names · column mapping · batch/commit interval · file preview*
 
-| 창의 항목 | 뜻 |
+1. In the Object Explorer, right-click a **table** ▸ **Import Data** (into that table), or right-click a **schema** ▸ **Import Data (new table)…**. From the menu: **Run ▸ Import Data from File…** (current session · new table by default).
+2. Pick the file (csv · tsv · json · jsonl · ndjson · xlsx · parquet).
+3. In the Import Data window, check the preview and the options, then press **Start**.
+
+The window has three areas, top to bottom.
+
+| Area | What it holds |
 |---|---|
-| 맨 윗줄 | 대상 표와 파일 경로(길면 가운데를 줄여 보여 줍니다) |
-| **First row = column names** | 첫 줄이 열 이름인지(끄면 표의 열 순서대로 채웁니다) |
-| **Map (src=dst,…)** | 파일의 열 이름을 표의 열 이름으로 바꿔 붙입니다. 예: `emp_no=EMPNO,name=ENAME` |
-| **Batch** | 한 번에 보내는 행 수(왕복 단위) |
-| **Commit every** | 몇 행마다 커밋할지(0 = 끝에 한 번) |
-| **Path** | 적재 경로 — 누르면 `auto → driver → multirow → single`로 돌아갑니다(아래 §3) |
-| 미리보기 | 파일 앞 6줄(읽기 전용) |
-| 아랫줄 | 진행 중에는 커밋된 행 수와 경과, 끝나면 결과(성공 = 초록 · 실패·취소 = 빨강) |
+| Source | **File** path · **Format** (**Auto (by extension)** or a fixed format) · **Sheet** (xlsx) · **First row = column names** · **Delimiter** · **Encoding** · **Trim spaces** · **NULL text** — only the fields that apply to the format are shown. Changing one re-reads the file and refreshes the preview and the mapping |
+| Preview | The first rows of the file in a read-only grid (`import.preview_rows`, default 100); each header shows the name and the inferred type |
+| Target | **Existing table** / **New table** · **Table** (existing = pick from the list · new = type a name) · **View DDL** (new table: the `CREATE TABLE` to be run) · column mapping table (✓ = import · **Source column** · **Inferred** · **Target column** or **Column type** for a new table · **Check · sample** / **Sample**) · **Map by position** |
+| Load options | **Batch** (rows per round trip) · **Commit every** (0 = once at the end) · **Path** (`auto → driver → multirow → single`, §3) · **Empty = NULL** · **On error**: **Stop** / **Skip row & report** |
+| Bottom line | While running, rows committed and elapsed time; when done, the result (success = green · failure or cancel = red) · **Start** · **Cancel** · **Close** |
 
-- 적재는 **지금 탭의 연결**로 실행됩니다. 탐색기에서 고른 표가 다른 서버라면 그 탭을 먼저 그 서버에 접속하라고 안내합니다.
-- 적재 중에는 그 연결이 바쁜 상태가 되고(다른 실행은 기다립니다), **Cancel**은 다음 배치 경계에서 멈춥니다. 이미 커밋된 행은 그대로 남고 커밋되지 않은 마지막 배치만 되돌립니다.
-- 창을 닫아도(Esc · Close) 진행 중이면 먼저 취소가 됩니다.
+- Existing table: columns with the same name are linked automatically (case, `_` and spaces ignored). Others you choose yourself, or untick ✓ to skip them. Start stays disabled while a ticked column has no target, a NOT NULL column (without a default) has no source, or two source columns map to the same target. Sample-based warnings (text into a number column, too long, duplicate key values in the sample, …) are shown in the Check column and do not block Start.
+- New table: the column types come from a sample of the file (`import.sample_rows`, default 1000); change them in the mapping table if needed. The table is created first; if that fails nothing is inserted.
+- The import runs on the **current tab's connection**. If the table you picked in the explorer is on another server, you are asked to connect that tab to that server first.
+- During the import that connection is busy (other runs wait). **Cancel** stops at the next batch boundary: rows already committed stay, and only the last uncommitted batch is rolled back.
+- Closing the window (Esc · Close) while it is running cancels first.
 
-## 2. 명령으로 넣기 (`nsql import`)
+## 2. Import from the command line (`nsql import`)
 
 ```
-nsql import -c <대상> -t <표> [옵션] <파일|->
+nsql import -c <target> -t <table> [options] <file|->
 ```
 
 ```
@@ -41,70 +44,84 @@ nsql import -c prod -t EMP -f tsv --map emp_no=EMPNO,name=ENAME --commit-every 5
 cat rows.jsonl | nsql import -c prod -t EMP -
 ```
 
-| 옵션 | 뜻 |
+| Option | Meaning |
 |---|---|
-| `-f csv\|tsv\|jsonl` | 형식을 직접 지정(생략하면 확장자로 판단: `.tsv`·`.tab` = 탭, `.jsonl`·`.ndjson` = JSON Lines, 그 밖 = 쉼표) |
-| `--no-header` | 첫 줄도 데이터(열은 표의 순서대로) |
-| `--cols a,b,…` | 파일의 열 이름을 순서대로 지정(헤더가 없을 때) |
-| `--map src=dst,…` | 파일 열 → 표 열 이름 바꾸기 |
-| `--batch N` | 한 번에 보낼 행 수 |
-| `--commit-every N` | N행마다 커밋(0 = 끝에 한 번) |
-| `--mode auto\|driver\|multirow\|single` | 적재 경로(§3) |
-| `--empty-null on\|off` | 빈 칸을 NULL로 볼지, 빈 문자열로 둘지 |
-| `--timing` | 단계별 시간을 stderr로 |
+| `-f csv\|tsv\|json\|jsonl\|xlsx\|parquet` | Set the format (otherwise taken from the extension: `.tsv`·`.tab` = tab, `.json` = JSON array, `.jsonl`·`.ndjson` = JSON Lines, `.xlsx`·`.xlsm`·`.xls`·`.xlsb`·`.ods` = spreadsheet, `.parquet`·`.pq` = Parquet, anything else = comma) |
+| `--no-header` | The first line is data too (columns follow the table order) |
+| `--cols a,b,…` | Name the file's columns in order (when there is no header) |
+| `--map src=dst,…` | Rename file columns → table columns |
+| `--sheet NAME\|N` | Sheet to read (xlsx) |
+| `--delim ';'` · `--encoding auto\|utf-8\|euc-kr\|utf-16le` | Delimiter · text encoding (default = setting `import.encoding`, `auto`) |
+| `--trim` · `--null-text TEXT` | Trim spaces · text that means NULL |
+| `--create` · `--types a:number(10),…` · `--skip a,b` · `--sample N` | Create the table from the inferred types · override some types · leave columns out · rows sampled for type detection |
+| `--on-error stop\|skip` | Stop at a failing row, or skip it and report |
+| `--dry-run` | Only print the inferred columns and types, the DDL and the first 10 rows, then exit |
+| `--batch N` | Rows sent at once |
+| `--commit-every N` | Commit every N rows (0 = once at the end) |
+| `--mode auto\|driver\|multirow\|single` | Load path (§3) |
+| `--empty-null on\|off` | Treat empty fields as NULL, or keep them as empty strings |
+| `--timing` | Per-stage timings to stderr |
 
-- 파일 이름 자리에 `-`를 주면 표준 입력에서 읽습니다.
-- 값이 큰따옴표로 감싸여 있으면 그 안의 쉼표·줄바꿈을 그대로 읽습니다. 파일 앞의 BOM은 무시합니다.
-- **JSON Lines**는 한 줄에 객체 하나입니다. 첫 객체의 키가 열 이름이 되고, 어떤 줄에 없는 키나 `null`은 NULL로 들어갑니다.
-- 날짜·숫자는 표의 열 타입에 맞춰 보냅니다. 형식이 맞지 않으면 그 행에서 서버 오류로 멈추고 어느 행인지 알려 줍니다.
+- Give `-` as the file name to read from standard input.
+- A value wrapped in double quotes keeps its commas and line breaks. A BOM at the start of the file is ignored.
+- **JSON Lines** is one object per line. The keys of the first object become the column names; a key missing from a line, or `null`, is inserted as NULL. A **JSON** file (one array) is read whole (up to `import.json_max_mb`, 256 MB — use JSON Lines for bigger files).
+- Dates and numbers are sent to match the table's column types. If a value does not fit, the import stops at that row with the server error and tells you which row it was.
 
-## 3. 적재 경로와 속도
+## 3. Load paths and speed
 
-`auto`(기본)는 DBMS가 제공하는 빠른 길이 있으면 그것을 쓰고, 없으면 여러 행을 한 문장에 담아 보냅니다.
+`auto` (default) uses the fast path the DBMS offers when there is one, and otherwise sends several rows in one statement.
 
-| DBMS | 자동으로 고르는 길 |
+| DBMS | Path chosen automatically |
 |---|---|
-| Oracle | 배열 DML(한 번에 배치 크기만큼 바인드) |
+| Oracle | Array DML (binds one batch at a time) |
 | PostgreSQL | `COPY … FROM STDIN` |
-| SQL Server | TDS 벌크 적재 |
-| SQLite · 그 밖 | 다중 행 `INSERT` |
+| SQL Server | TDS bulk load |
+| MySQL / MariaDB | `LOAD DATA LOCAL INFILE` (only when the server has `local_infile` on, otherwise multi-row `INSERT`) |
+| SQLite · others | Multi-row `INSERT` |
 
-측정값(5,000행 · 4열 · 원격 서버 · 디버그 빌드) — 환경에 따라 달라집니다.
+Measurements (5,000 rows · 4 columns · remote server · debug build) — they vary with your environment.
 
-| DBMS | 초당 행 |
+| DBMS | Rows per second |
 |---|---|
-| SQLite | 약 57,000 |
+| SQLite | about 57,000 |
 | PostgreSQL | 15,000 ~ 20,000 |
 | Oracle | 13,000 ~ 14,000 |
-| SQL Server | 5,200(배치 1,000) → 13,900(배치 5,000) |
+| SQL Server | 5,200 (batch 1,000) → 13,900 (batch 5,000) |
 
-- SQL Server는 배치마다 준비 왕복이 있어 `--batch`를 키울수록 빨라집니다.
-- `driver`는 빠른 길이 없으면 오류로 알려 주고, `multirow`는 항상 다중 행 INSERT, `single`은 한 행씩 보냅니다(문제를 찾을 때).
+- SQL Server has a prepare round trip per batch, so a larger `--batch` is faster.
+- `driver` reports an error when there is no fast path, `multirow` always uses multi-row INSERT, and `single` sends one row at a time (for tracking down problems).
 
-## 4. 실패했을 때
+## 4. When it fails
 
-- 배치가 실패하면 그 배치를 **한 행씩 다시 넣어** 문제 행을 지목합니다: `row 500 (line 501)` 처럼 **파일의 몇 번째 행 · 몇 번째 줄**인지와 서버 오류 메시지를 보여 줍니다.
-- 그 앞까지 성공한 행은 커밋되고 몇 행이 들어갔는지 함께 알려 줍니다(`499 rows committed`).
-- 전부-아니면-무로 하고 싶으면 **커밋 간격을 0**으로 두세요(`--commit-every 0` · 창의 Commit every = 0). 대신 큰 파일에서는 서버의 트랜잭션이 길어집니다.
+- When a batch fails, that batch is **re-inserted one row at a time** to pin down the bad row: you see **which row and which line of the file** it was, like `row 500 (line 501)`, together with the server error message.
+- The rows that succeeded before it are committed, and you are told how many went in (`499 rows committed`).
+- With **On error = Skip row & report** (`--on-error skip` · setting `import.on_error`), failing rows are skipped and listed at the end instead of stopping the import.
+- If you want all-or-nothing, set the **commit interval to 0** (`--commit-every 0` · Commit every = 0 in the window). On a large file this keeps one server transaction open for longer.
 
-## 5. 내보내기 (`nsql export`)
+## 5. Export (`nsql export`)
 
 ```
-nsql export -c <대상> (-q <SQL> | -t <표>) [-f csv|tsv|json|jsonl|insert[:표]] [-o 파일] [--fast]
+nsql export -c <target> (-q <SQL> | -t <table>) [-f csv|tsv|json|jsonl|xlsx|parquet|insert[:table]] [-o file] [--fast]
 ```
 
-`--fast`는 **서버가 직접 csv/tsv를 만들어** 보내게 합니다(PostgreSQL `COPY TO`). 지원하지 않는 DBMS·형식이면 한 줄 안내 뒤 평소 경로로 내보냅니다.
+`--fast` makes **the server build the csv/tsv itself** and stream it (PostgreSQL `COPY TO`). If the DBMS or format does not support it, a one-line notice is printed and the normal path is used.
 
-## 6. 설정 (`bulk.*`)
+## 6. Settings (`bulk.*` · `import.*`)
 
-창과 명령의 기본값입니다(설정 ▸ 검색창에 `bulk`).
+Defaults for the window and the command (Settings ▸ type `bulk` or `import` in the search box · category **CLI**).
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `bulk.batch_rows` | 1000 | 한 번에 보낼 행 수 |
-| `bulk.commit_every` | 10000 | 커밋 간격(0 = 끝에 한 번) |
-| `bulk.mode` | auto | 적재 경로 |
-| `bulk.empty_null` | on | 빈 칸 = NULL |
-| `bulk.check_constraints` | on | SQL Server 벌크 적재 중 CHECK·FK 검사 유지 |
-| `bulk.fire_triggers` | off | SQL Server 벌크 적재 중 INSERT 트리거 실행 |
-| `bulk.append_hint` | off | Oracle 직접 경로 삽입(`/*+ APPEND */`) — 빠르지만 표를 잠그고 되돌리기 특성이 달라집니다 |
+| `bulk.batch_rows` | 1000 | Rows sent at once |
+| `bulk.commit_every` | 10000 | Commit interval (0 = once at the end) |
+| `bulk.mode` | auto | Load path |
+| `bulk.empty_null` | on | Empty field = NULL |
+| `bulk.check_constraints` | on | Keep CHECK and FK checks during SQL Server bulk load |
+| `bulk.fire_triggers` | off | Fire INSERT triggers during SQL Server bulk load |
+| `bulk.append_hint` | off | Oracle direct-path insert (`/*+ APPEND */`) — fast, but it locks the table and changes how rollback behaves |
+| `import.sample_rows` | 1000 | Rows sampled for type detection |
+| `import.preview_rows` | 100 | Rows in the Import window preview |
+| `import.encoding` | auto | Text file encoding (auto = BOM → UTF-8 → cp949) |
+| `import.on_error` | stop | On a failed row: stop / skip and report |
+| `import.text_margin_pct` | 50 | Extra length added to text columns of a new table (%) |
+| `import.json_max_mb` | 256 | Size limit for a JSON array file (MB) |

@@ -212,7 +212,7 @@ CLI `nsql shell`(Release) 한 프로세스에서 SQLite 기준 → `CONNECT <프
 
 > ★ 라이선스(10-29 · T-10) = 정적 동봉한 unixODBC(`unix-odbc` · LGPL)는 `deny.toml`의 crate 예외 1건 · 재링크 요건 = 공개 소스 + THIRD-PARTY-NOTICES.
 
-## 6. ODBC — macOS·Linux 접속 절차(★ 10-25 D-362 = unixODBC **정적 동봉** + 상대 경로 해결기 → 사용자는 **벤더 ODBC 드라이버만** 설치 · 아래 ① unixODBC 설치 단계는 D-362 반영 판부터 불필요 · 개발 빌드 전제는 그대로) — (10-24 · 136차 ODBC 드라이버 · 사용자 안내 · 위키 [Connections](wiki/Connections.md#odbc-on-macos--linux-english) 영어·한국어 판이 사용자용 원문)
+## 6. ODBC — macOS·Linux 접속 절차(★ 10-25 D-362 = unixODBC **정적 동봉** + 상대 경로 해결기 → 사용자는 **벤더 ODBC 드라이버만** 설치 · 아래 ① unixODBC 설치 단계는 D-362 반영 판부터 불필요 · 개발 빌드 전제는 그대로) — (10-24 · 136차 ODBC 드라이버 · 사용자 안내 · 위키 [Connections](wiki/Connections.md#odbc-on-macos--linux) 영어·한국어 판이 사용자용 원문)
 
 | 단계 | 내용 |
 |---|---|

@@ -1,378 +1,385 @@
-# 설정 창
+# Settings window
 
-메뉴 **편집 ▸ 환경 설정**(Ctrl+,)으로 엽니다. 왼쪽 = 검색 + 분류 트리, 오른쪽 = 설정 카드 목록입니다. 값은 바꾸는 즉시 저장·적용됩니다.
+**English** | [한국어](Settings-ko)
 
-![설정 창](images/settings-window.png)
+Open it with **Edit ▸ Preferences** (Ctrl+,). The left side has a search box and the category tree; the right side lists the setting cards. Values are saved and applied as soon as you change them.
 
-*설정 창 — 검색어(result filter)로 거른 카드 · 키 이름 · 기본값 · 왼쪽 분류 트리*
+![Settings window](images/settings-window.png)
 
-## 카드 순서
+*Settings window — cards filtered by the search text (result filter) · key names · default values · category tree on the left*
 
-카드는 **그룹 → 분류 → 키 앞머리 → 등재 순**으로 놓입니다. 한 분류 안에 앞머리가 여럿이어도(예: 세션 분류의 `session.` `tx.` `vars.` `run.` `db.`) 같은 앞머리끼리 모여 흩어지지 않습니다. 검색 결과도 같은 순서입니다.
+## Card order
 
-## 키 이름 복사
+Cards are laid out **group → category → key prefix → registration order**. Even when one category holds several prefixes (for example `session.` `tx.` `vars.` `run.` `db.` in the Session category), keys with the same prefix stay together instead of scattering. Search results use the same order.
 
-카드 오른쪽 위의 키 이름(`session.autocommit` 같은) 옆에 **복사 버튼**이 있습니다.
+## Copying key names
 
-| 동작 | 결과 |
+Next to the key name at the top right of a card (such as `session.autocommit`) there is a **copy button**.
+
+| Action | Result |
 |---|---|
-| 클릭 | 그 키 이름을 복사 → 버튼이 ✓로 바뀌었다가 잠시 뒤(`ui.copy_feedback_ms`) 원래대로 |
-| **Shift+클릭** 또는 **Ctrl+클릭**(맥 ⌘) | 지금 화면에 보이는 설정 **전부**를 복사 — `# 분류 › 제목` 줄 + `키=값` 줄(settings.conf 형식이라 그대로 붙여 넣을 수 있음) |
+| Click | Copies that key name → the button turns into ✓ and changes back after a moment (`ui.copy_feedback_ms`) |
+| **Shift+click** or **Ctrl+click** (Mac ⌘) | Copies **every** setting shown on screen right now — a `# Category › Title` line + `key=value` lines (settings.conf format, so you can paste it as is) |
 
-복사한 키는 CLI에서 그대로 씁니다: `nsql config get session.autocommit` · `nsql config set …`.
+Copied keys work directly in the CLI: `nsql config get session.autocommit` · `nsql config set …`.
 
-## 고급(Advanced)
+## Advanced
 
-왼쪽 아래 **고급** 스위치가 꺼져 있으면(기본) 자주 바꾸지 않는 설정은 숨깁니다. 숨긴 것이 있으면 목록 맨 위에 "고급 설정 N개 숨김"이 보입니다. 켜면 모두 보이고, 고급 설정은 **키 이름이 강조색**입니다.
+When the **Advanced** switch at the bottom left is off (default), settings you rarely change are hidden. If anything is hidden, "N advanced settings are hidden - turn on Advanced to show them" appears at the top of the list. Turn it on to see everything; advanced settings show their **key name in the accent color**.
 
-고급으로 분류되는 것:
-- DBMS 그룹(Oracle · SQL Server · PostgreSQL · SQLite)의 설정 전부
-- 구현 상수 — 밀리초 시간 · 예산 · 상한 · 스레드 수 · 캐시 크기 · 폴링 주기 · 재시도
-- **객체 삭제 전 DDL 백업**(`explorer.drop_backup` · 기본 켬 · 10-01): 탐색기 ▸ 삭제…가 DDL 파일을 먼저 만들고 성공했을 때만 지웁니다. 운영 접속은 백업 실패 = 삭제 안 함.
-- **버튼 연타 무시**(`ui.click_guard_ms` · 기본 350 · 09-30): 같은 버튼·툴바 항목을 이 시간 안에 두 번 누르면 한 번만 처리합니다(실행·커밋·저장의 실수 이중 클릭 방지). 0 = 끔.
-- **소스 열기 스키마**(`explorer.source_schema` · 기본 켬 · 09-30): 객체 탐색기 "소스 열기"의 머리 줄을 `CREATE OR REPLACE PROCEDURE 스키마.이름`으로 만듭니다(DBeaver와 같음 · 종류 단어와 이름 사이 공백 1칸). 같은 이름이 여러 스키마에 있을 때 실행해도 현재 스키마의 객체를 덮어쓰지 않습니다. 끄면 저장된 이름 그대로.
-- **전체 선택 뒤 화면**(`editor.select_all_view` · 기본 **현재 위치 유지** · 09-30): Ctrl(⌘)+A 뒤 화면이 그 자리에 남습니다(캐럿은 끝). "선택 끝으로 이동"을 고르면 종전처럼 끝으로 스크롤.
-- **시간 단위**(09-30): 기본값이 10초 이하인 시간 설정은 ms(`_ms`), 넘으면 초(`_secs`)·분(`_min`). 단위가 바뀐 옛 키(`ui.toast_secs` · `probe.timeout` · `probe.retry_delay` · `run.toast_hide_secs` · `meta.refresh_idle_secs` · `project.autosave_change_secs`)는 파일에서 자동으로 옮겨지고(초 × 1000), `nsql config get/set 옛키`는 옛 단위(초 · 소수 가능)로 그대로 통합니다.
-- 한 번 정하면 거의 손대지 않는 동작 규칙(예: 그리드 편집의 행 식별 세부)
+What counts as advanced:
+- Every setting in the DBMS group (Drivers · Oracle · SQL Server · PostgreSQL · MySQL / MariaDB · SQLite)
+- Implementation constants — millisecond times · budgets · limits · thread counts · cache sizes · polling intervals · retries
+- Behavior rules you set once and rarely touch again (for example the row-identification details of grid editing)
 
-글꼴 · 색 · 켜기/끄기 · 모드 · 자동 저장 주기처럼 자주 만지는 것은 기본으로 보입니다. CLI `nsql config list`에는 고급 설정도 나옵니다.
+Settings you touch often, such as fonts, colors, on/off switches, modes and the autosave interval, are shown by default. CLI `nsql config list` also lists the advanced settings.
 
-## 변경(Changed)
+The following settings are also described here; they are shown by default (not advanced):
+- **Back up DDL before DROP** (`backup.object_drop` · default on · Object backup category · formerly `explorer.drop_backup`, 10-01): before an object is dropped (Explorer ▸ Delete… or a DROP statement run from the editor) its current DDL is written to a file first. On a Production connection a failed backup blocks the drop.
+- **Ignore repeated button clicks within (ms)** (`ui.click_guard_ms` · default 350 · 09-30): a second press of the same button or toolbar item within this time is handled only once (guards against accidental double clicks on Run, Commit, Save). 0 = off.
+- **Open source: qualify with owner schema** (`explorer.source_schema` · default on · 09-30): the header line of "Open source" in the object explorer becomes `CREATE OR REPLACE PROCEDURE SCHEMA.NAME` (same as DBeaver · one space between the kind word and the name). When the same name exists in several schemas, running it does not overwrite the object in your current schema. Off = the stored name as is.
+- **Select All keeps the view** (`editor.select_all_view` · default **Keep current position** · 09-30): after Ctrl(⌘)+A the view stays where it is (the caret goes to the end). Choose "Move to the end" to scroll to the end as before.
+- **Time units** (09-30): time settings whose default is 10 seconds or less use ms (`_ms`); longer ones use seconds (`_secs`) or minutes (`_min`). Old keys whose unit changed (`ui.toast_secs` · `probe.timeout` · `probe.retry_delay` · `run.toast_hide_secs` · `meta.refresh_idle_secs` · `project.autosave_change_secs`) are migrated automatically in the file (seconds × 1000), and `nsql config get/set old-key` still works in the old unit (seconds · decimals allowed).
 
-**고급** 스위치 오른쪽의 **변경** 스위치를 켜면 **기본값에서 바뀐 설정만** 보입니다(고급 여부와 상관없이 · 검색어와 함께 좁혀짐). 점검용 보기라 창을 열 때마다 꺼진 상태로 시작합니다. 켠 뒤 어떤 값을 기본값으로 되돌려도 그 카드는 사라지지 않고 남아 있습니다(껐다 다시 켜면 목록이 새로 계산됩니다). 바뀐 설정이 없으면 "기본값에서 바뀐 설정이 없습니다"가, 설정 창에 보이지 않는 숨은 키가 바뀌어 있으면 "숨은 설정 N개도 기본값과 다릅니다"가 보입니다(그 목록은 CLI `nsql config list all`).
+## Changed
 
-## 분류 · 키 이름 규칙
+Turn on the **Changed** switch to the right of **Advanced** to see **only settings that differ from their defaults** (regardless of Advanced · narrowed further by the search text). It is a review view, so it starts off every time the window opens. After you turn it on, a card stays in the list even if you set its value back to the default (turn the switch off and on again to recompute the list). If nothing has changed, "No settings differ from their defaults" is shown; if hidden keys that do not appear in the settings window have changed, "N hidden settings also differ from their defaults" is shown (list them with CLI `nsql config list all`).
 
-- 키 = `<앞머리>.<이름>` 두 토막입니다. 앞머리는 그 설정이 하는 **일**(`tx.` 트랜잭션 · `vars.` 변수 · `grid.` 결과 그리드)을 말합니다.
-- **큰 파일** 분류가 따로 있습니다(편집기 그룹 · 파일 다음) — 큰 파일 단계 L1/L2 · 열기 선택 · 부분 보기 · 비동기 적재([큰 파일과 기능 제한](Large-Files-and-Limits.md)).
-- 이름이 바뀐 키는 옛 이름도 계속 통합니다(설정 파일을 읽을 때 새 키로 옮기고, CLI에서 옛 이름으로 불러도 새 키로):
+## Categories · key naming
 
-| 옛 키 | 새 키 | 위치 |
+- A key has two parts: `<prefix>.<name>`. The prefix says what the setting **does** (`tx.` transactions · `vars.` variables · `grid.` result grid).
+- There is a separate **Large files** category (Editors group · after Files) — large-file levels L1/L2 · open choice · partial view · asynchronous loading ([Large Files and Limits](Large-Files-and-Limits.md)). Right after it come **External changes** (`file.external_*`) and **Find in Files** (`search.*`), split out of Files on 11-21.
+- Renamed keys keep working under their old names (the settings file is migrated to the new key when read, and the CLI accepts the old name too):
+
+| Old key | New key | Location |
 |---|---|---|
-| `ui.ime_hint` | `input.ime_hint` | 입력 ▸ 가린 입력란 입력 언어 안내(3-OS) |
-| `ui.ime_hint_watch` | `input.ime_hint_watch` | 입력 ▸ 가린 입력란 안내: 입력기 상태 구독(Linux · ibus · 고급) |
-| `editor.tab_line_scratch` | `editor.tab_line_unsaved` | 편집기 ▸ 탭 줄 색: 미저장 탭 |
-| `license.gates_dev` | `license.gates` | 숨김(기본 끔 = 라이선스 없이 전 기능) |
+| `ui.ime_hint` | `input.ime_hint` | Input ▸ Hidden-input language hint (3-OS) |
+| `ui.ime_hint_watch` | `input.ime_hint_watch` | Input ▸ Hidden-input hint: subscribe to the input method (Linux · ibus · advanced) |
+| `editor.tab_line_scratch` | `editor.tab_line_unsaved` | Tabs ▸ Tab line: unsaved tab |
+| `license.gates_dev` | `license.gates` | Hidden (default off = every feature without a license) |
+| `explorer.drop_backup` | `backup.object_drop` | Object backup ▸ Back up DDL before DROP |
 
-## 10-12에 더해진 설정
+## Settings added on 10-12
 
-| 키 | 기본 | 무엇 |
+| Key | Default | What |
 |---|---|---|
-| `grid.refetch_confirm` | on | 결과 그리드 ▸ 스크롤 끝 자동 재조회나 전체 조회가 **처음부터 전부 다시 받는 교체**(커서가 없고 ORDER BY도 없을 때의 엄격 일관성)가 되려 하면 먼저 묻습니다 — "처음부터 다시 받을까요?" 토스트의 [계속]을 누를 때만 받습니다. 끄면 종전처럼 바로 받습니다(■로 중지 가능). |
-| `ui.theme_cache_ms` | 1500 (숨김) | Linux에서 시스템 다크 모드를 `gsettings`로 조회한 결과를 이 시간 동안 재사용합니다(메뉴를 연달아 열 때 외부 명령 반복 방지 · 0 = 매번 조회). Windows·macOS에는 영향이 없습니다. |
+| `grid.refetch_confirm` | off | Result Sets ▸ in strict mode only: when an automatic re-fetch at the end of the scroll or a fetch-all would become a **replacement that re-fetches everything from the start** (strict consistency when there is no cursor and no ORDER BY), it asks first — data is fetched only when you press [Continue] on the "Re-fetch from the start?" toast. Off (default) = fetch right away (■ can stop it). |
+| `ui.theme_cache_ms` | 1500 (hidden) | On Linux, the result of querying the system dark mode through `gsettings` is reused for this long (avoids repeating the external command when you open menus one after another · 0 = query every time). No effect on Windows or macOS. |
 
-## 09-28에 바뀐 기본값
+## Defaults changed on 09-28
 
-| 키 | 옛 기본 | 새 기본 | 이유 |
+| Key | Old default | New default | Why |
 |---|---|---|---|
-| `explorer.disconnect_pick` | auto | **always** | 서버 노드 연결 해제는 연결이 하나여도 "모두 / 이 연결"을 고르고 끊습니다 |
-| `search.max_file_kb` | 1024 | **8192** | 파일 검색 한 파일 상한 = SSD 기준(파일당 약 16 ms) · 실행 속도 향상 모드는 HDD 기준 2048로 강제 |
+| `explorer.disconnect_pick` | auto | **always** | Disconnecting a server node asks "all / this connection" even when there is only one connection |
+| `search.max_file_kb` | 1024 | **8192** | Per-file limit of Find in Files = SSD baseline (about 16 ms per file) · speed boost forces 2048 (HDD baseline) |
 
-옛 기본값이 설정 파일에 그대로 남아 있었다면 새 기본값을 따릅니다.
+If the old default was still stored in your settings file, the new default applies.
 
-## 09-30에 더해진 설정
+## Settings added on 09-30
 
-- **고속 스크롤**(`scroll.*` · Grid 분류): `scroll.fast`(사용 · 기본 켬) · `scroll.fast_speed`(느리게 ×4 · 보통 ×8 · **빠르게 ×16** · 매우 빠르게 ×32) · `scroll.fast_grid_extra`(결과 탭은 한 단계 더 · 켬) · `scroll.fast_hud`(속도 배지 · 켬) · `scroll.fast_hud_pos`(배지 위치 · 우상단) · `scroll.fast_hud_fade_ms`(배지가 사라지는 시간 · 600). 같은 방향으로 휠을 빨리 돌리거나(그리드는 ↑/↓를 누르고 있어도) 이동량이 배수로 커지고, 멈추면 바로 멈춥니다(관성 없음). 편집기 · 결과(모든 보기 모드) · 객체 탐색기 · 검색 결과 · 프로젝트 · 북마크 · 아웃라인 · 확장 패널 전부.
-- **객체 용량 표시**(`explorer.sizes` · 기본 켬): 테이블 · 구체화 뷰 · 인덱스의 저장 용량을 객체 탐색기 행 오른쪽에 보입니다(스키마 행 = 읽힌 테이블·MV·인덱스의 합 · 표기 = 정수 + 단위 한 글자 = `400M` `2G` `576K`). 폴더를 처음 읽을 때 사전 질의 1회 · 성능 향상 모드에서는 꺼집니다. 단위마다 색이 다릅니다(B 회색 · KB 파랑 · MB 초록 · GB 앰버 · TB 딥오렌지 · PB 보라). 객체 상세 패널(펼침)의 `size` 행에는 정확한 bytes와 블록 수(DBMS가 알려 줄 때)가 나옵니다.
+- **Fast scrolling** (`scroll.*` · Fast Scroll category, User Interface group): `scroll.fast` (on/off · default on) · `scroll.fast_speed` (Slow (×4) · Normal (×8) · **Fast (×16)** · Turbo (×32)) · `scroll.fast_grid_extra` (result tabs one step faster · on) · `scroll.fast_hud` (speed badge · on) · `scroll.fast_hud_pos` (badge position · top right) · `scroll.fast_hud_fade_ms` (badge fade time · 600). Spinning the wheel quickly in the same direction (or holding ↑/↓ in the grid) multiplies the distance, and it stops the moment you stop (no inertia). Applies to the editor · results (all view modes) · object explorer · search results · project · bookmarks · outline · extension panels.
+- **Show object sizes** (`explorer.sizes` · default on): the storage size of tables · materialized views · indexes is shown at the right of the row in the object explorer (schema row = sum of the tables · MVs · indexes read so far · format = integer + one-letter unit = `400M` `2G` `576K`). One catalog query when a folder is first read · turned off in speed boost mode. Each unit has its own color (B gray · KB blue · MB green · GB amber · TB deep orange · PB purple). The `size` row of the object details panel (expanded) shows the exact bytes and block count (when the DBMS reports them).
 
-## 화면 언어 — 시스템(10-04)
+## UI language — System (10-04)
 
-`ui.lang`(설정 ▸ User Interface ▸ Appearance ▸ 언어)은 **시스템**(기본) · English · 한국어 중에서 고릅니다. 시스템이면 OS 표시 언어를 따르고(한국어 OS = 한국어 · 그 밖 = 영어), 콤보에는 `시스템 (한국어)`처럼 지금 적용된 언어가 괄호로 보입니다. ⌘⇧L(Windows·Linux = Ctrl+Shift+L)을 누를 때마다 시스템 → English → 한국어 순으로 바뀝니다. 예전에 `en`/`ko`로 저장한 설정은 그대로 쓰입니다. CLI = `nsql config set ui.lang system`.
+`ui.lang` (Settings ▸ User Interface ▸ Appearance ▸ Language) is one of **System** (default) · English · 한국어. System follows the OS display language (Korean OS = Korean · anything else = English), and the combo shows the language currently applied in parentheses, like `System (한국어)`. Each press of ⌘⇧L (Windows·Linux = Ctrl+Shift+L) cycles System → English → 한국어. Settings saved earlier as `en`/`ko` keep working. CLI = `nsql config set ui.lang system`.
 
-## 상태바 항목 — 순서와 표시(10-04)
+## Status bar items — order and visibility (10-04)
 
-설정 ▸ User Interface ▸ Window의 **상태바 항목** 카드에서 [편집…]을 누르면 항목 창이 열립니다. 체크를 끄면 그 항목이 상태줄에서 사라지고, ▲▼ 버튼 · Ctrl+↑↓(맥 ⌘+↑↓) · 끌어 놓기로 순서를 바꿉니다. Space = 체크 전환 · Esc = (끄는 중이면 취소 후) 닫기 · Reset = 기본 순서로. 바꾸는 즉시 상태줄에 반영되고 저장됩니다(`statusbar.layout`). 라이선스 표시는 잠겨 있어 끌 수 없습니다.
+On the **Status bar items** card in Settings ▸ User Interface ▸ Window, press [Edit…] to open the items window. Uncheck an item to remove it from the status bar; change the order with the ▲▼ buttons · Ctrl+↑↓ (Mac ⌘+↑↓) · drag and drop. Space = toggle the check · Esc = close (cancels a drag in progress first) · Reset = default order. Changes show in the status bar right away and are saved (`statusbar.layout`). The license indicator is locked and cannot be turned off.
 
-항목은 **그룹**으로 묶여 있습니다. 그룹 행(굵게)을 옮기면 안의 칸이 통째로 움직이고, 그룹 체크를 끄면 통째로 숨겨집니다(안의 체크는 그대로 기억). 그룹 안의 칸은 그 그룹 안에서만 순서를 바꿀 수 있습니다.
+Items are bundled into **groups**. Moving a group row (bold) moves its cells together, and unchecking a group hides it entirely (the checks inside are remembered). Cells inside a group can only be reordered within that group.
 
-| 순서(기본) | 그룹 / 칸 |
+| Order (default) | Group / cell |
 |---|---|
-| 1 | 트랜잭션 모드 |
-| 2 | **문서 상태** = 큰 파일 모드 · 읽기 전용 · 북마크 |
-| 3 | 위치 / 선택 |
-| 4 | **실행 결과** = 행 수 · 실행 시간 |
-| 5 | **프로젝트** = 자동 저장 · git |
-| 6 | **파일 형식** = 인코딩 · 줄 끝 · 들여쓰기 · 구문 |
-| 7 | 메모리(라이선스 바로 왼쪽) |
-| 8 | 라이선스(잠금 · 끌 수 없음) |
+| 1 | Transaction mode |
+| 2 | &substitution mode |
+| 3 | Boost mode (only while `perf.boost` is on) |
+| 4 | **Document state** = Large file mode · Read-only · Bookmarks |
+| 5 | Position / selection |
+| 6 | **Result** = Row count · Elapsed time |
+| 7 | **Project** = Autosave · git |
+| 8 | **File format** = Encoding · Line ending · Indentation · Syntax |
+| 9 | Memory (right next to License) |
+| 10 | License (locked · cannot be turned off) |
 
-## 툴바 — 우클릭 메뉴와 툴바 설정(10-04)
+## Toolbar — context menu and toolbar settings (10-04)
 
-툴바의 버튼이나 그룹 위에서 우클릭하면 **그 영역의 추가 명령**(예: 실행 그룹 = 새 결과 탭에서 실행 · 실행 계획)과 그 버튼의 표시 체크 · 그룹 띄우기가 먼저 나오고, 구분선 아래에 **공통 메뉴**(툴바 설정… · 툴바 배치 초기화)가 나옵니다. 그룹 밖 빈 자리에서는 공통 메뉴만 나옵니다.
+Right-clicking a toolbar button or group first shows **extra commands for that area** (for example the run group = Run statement in new result tab · Explain plan), that button's visibility check and Float for the group, and then, below a separator, the **common menu** (Toolbar settings… · Reset toolbar layout). Empty space outside the groups shows only the common menu.
 
-**툴바 설정…**(또는 설정 창 툴바 카드의 [편집…])은 상태바 항목과 같은 편집 창을 엽니다. 그룹 행을 옮기면 툴바 그룹 순서가 바뀌고, 그룹 안 버튼의 체크를 끄면 그 버튼이 툴바에서 사라집니다. 그룹 자체를 숨기거나 그룹 안 버튼 순서를 바꾸는 것은 아직 지원하지 않습니다. 저장 = `toolbar.layout`(그룹 순서) · `toolbar.hidden`(숨긴 버튼).
+**Toolbar settings…** (or [Edit…] on the toolbar card in the settings window) opens the same editor window as the status bar items. Moving a group row changes the order of toolbar groups, and unchecking a button inside a group removes that button from the toolbar. Hiding a whole group or reordering buttons inside a group is not supported yet. Saved in `toolbar.layout` (group order) · `toolbar.hidden` (hidden buttons).
 
-## 상태바 — 우클릭 메뉴(10-04)
+## Status bar — context menu (10-04)
 
-상태줄의 칸 위에서 우클릭하면 **그 칸의 관련 명령**(예: 트랜잭션 모드 = 트랜잭션 로그 · 메모리 = 메모리 창 · 행 수/실행 시간 = Output)과 `"<이름>" 숨기기`가 먼저 나오고, 구분선 아래에 **공통 메뉴**(상태바 설정… · 상태바 항목 기본값)가 나옵니다. 메뉴는 상태줄 바로 위로 열려 칸을 가리지 않습니다. 칸이 없는 왼쪽 상태 문구 자리에서는 공통 메뉴만 나옵니다. 라이선스 칸은 숨길 수 없습니다. 칸을 왼쪽 클릭했을 때의 동작(구문 · 들여쓰기 · 줄 끝 · 인코딩 바꾸기 등)은 그대로입니다.
+Right-clicking a status bar cell first shows **commands related to that cell** (for example Transaction mode = Transaction Log · Memory = Memory Usage · Row count/Elapsed time = Output) and `Hide "<name>"`, and then, below a separator, the **common menu** (Status bar settings… · Reset status bar items). The menu opens just above the status bar so it does not cover the cells. The status text area on the left, which has no cells, shows only the common menu. The license cell cannot be hidden. Left-clicking a cell still does what it did before (changing syntax · indentation · line ending · encoding, and so on).
 
-## 탭 동작(10-07)
+## Tabs (10-07)
 
-설정 창 **편집기** 그룹에 **탭 동작** 분류가 생겼습니다(편집기 바로 아래). 탭에 관한 설정을 한곳에 모았습니다 — 줄 수 `tabs.rows` · 툴팁 `tabs.tooltip` · 활성 탭 줄 색 `editor.tab_accent_color` · 탭 줄 색 `editor.tab_line_unsaved/file/preview` · 미저장 탭 글자 `editor.tab_unsaved_text`/`editor.tab_unsaved_color` · 닫기 표시 `editor.tab_close_show` · 저장 안 한 탭 닫기 `editor.close_unsaved` · 그리고 새 키 둘(키 이름은 그대로 · 보이는 분류만 옮김).
+The **Editors** group of the settings window has a **Tabs** category (right below Editor). It gathers the tab-related settings in one place — rows `tabs.rows` · tooltip `tabs.tooltip` · active tab line color `editor.tab_accent_color` · tab line colors `editor.tab_line_unsaved/file/preview` · unsaved tab text `editor.tab_unsaved_text`/`editor.tab_unsaved_color` · close mark `editor.tab_close_show` · closing unsaved tabs `editor.close_unsaved` · plus two new keys (key names unchanged · only the category shown moved).
 
-| 키 | 기본값 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `tabs.close_preview_focus` | `keep` | 미리보기·확장(뷰) 탭이 닫혀 다른 탭이 자동 선택될 때 — `keep` = 프로젝트 탐색기에는 선택 표시만 하고 **지금 보던 자리 유지**(폴더를 계속 탐색하는 중으로 봄) · `move` = 그 탭을 클릭한 것처럼 열린 파일 행으로 이동 |
-| `tabs.close_editor_focus` | `move` | 편집기 탭이 닫혀 다른 탭이 자동 선택될 때 — `move` = 열린 파일 행으로 이동 · `keep` = 선택 표시만 하고 자리 유지 |
+| `tabs.close_preview_focus` | `keep` | When a preview or extension (view) tab closes and another tab is selected automatically — `keep` = only mark it in the project explorer and **stay where you are** (you are probably still browsing the folder) · `move` = go to the open file's row as if you had clicked that tab |
+| `tabs.close_editor_focus` | `move` | When an editor tab closes and another tab is selected automatically — `move` = go to the open file's row · `keep` = only mark it and stay where you are |
 
-## 제외 폴더 — 목록 편집(10-07)
+## Excluded folders — list editor (10-07)
 
-**설정 ▸ 프로젝트 ▸ 제외 폴더** 카드의 **[편집…]** 을 누르면 목록 창("제외 폴더(Goto Anything)")이 열립니다. 여기 있는 이름의 폴더는 Ctrl+P(Goto Anything)가 읽지 않습니다(프로젝트 탐색기 트리에는 그대로 보임).
+Press **[Edit…]** on the **Settings ▸ Project ▸ Excluded folder names (Goto Anything index)** card to open the list window ("Excluded Folders (Goto Anything)"). Folders with these names are not read by Ctrl+P (Goto Anything); they still appear in the project explorer tree.
 
-- 아래 입력란에 폴더 이름을 적고 **Enter** 또는 **[추가]** · 행을 고르고 **Delete** 또는 **[삭제]** · **▲▼** = 순서 · **[기본값]** = `.git .svn .hg node_modules target .nsql`로 되돌림.
-- 이미 있는 이름을 추가하면 그 행을 선택만 합니다 · 쉼표가 든 이름은 받지 않습니다 · 한글 입력 가능.
-- 전부 지우면 "제외 없음"(설정값 `-`) · 카드의 글 칸에 직접 쉼표로 적어도 됩니다(빈 칸 = 기본 목록).
-- 바꾸면 다음 Ctrl+P가 프로젝트 폴더를 다시 읽습니다.
+- Type a folder name in the box below and press **Enter** or **[Add]** · select a row and press **Delete** or **[Remove]** · **▲▼** = order · **[Reset]** = back to `.git .svn .hg node_modules target .nsql`.
+- Adding a name that already exists just selects that row · names containing a comma are rejected · Korean input works.
+- Removing everything means no exclusions (setting value `-`) · you can also type the names separated by commas in the card's text box (empty = default list).
+- After a change, the next Ctrl+P re-reads the project folders.
 
-## 진행 표시 링(혜성) — 모양(10-07)
+## Progress ring (comet) — appearance (10-07)
 
-검색·색인처럼 시간이 걸리는 동안 **입력 상자 테두리를 도는 선(혜성)** 이 보이고, 끝나면 두 번 깜빡인 뒤 완료 테두리(초록)로 바뀝니다. 글을 고치면 원래 테두리로 돌아갑니다. 지금 쓰는 곳 = 객체 탐색기 검색 상자 · Ctrl+P(Goto Anything) 입력란 · 프로젝트 탐색기 파일 필터.
+While something slow such as a search or indexing runs, **a line circles the border of the input box (the comet)**; when it finishes, it blinks twice and changes to the done border (green). Editing the text brings back the normal border. Currently used in = the object explorer search box · the Ctrl+P (Goto Anything) input · the project explorer file filter.
 
-| 키(설정 ▸ 모양) | 기본값 | 뜻 |
+| Key (Settings ▸ Appearance) | Default | Meaning |
 |---|---|---|
-| `ui.busy_ring` | on | 사용(끄면 아래 다섯 키가 잠기고 어디에도 그리지 않음) |
-| `ui.busy_ring_width` | 3 | 선 두께(px) |
-| `ui.busy_ring_color` | (비움) | 색 `#RRGGBB` · 비우면 테마 강조색 |
-| `ui.busy_ring_lap_ms` | 1200 | 한 바퀴 시간(ms) |
-| `ui.busy_ring_hold_ms` | 600 | 최소 표시 시간(ms) — 아주 빨리 끝나도 이만큼은 보임 |
-| `ui.busy_ring_done_ms` | 0 | 완료 테두리 유지 시간(ms) · 0 = 상자를 만질 때까지 |
+| `ui.busy_ring` | on | On/off (off locks the five keys below and nothing is drawn anywhere) |
+| `ui.busy_ring_width` | 3 | Line thickness (px) |
+| `ui.busy_ring_color` | (empty) | Color `#RRGGBB` · empty = theme accent color |
+| `ui.busy_ring_lap_ms` | 1200 | Time for one lap (ms) |
+| `ui.busy_ring_hold_ms` | 600 | Minimum display time (ms) — shown at least this long even when the work ends very quickly |
+| `ui.busy_ring_done_ms` | 0 | How long the done border stays (ms) · 0 = until you touch the box |
 
-성능 향상 모드(`perf.boost`)와 성능 프로필 low에서는 꺼집니다(카드가 잠긴 것으로 보임).
+Off in speed boost mode (`perf.boost`) and in the low performance profile (the card shows as locked).
 
-## 다른 인스턴스가 프로젝트를 바꿨을 때(11-19)
+## When another instance changes the project (11-19)
 
-같은 프로젝트 파일을 두 창(인스턴스)에서 열었거나 git pull로 바뀌었을 때, 메인 창이 포커스를 받을 때와 프로젝트를 저장하기 직전에 확인합니다. **설정 ▸ 프로젝트 `project.external_change`**:
+When the same project file is open in two windows (instances), or it was changed by git pull, the app checks when the main window gets focus and right before the project is saved. **Settings ▸ Project `project.external_change`**:
 
-- **자동**(기본): 항목 단위로 합칩니다 — 저쪽만 고친 탭은 조용히 갱신(Ctrl+Z 한 번으로 되돌림 · 캐럿 유지) · 양쪽이 고친 탭은 겹치지 않으면 줄 단위 병합 · 같은 줄이 겹칠 때만 탭 위 띠로 묻습니다 · 탭 열기/닫기 · 폴더 · 프로젝트 설정 · 북마크도 합칩니다(활성 탭·캐럿·패널 같은 화면 상태는 창마다 따로).
-- **늘 묻기**: 본문 변경은 늘 띠로 묻습니다.
-- **끔**: 합치지 않습니다(마지막에 저장한 창이 이김 · 종전 동작).
+- **Automatic** (default): merges item by item — tabs changed only on the other side update silently (one Ctrl+Z undoes it · caret kept) · tabs changed on both sides are merged line by line when nothing overlaps · only when the same lines overlap does a bar above the tab ask · opened/closed tabs · folders · project settings · bookmarks are merged too (screen state such as the active tab, caret and panels stays per window).
+- **Always ask**: text changes always ask in the bar.
+- **Off**: no merge (the window that saves last wins · the old behavior).
 
-## 파일 색인 유지 시간(10-07)
+## File index lifetime (10-07)
 
-Ctrl+P(Goto Anything)와 프로젝트 탐색기 필터는 프로젝트 폴더 파일 목록(색인)을 함께 씁니다. **설정 ▸ 프로젝트 `project.index_ttl_secs`**(기본 60초)가 지나면 다음에 열 때 뒤에서 다시 읽습니다(그동안은 이전 목록을 보여 주다가 교체). 0 = 열 때마다 다시 읽음.
+Ctrl+P (Goto Anything) and the project explorer filter share the file list (index) of the project folders. Once **Settings ▸ Project `project.index_ttl_secs`** (default 60 seconds) has passed, the next open re-reads it in the background (the previous list is shown until it is replaced). 0 = re-read every time.
 
-- 앱 안에서 새 경로로 저장하면(새 파일 · 다른 이름으로 저장) 유지 시간과 상관없이 다음에 열 때 다시 읽습니다.
-- 제외 폴더를 바꾸거나 프로젝트 폴더를 추가·제거해도 바로 다시 읽습니다.
-- 앱 밖(탐색기 · git · 빌드)에서 생긴 변경은 **Windows · macOS**에서는 폴더 감시로 곧바로 반영됩니다(`project.watch` · v0.1.9부터 macOS) · Linux는 유지 시간이 지나야 보입니다.
+- Saving to a new path inside the app (new file · Save As) re-reads on the next open regardless of the lifetime.
+- Changing the excluded folders or adding/removing project folders also re-reads right away.
+- Changes made outside the app (file manager · git · builds) show up immediately through folder watching (`project.watch` · Windows ReadDirectoryChangesW · macOS FSEvents · Linux inotify). Where no watcher is available, they appear once the lifetime has passed.
 
-## 플래시 메시지 모양(10-07)
+## Flash message appearance (10-07)
 
-프로젝트 탐색기 위쪽(패널 이름 줄 오른쪽)에 잠깐 뜨는 알림(파일 색인 다시 읽기 · 폴더 변경 반영)의 모양입니다. **설정 ▸ 모양**:
+The appearance of the short notices that pop up at the top of the project explorer (right of the panel name line) — file index re-read · folder change applied. **Settings ▸ Appearance**:
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `ui.flash_hold_ms` | 2000 | 그대로 보이는 시간 |
-| `ui.flash_ms` | 3000 | 서서히 사라지는 시간 |
-| `ui.flash_font_face` | (비움 = UI 글꼴) | 글꼴 이름 |
-| `ui.flash_font_size` | 10pt | 글꼴 크기 |
-| `ui.flash_shape` | `rounded` | 상자 모양 — `rounded`(모서리 5) · `rect` · `none`(상자 없이 글만) · 색 = 스낵바 역상(밝은 테마 = 진회색 상자 + 흰 글 · 어두운 테마 = 밝은 회색 + 검은 글) · 테두리 없음 |
+| `ui.flash_hold_ms` | 2000 | How long it stays fully visible |
+| `ui.flash_ms` | 3000 | How long it takes to fade out |
+| `ui.flash_font_face` | (empty = UI font) | Font name |
+| `ui.flash_font_size` | 10pt | Font size |
+| `ui.flash_shape` | `rounded` | Box shape — `rounded` (corner 5) · `rect` · `none` (text only, no box) · color = inverse of the snackbar (light theme = dark gray box + white text · dark theme = light gray + black text) · no border |
 
-실행 속도 향상 모드(`perf.boost`)에서는 페이드 없이 유지 시간 뒤 바로 사라집니다.
+In speed boost mode (`perf.boost`) it disappears right after the hold time without fading.
 
-## 확장 탭 세션 표식(10-07)
+## Session badge on extension tabs (10-07)
 
-확장 상세 같은 뷰 탭(`Extension: …`)은 DB 세션과 상관이 없어 기본으로 탭에 세션 표식(플러그)을 달지 않습니다. 예전처럼 보이려면 **설정 ▸ 확장 ▸ 관리자**(고급 켬)의 `extensions.tab_badge`를 켭니다.
+View tabs such as the extension details (`Extension: …`) have nothing to do with a DB session, so by default they carry no session badge (plug). To show it as before, turn on `extensions.tab_badge` in **Settings ▸ Extensions ▸ Manager** (Advanced on).
 
-## 테마 — 시스템(10-07)
+## Theme — System (10-07)
 
-보기 ▸ 테마 하위 메뉴의 **시스템** 항목은 지금 OS 테마를 함께 보여 줍니다(`✓ 시스템 (다크)`). OS에서 테마를 바꾸면 메뉴를 여는 순간 다시 읽어 앱이 따라갑니다(`ui.theme=system`).
+The **System** item in the View ▸ Theme submenu also shows the current OS theme (`✓ System (Dark)`). When you change the theme in the OS, it is re-read the moment you open the menu and the app follows (`ui.theme=system`).
 
-## CLI 글로벌 변수(10-07)
+## CLI global variables (10-07)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `vars.cli_global` | off | 켜면 CLI `nsql run`도 글로벌 변수 파일을 읽고 저장합니다([변수](Variables.md)) |
+| `vars.cli_global` | off | When on, CLI `nsql run` also reads and saves the global variables file ([Variables](Variables.md)) |
 
-## 메모리 창 힙 통계 간격(10-08)
+## Memory window heap statistics interval (10-08)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `mem.heap_refresh_ms` | 5000 | 메모리 창의 힙 통계(힙 사용 중 · 힙 여유)를 다시 읽는 간격(1~60초). 힙 전체를 훑는 비싼 단계라 나머지 줄(1초)과 따로 둡니다 |
+| `mem.heap_refresh_ms` | 5000 | How often the Memory window re-reads the heap statistics (heap in use · heap free) (1–60 seconds). It walks the whole heap and is expensive, so it is kept separate from the other lines (1 second) |
 
-## 객체 탐색기 검색 자동 펼침(10-08)
+## Object explorer search auto-expand (10-08)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `explorer.filter_expand` | off | 켜면 검색어에 맞는 객체가 든 폴더를 자동으로 펼칩니다(끄면 폴더 라벨의 `일치/전체`만 보이고 직접 펼침) |
+| `explorer.filter_expand` | off | When on, folders that contain objects matching the search text expand automatically (off = only the folder label shows `matches/total` and you expand it yourself) |
 
-## 서버 유형 배지(10-08)
+## Server type badge (10-08)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `statusbar.env_badge` | on | 켬 = 접속한 탭이면 상태줄 맨 앞에 서버 유형 3자리 배지를 **늘** 보입니다(`PRD` 빨강 · `TST` 주황 · `DEV` 강조색 · `NON` 흐림 · 편집기 `CONNTYPE`으로 잠깐 바꾼 유형 = 외곽선) · 끔 = 늘 숨깁니다(운영 서버여도). 설정 ▸ Window. 예전에는 운영·테스트만 보였습니다. |
+| `statusbar.env_badge` | on | On = for a connected tab the status bar **always** shows a 3-letter server type badge at the far left (`PRD` red · `TST` orange · `DEV` accent color · `NON` dimmed · a type changed briefly with `CONNTYPE` in the editor = outlined) · Off = always hidden (even for production servers). Settings ▸ User Interface ▸ Window. Earlier only production and test were shown. |
 
-> **운영 서버의 유형을 바꿀 때**(10-08 · 사용자 ✓ 10-09): 운영(PRD) 연결에서 다른 유형을 고르면 "3초 안에 다시 고르면 진행" 토스트가 뜹니다. 그 토스트의 빨간 **[실행]** 버튼을 누르면 바로 바뀌고, 카드의 글자 부분을 누르면 닫히기만 합니다.
+> **Changing the type of a production server** (10-08 · user ✓ 10-09): when you pick another type on a Production (PRD) connection, a toast says to select again within 3 seconds to proceed. Pressing the red **[Run]** button on that toast changes it right away; clicking the text part of the card only closes it.
 
-## 우클릭 메뉴(10-09)
+## Context menus (10-09)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `ui.ctxmenu_exclusive` | on | 우클릭 메뉴가 열려 있을 때 메뉴 **밖**을 좌/우 클릭하거나 메뉴가 쓰지 않는 키를 누르면 메뉴를 닫습니다(다른 영역의 메뉴가 겹쳐 남지 않게). 끄면 예전처럼 남습니다. |
-| `ui.ctxmenu_passthrough` | on | 메뉴를 닫는 그 클릭이 바로 동작합니다(다른 곳을 우클릭하면 그 자리 메뉴가 곧바로 열림 · 그리드를 클릭하면 셀이 선택됨). 끄면 첫 클릭은 닫기만 하고 다시 클릭해야 합니다. |
-| `ui.menus_close_on_blur` | on | 다른 창(예: 객체 찾기 창)으로 포커스가 가면 메인 창에 열려 있던 풀다운·우클릭·드롭다운 메뉴를 모두 닫습니다. 끄면 다시 클릭할 때까지 열려 있습니다. |
+| `ui.ctxmenu_exclusive` | on | While a context menu is open, a left/right click **outside** it or a key the menu does not use closes the menu (so menus from other areas do not pile up). Off = it stays as before. |
+| `ui.ctxmenu_passthrough` | on | The click that closes the menu takes effect right away (right-clicking elsewhere opens the menu there immediately · clicking the grid selects the cell). Off = the first click only closes and you click again. |
+| `ui.menus_close_on_blur` | on | When focus goes to another window (for example the Find Objects window), every pull-down, context and drop-down menu open in the main window closes. Off = they stay open until you click again. |
 
-> **클릭은 놓을 때**(10-09): 토스트 · 알림 띠 · 실행 카드 · 상태줄 항목 · 체크박스 · 스위치 · 풀다운 메뉴 항목은 누른 자리에서 **놓을 때** 동작합니다. 누른 채 밖으로 끌어서 놓으면 취소됩니다. 선택·캐럿 이동·드래그·메뉴 열기는 누르는 순간 바로 반응합니다.
+> **Clicks act on release** (10-09): toasts · notification bars · run cards · status bar items · checkboxes · switches · pull-down menu items act when you **release** the button where you pressed it. Pressing, dragging outside and releasing cancels it. Selection · caret movement · dragging · opening menus react the instant you press.
 
-## 서버 연결 끊김(10-08~09)
+## Lost server connection (10-08–09)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `net.notify_quiet_secs` | 60 | 같은 서버의 끊김 토스트를 이 시간 안에는 다시 띄우지 않습니다(상태줄·로그는 남음). |
-| `net.watch` | on | Windows · macOS(v0.1.9부터)의 네트워크 경로 변경(VPN 연결/해제 · Wi-Fi 바뀜)을 감지해, 다음 동작 전에 서버가 살아 있는지 먼저 확인합니다. 다음 시작부터 적용. |
+| `net.notify_quiet_secs` | 60 | The lost-connection toast for the same server is not shown again within this time (the status bar and log still record it). |
+| `net.watch` | on | Detects network path changes reported by the OS (VPN connect/disconnect · Wi-Fi change) on Windows · macOS · Linux, and checks whether the server is alive before the next action. Takes effect at the next start. |
 
-> 끊김을 감지하면 토스트 "서버 연결 끊김"이 뜨고, 탭 표식·툴바 플러그가 끊김으로 바뀌며, 탐색기 서버 줄 앞에 "끊김 hh:mm"이 붙습니다. 토스트를 누르면 다시 연결합니다. 끊긴 동안에는 탐색기의 배경 읽기가 멈추고, 복구되면 다시 시작합니다.
+> When a lost connection is detected, the toast "Server connection lost" appears, the tab badge and toolbar plug change to disconnected, and "lost hh:mm" is added in front of the server line in the explorer. Click the toast to reconnect. While disconnected, background reading in the explorer stops and resumes after recovery.
 >
-> 네트워크가 돌아온 뒤 실행하면 세션이 저절로 다시 접속합니다("다시 접속 중…" 로그) — 접속 창으로 붙은 세션뿐 아니라 **편집기에서 `CONNECT` 문으로 붙은 탭 전용 세션도** 같습니다(v0.1.8부터). 비밀번호는 이번 실행에서 입력해 둔 값을 다시 씁니다.
+> Running something after the network is back reconnects the session by itself ("Reconnecting" in the log) — not only sessions connected through the connection window but also **tab-private sessions connected with a `CONNECT` statement in the editor** (since v0.1.8). The password entered earlier in this run is reused.
 
-## 실제 객체와 비교(10-09)
+## Compare with the real object (10-09)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `compare.view` | diff | **diff** = 편집기 문장과 서버 DDL을 두 칸에 나란히(초록 = 편집기에만 · 빨강 = 서버에만 · 노랑 = 변경 · 두 칸이 같이 스크롤) · **inline** = 예전처럼 읽기 전용 탭 하나에 줄 옆 표식만 |
-| `compare.canon` | on | 비교 전에 Oracle의 `EDITIONABLE`/`NONEDITIONABLE` 낱말과 대소문자가 섞이지 않은 따옴표 이름의 따옴표(`"APPDB"."SP_TEST1"`)를 무시합니다. 소스 열기로 연 본문을 그대로 비교하면 "일치"로 나옵니다. 화면에는 원문이 그대로 보입니다. |
+| `compare.view` | diff | **diff** = the editor statement and the server DDL side by side in two panes (green = only in the editor · red = only on the server · yellow = changed · both panes scroll together) · **inline** = as before, a single read-only tab with marks next to the lines only |
+| `compare.canon` | on | Before comparing, ignores Oracle's `EDITIONABLE`/`NONEDITIONABLE` words and the quotes of quoted names that do not mix case (`"APPDB"."SP_TEST1"`). Comparing a body opened with "Open source" as is reports a match. The screen still shows the original text. |
 
-> 비교 탭에서 다음/이전 차이로 가려면 팔레트(Ctrl+Shift+P)에서 **비교: 다음 변경 / 이전 변경**을 고릅니다(끝에서 처음으로 돌아갑니다). 서버 DDL만 따로 보려면 비교 뒤 팔레트 **서버 DDL 열기**.
+> To move to the next/previous difference in the compare tab, pick **Compare: next change / Compare: previous change** in the palette (Ctrl+Shift+P) (it wraps from the end back to the start). To see only the server DDL, use **Open server DDL of last comparison** in the palette after comparing.
 
-## 자동완성 자료형(10-09)
+## Completion data types (10-09)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `intel.types` | on | 자료형 자리(형변환 · 변수 선언 · 파라미터 · RETURN(S) · 테이블 열 정의 · VAR)에서 방언의 내장 자료형을 꼴과 함께 후보로 냅니다. 끄면 내장 자료형만 빠지고 서버의 사용자 정의 타입은 그대로 나옵니다. |
+| `intel.types` | on | In data-type positions (casts · variable declarations · parameters · RETURN(S) · table column definitions · VAR) the dialect's built-in data types are offered as candidates with their form. Off = only the built-in types are dropped; user-defined types from the server still appear. |
 
-## 결과 조회(10-09)
+## Result fetch (10-09)
 
-결과를 받아 오는 방식에 관한 설정을 **결과 조회** 분류에 모았습니다.
+Settings about how results are fetched are gathered in the **Result Fetch** category.
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `grid.fetch_display` | incremental | incremental = 첫 묶음을 바로 보여 주고 나머지는 받는 대로 이어 붙입니다(행 수 0이면 실행 뒤 자동으로 끝까지). whole = 다 받은 뒤 한 번에 보여 줍니다(종전). |
-| `grid.max_rows` | 200 | 조회당 가져오는 행 수(0 = 전부) |
-| `grid.auto_fetch` | on | 그리드를 끝까지 내리면 다음 묶음을 받아 옵니다 |
-| `grid.memory_budget_mb` | 1024 | 결과 탭 하나가 가질 수 있는 행 바이트 |
-| `grid.fetch_mode` | cursor | 다음 행을 받는 방식(cursor · offset · off) |
-| `db.fetch_size` | 200 | 서버 왕복 한 번에 받는 행 수 |
-| `db.fetch_all_size` | 5000 | 전체 조회 동안 쓰는 배열 크기 |
+| `grid.fetch_display` | incremental | incremental = shows the first batch right away and appends the rest as it arrives (with a row count of 0 it continues to the end automatically after the run). whole = shows everything at once after it has all arrived (the old behavior). |
+| `grid.max_rows` | 200 | Rows fetched per query (0 = all) |
+| `grid.auto_fetch` | on | Scrolling the grid to the end fetches the next batch |
+| `grid.memory_budget_mb` | 1024 | Row bytes one result tab may hold |
+| `grid.fetch_mode` | cursor | How the next rows are fetched (cursor · offset · off) |
+| `db.fetch_size` | 200 | Rows received per server round trip |
+| `db.fetch_all_size` | 5000 | Array size used during fetch-all |
 
-> 받는 도중에도 ■(중지)를 누르면 그때까지 받은 행은 남고, 정렬·필터는 이어 붙는 행에도 그대로 적용됩니다.
+> Pressing ■ (stop) while rows are arriving keeps the rows received so far, and sorting and filtering also apply to the rows appended later.
 
-## 자연 정렬(10-09)
+## Natural sort (10-09)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `ui.sort_natural` | on | 이름 속 숫자를 값으로 견줘 정렬합니다(`ITEM2` → `item3` → `ITEM10`). 끄면 대소문자를 무시한 글자 순(`ITEM10` → `ITEM2` → `item3`)입니다. |
+| `ui.sort_natural` | on | Sorts by comparing the numbers inside names as values (`ITEM2` → `item3` → `ITEM10`). Off = case-insensitive character order (`ITEM10` → `ITEM2` → `item3`). |
 
-> 한 설정이 결과 그리드의 글자 열 정렬 · 객체 탐색기 · 프로젝트 탐색기 · 북마크 · 로그인 목록 · 팔레트에 함께 적용됩니다(설정 ▸ 모양). 객체 탐색기의 종류 폴더(Tables · Views …) 순서는 바뀌지 않습니다.
+> This one setting applies to text column sorting in the result grid · the object explorer · the project explorer · bookmarks · the login list · the palette (Settings ▸ Appearance). The order of the kind folders in the object explorer (Tables · Views …) does not change.
 
-## `&` 치환 — 방언별 기본(10-10)
+## `&` substitution — per-dialect default (10-10)
 
-설정 ▸ 스크립트·변수 ▸ **`script.define`**(기본 `auto`).
+Settings ▸ Script & variables ▸ **`script.define`** (default `auto`).
 
-| 값 | 동작 |
+| Value | Behavior |
 |---|---|
-| `auto` | Oracle 탭 = 정의 안 된 `&이름`이면 입력 창을 띄웁니다(SQL*Plus와 같음). SQL Server · PostgreSQL · SQLite · MySQL 탭 = `DEFINE` · `:setvar`로 정의한 이름만 바꾸고, 정의 안 된 `&x`는 글자 그대로 보냅니다. |
-| `on` | 모든 DBMS에서 Oracle처럼 묻습니다. |
-| `off` | `&`를 언제나 글자로 둡니다. |
+| `auto` | Oracle tabs = an undefined `&name` opens an input window (same as SQL*Plus). SQL Server · PostgreSQL · SQLite · MySQL tabs = only names defined with `DEFINE` · `:setvar` are replaced; an undefined `&x` is sent as literal text. |
+| `on` | Asks like Oracle on every DBMS. |
+| `off` | Always leaves `&` as text. |
 
-스크립트 안의 `SET DEFINE ON` / `SET DEFINE OFF`가 그 실행에서는 이 설정보다 앞섭니다. 엄격 모드(`script.strict`)를 켜면 `on`으로 동작합니다.
+`SET DEFINE ON` / `SET DEFINE OFF` inside a script takes precedence over this setting for that run. With strict mode (`script.strict`) on, it behaves as `on`.
 
-## 빈 문자열 표시(10-13)
+## Empty string marker (10-13)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `grid.empty_text` | `''` | 결과 그리드에서 빈 문자열(길이 0) 셀에 흐리게 보이는 글자입니다. NULL(`grid.null_text`)과 구별하려는 표시이며, 복사·텍스트 보기에는 빈 채로 나갑니다. |
+| `grid.empty_text` | `''` | Text shown dimmed in result grid cells holding an empty string (length 0). It distinguishes them from NULL (`grid.null_text`); copying and the text view still output them empty. |
 
-## 그리드 복사의 NULL(11-19)
+## NULL when copying from the grid (11-19)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `grid.copy_null` | 공백(`blank`) | 결과 그리드에서 셀을 복사할 때 NULL 셀을 무엇으로 쓸지 — 공백(빈 칸) · 보이는 글자(`grid.null_text`) · `NULL`. 셀 복사 · 머리글과 함께 복사 · CSV/텍스트/Markdown으로 복사에 적용됩니다. SQL·JSON으로 복사와 텍스트 보기 복사는 그대로입니다. |
+| `grid.copy_null` | Blank (`blank`) | What a NULL cell becomes when you copy cells from the result grid — Blank (an empty field) · As shown (`grid.null_text`) · `NULL`. Applies to copying cells · copying with headers · copying as CSV/text/Markdown. Copying as SQL or JSON and copying from the text view stay as they were. |
 
-- 그리드 화면의 NULL 표시는 `grid.null_text`(기본 `NULL`) 그대로입니다 — 화면은 NULL로 보이고 복사만 빈 칸이 됩니다.
-- `intel.dblink_remote_meta`(DB 링크 너머 원격 테이블 메타)는 아직 구현 전이라 설정 창에서 잠겨 있습니다.
+- The NULL display in the grid stays `grid.null_text` (default `NULL`) — the screen shows NULL and only the copy becomes empty.
+- `intel.dblink_remote_meta` (remote table metadata through a DB link) is not implemented yet, so it is locked in the settings window.
 
-## Oracle 드라이버 — Thin / Instant Client(10-13)
+## Oracle driver — Thin / Instant Client (10-13)
 
-설정 ▸ DBMS ▸ Oracle 맨 위(고급 스위치를 켜야 보입니다).
+At the top of Settings ▸ DBMS ▸ Oracle (visible only with the Advanced switch on).
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `oracle.driver` | **thin** | `thin` = 앱에 들어 있는 순수 Rust 드라이버(Oracle Instant Client 설치가 필요 없습니다) · `oci` = Instant Client를 불러 쓰는 드라이버(전체 기능). 바꾸면 **다음 접속부터** 적용됩니다(앱 재시작 없음 · 열린 세션은 그대로). |
-| `oracle.info_driver` | (읽기 전용) | 다음 Oracle 접속에 쓰일 드라이버와 그 드라이버가 못 하는 것. |
+| `oracle.driver` | **thin** | `thin` = the pure Rust driver (no Oracle Instant Client installation needed · in the installer it is a driver extension installed automatically on the first connection) · `oci` = the driver that loads Instant Client (full feature set · built into the installer). A change applies **from the next connection** (no app restart · open sessions keep their driver). |
+| `oracle.info_driver` | (read-only) | The driver the next Oracle connection will use and what that driver cannot do. |
 
-- `thin`을 고르면 Instant Client 설정(`oracle.client_mode` · `oracle.client_dir` · `oracle.tns_admin`)이 **함께 잠기고**(값은 남음) 라이브러리·버전·sqlnet 정보 칸은 "Thin 드라이버에서는 쓰지 않습니다"가 됩니다. `tnsnames.ora`는 Thin도 읽습니다.
-- Thin으로 접속하면 한 줄 안내가 뜹니다: "즉시 취소(■) · 암묵 결과 집합 · OS 인증 · 네이티브 암호화 · 배열 적재 · 12c 미만 서버 미지원 - 자세한 내용은 로그 창 확인". 자세한 내용과 전환 방법은 로그 창에 있습니다.
-- Thin에서 다른 점: 실행 중 ■는 다음 배치 경계에서 멈추고 **다시 ■ = 강제 중지**(접속을 끊음) · `DBMS_SQL.RETURN_RESULT` 결과는 받지 못함(REF CURSOR OUT 바인드 + `PRINT`로 대체) · `/ as sysdba`(OS 인증)·Kerberos·지갑 비밀번호 저장소 안 됨 · Oracle 네이티브 네트워크 암호화 안 됨(TLS는 됨) · 대량 적재는 다중 행 INSERT(느림) · Oracle 12c 미만 서버 안 됨.
-- 이런 기능이 필요하면 `oracle.driver = oci`로 바꾸고 Instant Client를 설치하세요.
+- Choosing `thin` **locks** the Instant Client settings (`oracle.client_mode` · `oracle.client_dir` · `oracle.tns_admin`) as well (their values are kept), and the library · version · sqlnet info fields say "Not used by the Thin driver". Thin also reads `tnsnames.ora`.
+- Connecting with Thin shows a one-line notice: "Not available: cancel (■) · implicit result sets · OS authentication · native encryption · array-DML import · pre-12c servers - see the Log window for details". The details and how to switch are in the Log window.
+- What is different with Thin: ■ during execution stops at the next batch boundary and **■ again = force stop** (drops the connection) · `DBMS_SQL.RETURN_RESULT` results cannot be received (use a REF CURSOR OUT bind + `PRINT` instead) · `/ as sysdba` (OS authentication) · Kerberos · wallet password store do not work · Oracle native network encryption does not work (TLS does) · bulk import uses multi-row INSERT (slower) · servers older than Oracle 12c do not work.
+- If you need these, switch to `oracle.driver = oci` and install Instant Client.
 
-## 줄 끝 라벨 — Ctrl을 누른 동안 · 테이블/컬럼 설명(10-13)
+## Line-end labels — while holding Ctrl · table/column descriptions (10-13)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `ctrl.bookmark_label` | on | 북마크 줄 끝 라벨(`bookmark.inline_label`)이 꺼져 있어도 **Ctrl(맥 ⌘)을 누른 동안** 라벨(`◆ 이름`)을 보입니다. |
-| `ctrl.bookmark_scope` | 보이는 영역 | 북마크 Ctrl 라벨 범위 — 보이는 영역 · 현재 문장 · 문서 전체. |
-| `editor.desc_inline` | off | 테이블·컬럼 설명(DB 코멘트)을 줄 끝에 늘 보입니다(`» 설명`). |
-| `ctrl.desc_inline` | on | Ctrl을 누른 동안 설명을 보입니다. |
-| `editor.desc_inline_what` | 테이블·컬럼 | 무엇의 설명을 보일지(테이블 · 컬럼 · 둘 다). |
-| `editor.desc_inline_chars` | 40 | 한 줄 라벨 글자 수 상한(넘치면 `…`). |
-| `ctrl.desc_scope` | 현재 문장 | 설명 Ctrl 표시 범위 — 현재 문장 · 보이는 영역 · 문서 전체. |
-| `ctrl.full_kb` | 256 | 문서가 이 크기(KB)를 넘으면 "문서 전체" 범위를 보이는 영역으로 낮춥니다(0 = 무제한). |
-| `ctrl.off_kb` | 2048 | 문서가 이 크기(KB)를 넘으면 Ctrl 라벨·설명과 객체 hover 카드를 끕니다(0 = 큰 파일 모드에서만). |
+| `ctrl.bookmark_label` | on | Even when the bookmark line-end label (`bookmark.inline_label`) is off, shows the label (`◆ name`) **while Ctrl (Mac ⌘) is held**. |
+| `ctrl.bookmark_scope` | Visible area | Range of the bookmark Ctrl label — Visible area · Current statement · Whole document. |
+| `editor.desc_inline` | off | Always shows table and column descriptions (DB comments) at the line end (`» description`). |
+| `ctrl.desc_inline` | on | Shows the descriptions while Ctrl is held. |
+| `editor.desc_inline_what` | Tables and columns | Whose descriptions to show (Tables · Columns · Tables and columns). |
+| `editor.desc_inline_chars` | 40 | Character limit of a one-line label (`…` when longer). |
+| `ctrl.desc_scope` | Current statement | Range of the Ctrl description display — Current statement · Visible area · Whole document. |
+| `ctrl.full_kb` | 256 | When the document is larger than this (KB), the "Whole document" range drops to the visible area (0 = unlimited). |
+| `ctrl.off_kb` | 2048 | When the document is larger than this (KB), Ctrl labels and descriptions and the object hover card are turned off (0 = only in large-file mode). |
 
-- 한 줄에 북마크와 설명이 함께 있으면 `◆ 북마크 · » 설명 · » 설명` 순서입니다. 컬럼 설명은 이름 없이 설명만 보입니다.
-- "현재 문장" 범위는 문장 바로 위에 붙은 주석 줄(`--` · `/* */` · 사이 빈 줄 포함)까지 셉니다 — 주석 줄에 단 북마크도 보입니다. 앞 문장 끝에 붙은 주석은 앞 문장 몫입니다.
-- 설명은 이미 읽어 둔 코멘트를 씁니다. 없으면 Ctrl을 누른 순간 한 번 읽어 오고, 오면 바로 채워집니다.
-- 실행 속도 향상(`perf.boost`)·큰 파일 모드에서는 Ctrl 표시와 객체 hover 카드(`objlink.tooltip`)가 꺼집니다.
+- When a line has both a bookmark and descriptions, the order is `◆ bookmark · » description · » description`. Column descriptions show only the description, without the name.
+- The "Current statement" range includes the comment lines attached right above the statement (`--` · `/* */` · blank lines in between) — bookmarks on those comment lines show too. A comment attached to the end of the previous statement belongs to that statement.
+- Descriptions use comments that have already been read. If there are none, they are read once the moment you press Ctrl and filled in as soon as they arrive.
+- In speed boost (`perf.boost`) and large-file mode, the Ctrl display and the object hover card (`objlink.tooltip`) are turned off.
 
-## 10-15에 더해진 설정
+## Settings added on 10-15
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `intel.alias_upper` | on | 자동 완성과 Generate SQL의 테이블 별칭을 대문자로(`A, B` · `SC`). 끄면 소문자(`a, b` · `sc`). 별칭 **방식**은 그대로 `intel.alias_style`(약어 / A, B, C). 두 설정이 자동 완성(FROM 뒤 별칭 삽입)과 객체 탐색기 ▸ Generate SQL(SELECT · MERGE)에 똑같이 적용됩니다. |
-| `gen.format` | on | Generate SQL로 만든 문장(SELECT · INSERT · UPDATE · DELETE · MERGE · CALL)을 **기본 포맷터**(`format.default`와 `format.*` 옵션)로 정리해 SQL Preview에 보입니다. DDL은 만든 그대로입니다. 미리보기 창의 5번째 체크박스 "포맷"과 같은 값입니다. |
+| `intel.alias_upper` | on | Table aliases from completion and Generate SQL are uppercase (`A, B` · `SC`). Off = lowercase (`a, b` · `sc`). The alias **style** is still `intel.alias_style` (abbreviation / A, B, C). Both settings apply equally to completion (alias inserted after FROM) and to Object explorer ▸ Generate SQL (SELECT · MERGE). |
+| `gen.format` | on | Statements made by Generate SQL (SELECT · INSERT · UPDATE · DELETE · MERGE · CALL) are tidied with the **default formatter** (`format.default` and the `format.*` options) and shown in SQL Preview. DDL stays as generated. Same value as the 5th checkbox "Format" in the preview window. |
 
 
-## 객체 찾기 — 미리보기 클릭(10-16)
+## Find Objects — preview click (10-16)
 
-| 키 | 기본 | 설명 |
+| Key | Default | Description |
 |---|---|---|
-| `findobj.preview_click` | on | 객체 찾기 창 아래 미리보기 줄을 누르면 그 객체 소스를 **미리보기 탭**으로 엽니다(같은 미리보기 탭을 다시 씀 · 고치면 정식 탭이 됩니다). 끄면 줄을 눌러도 선택만 됩니다. 창의 "미리보기" 스위치와 같은 설정입니다. [편집기에서 열기] 버튼은 늘 정식 탭으로 엽니다. |
+| `findobj.preview_click` | on | Clicking a preview line at the bottom of the Find Objects window opens that object's source in a **preview tab** (the same preview tab is reused · editing makes it a regular tab). Off = clicking a line only selects it. Same setting as the window's "Preview" switch. The [Open in editor] button always opens a regular tab. |
 
-## 편집기 줄 간격(10-21)
+## Editor line spacing (10-21)
 
-편집기 줄 사이 간격입니다. **설정 ▸ 편집기 ▸ Editor**:
+Spacing between editor lines. **Settings ▸ Editors ▸ Editor**:
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `editor.line_height_mode` | `multiple` | 방식 — `multiple`(배수 = 글꼴 크기 × 값) · `exact`(고정 px) · `at_least`(최소 px · 글자가 더 크면 글자에 맞춤) |
-| `editor.line_height` | `1.2` | 값 — 배수면 0.8~3.0 · 고정/최소면 px 6~80(`19` 또는 `19px`). 범위 밖이나 잘못된 값은 배수 1.2로 봅니다. |
+| `editor.line_height_mode` | `multiple` | Mode — `multiple` (font size × value) · `exact` (fixed px) · `at_least` (minimum px · grows to fit when the glyphs are taller) |
+| `editor.line_height` | `1.2` | Value — 0.8–3.0 for multiple · px 6–80 for exact/at least (`19` or `19px`). Out-of-range or invalid values count as multiple 1.2. |
 
-모든 편집기 탭에 바로 적용되고, 글꼴 크기(`editor.font_size` · Ctrl+휠)를 바꾸면 배수 간격도 함께 따라갑니다. 기본값(16 px 글꼴 × 1.2)이면 줄 간격 19 px입니다(예전 24 px). 결과 그리드 행 높이와 조건 바는 바뀌지 않습니다.
+It applies to every editor tab right away, and when you change the font size (`editor.font_size` · Ctrl+wheel) the multiple spacing follows. With the defaults (16 px font × 1.2) the line spacing is 19 px (formerly 24 px). The result grid row height and the condition bar do not change.
 
-## 설정 내보내기 · 가져오기(10-24)
+## Exporting · importing settings (10-24)
 
-다른 PC나 다시 설치한 Nexa SQL로 설정을 옮길 때 씁니다.
+Use this to move settings to another PC or to a reinstalled Nexa SQL.
 
-- **설정 창 아래쪽** = [내보내기…] [가져오기…] [JSON 편집] [닫기]. 내보내기는 기본 이름 `nexa-sql-settings.json`으로 저장 위치를 고르고, 가져오기는 그 파일을 고릅니다. 메뉴·명령 팔레트에도 같은 항목(`settings.export` · `settings.import`)이 있습니다.
-- **옮기는 범위(기본 = Portable)**: 창 크기·위치, 이 PC 정보, 최근 파일·폴더·프로젝트, 한 번 본 안내, 패널 너비처럼 **이 PC에만 의미 있는 값은 빼고** 내보냅니다. 파일 맨 위 `"_scope"` 줄에 범위가 적힙니다.
-- **가져오기**: 파일에 있는 키만 바꾸고 나머지는 그대로 둡니다. 모르는 키나 틀린 값은 건너뛰고 알려 주며, 상태줄에 "N key(s) changed"(바뀐 키 수)가 나옵니다.
-- **CLI**: `nsql config export [파일] [portable]` · `nsql config import <파일>`.
-- 연결 프로필과 비밀번호는 설정이 아니라 별도(`profiles` · 볼트)라 이 파일에 들어가지 않습니다.
+- **Bottom of the settings window** = [Export…] [Import…] [Edit JSON] [Close]. Export lets you choose where to save under the default name `nexa-sql-settings.json`; Import lets you pick that file. The menu and the Command Palette have the same items (`settings.export` · `settings.import`).
+- **Scope (default = Portable)**: values that **only mean something on this PC** — window size and position, this PC's info, recent files · folders · projects, notices already seen, panel widths — are left out of the export. The `"_scope"` line at the top of the file records the scope.
+- **Import**: changes only the keys in the file and leaves the rest alone. Unknown keys or invalid values are skipped and reported, and the status bar shows "N key(s) changed" (the number of keys changed).
+- **CLI**: `nsql config export [file] [portable]` · `nsql config import <file>`.
+- Connection profiles and passwords are not settings but separate (`profiles` · vault), so they are not in this file.
 
-## AI 출력 토큰 · 대화 배치 캐시(11-14)
+## AI output tokens · chat layout cache (11-14)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `ai.max_tokens`(Max output tokens · 최대 출력 토큰) | **32000**(예전 8192) | API 모드에서 응답 하나의 최대 토큰 수(256~128000). 긴 SQL·프로시저를 고칠 때 답이 중간에 잘리지 않게 올렸습니다. |
-| `ai.layout_cache_sessions`(Chat layout cache (sessions) · 대화 배치 캐시(세션 수)) | 6 | 최근에 본 대화 몇 개의 줄 배치를 메모리에 남겨 두어, 그 대화로 돌아올 때 다시 배치하지 않고 바로 보여 줍니다(0~32 · 0 = 끔). |
+| `ai.max_tokens` (Max output tokens) | **32000** (formerly 8192) | Maximum number of tokens in one response in API mode (256–128000). Raised so answers are not cut off midway when fixing long SQL or procedures. |
+| `ai.layout_cache_sessions` (Chat layout cache (sessions)) | 6 | Keeps the line layout of the most recently viewed chats in memory so that returning to one shows it right away without laying it out again (0–32 · 0 = off). |
 
-## 대기 요청을 진행 중인 작업에 반영(11-15)
+## Applying queued requests to the running task (11-15)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `ai.steer`(Apply queued requests to the running task · 대기 요청을 진행 중인 작업에 반영) | on | 답하는 중에 보낸 요청을 답이 끝날 때까지 기다리지 않고, AI가 다음 도구를 쓴 뒤에 바로 전달합니다(API 모드). 도구 없이 글만 쓰는 중이면 답이 끝난 뒤 보냅니다. 끄면 항상 끝난 뒤에 보냅니다. Claude CLI·Codex 모드도 같은 방식으로 반영합니다(11-15) — 글만 쓰는 중이면 Claude CLI는 답이 끝난 뒤 이어서 새로 답하고, Codex는 같은 답을 처음부터 다시 씁니다. 파일을 첨부한 요청과 `/` 명령은 늘 답이 끝난 뒤 보냅니다. |
+| `ai.steer` (Apply queued requests to the running task) | on | A request sent while an answer is being written is delivered right after the AI uses its next tool, instead of waiting for the answer to finish (API mode). If it is only writing text without tools, the request is sent after the answer finishes. Off = always sent after it finishes. Claude CLI and Codex modes apply it the same way (11-15) — if only text is being written, Claude CLI answers anew after the current answer ends, and Codex rewrites the same answer from the start. Requests with attached files and `/` commands are always sent after the answer finishes. |
 
-## 호출 뒤 미커밋 변경 확인(11-15)
+## Checking for uncommitted changes after a call (11-15)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `tx.call_probe`(Check for uncommitted changes after a call · 호출 뒤 미커밋 변경 확인) | on | 수동 커밋 모드에서 `CALL` · `EXEC` · 익명 블록이 끝나면 서버에 "이 트랜잭션에 아직 커밋하지 않은 변경이 있는가"를 한 번 묻습니다(Oracle · SQL Server · PostgreSQL). 루틴이 안에서 COMMIT/ROLLBACK했거나 아무것도 바꾸지 않았으면 대기 표시를 걷고 "호출 뒤 서버에 미커밋 변경이 없습니다"를 알리며, 툴바 롤백 버튼을 흐리게 합니다(되돌릴 것이 없음). 다음 서버 문장을 실행하면 다시 켜집니다. 변경이 남아 있으면 그 호출을 대기 목록에 올려 Commit·Rollback을 쓸 수 있게 합니다. SQL Server는 먼저 `@@TRANCOUNT`로 묻고(권한 불필요), 호출이 오류(예: 266)로 끝나도 서버 트랜잭션이 끝났으면 같은 안내를 합니다. 확인 질의가 실패하거나 모르면 종전처럼 처리하되, SQL Server에서 서버 상태 보기 권한이 없어 모를 때는 `EXEC` 호출을 대기 목록에 올립니다(안전 쪽 · 읽기만 하는 EXEC도 대기로 보일 수 있음). 호출이 오류로 끝나도 안내는 상태줄의 오류 요약 뒤에 함께 나옵니다. 운영 보류 중·자동 커밋·그 밖 DB에서는 묻지 않습니다. 호출마다 왕복 1회가 늘어나므로 원치 않으면 끕니다. |
+| `tx.call_probe` (Check for uncommitted changes after a call) | on | In manual commit mode, when a `CALL` · `EXEC` · anonymous block finishes, asks the server once whether "this transaction still has uncommitted changes" (Oracle · SQL Server · PostgreSQL). If the routine committed/rolled back inside or changed nothing, the pending marks are cleared, "No uncommitted changes remain after the call" is shown, and the toolbar Rollback button is dimmed (nothing to roll back). It turns back on when you run the next server statement. If changes remain, the call is added to the pending list so Commit · Rollback are available. SQL Server asks `@@TRANCOUNT` first (no permission needed), and gives the same notice when the server transaction ended even if the call ended with an error (for example 266). If the check query fails or the answer is unknown, it is handled as before, except that on SQL Server, when the answer is unknown because the permission to view server state is missing, the `EXEC` call is added to the pending list (the safe side · an EXEC that only reads may also appear pending). When the call ends with an error, the notice appears after the error summary in the status bar. It does not ask during a production hold, in auto-commit, or on other databases. Each call adds one round trip, so turn it off if you do not want that. |

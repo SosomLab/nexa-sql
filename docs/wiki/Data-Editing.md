@@ -1,159 +1,163 @@
-# 결과 그리드에서 데이터 편집
+# Editing data in the result grid
 
-단일 테이블을 조회한 결과는 그리드에서 바로 고칠 수 있습니다. 고친 내용은 **적용(✓)** 을 누를 때까지 서버에 가지 않고, 적용은 **한 트랜잭션**으로 묶여 하나라도 실패하면 전부 되돌아갑니다.
+**English** | [한국어](Data-Editing-ko)
 
-## 언제 편집할 수 있나
+You can edit the result of a single-table query directly in the grid. Your edits are not sent to the server until you press **Apply (✓)**, and an apply runs as **one transaction**: if any part fails, everything is rolled back.
 
-| 결과 | 편집 |
+## When can you edit
+
+| Result | Editing |
 |---|---|
-| `SELECT a, b FROM t` · `SELECT * FROM t WHERE …` · `SELECT t.a FROM t t` | 가능 |
-| JOIN · GROUP BY · DISTINCT · UNION · 서브쿼리 FROM · 식/별칭 열(`a+1`, `a AS x`) | 읽기 전용(상태줄에 이유) |
-| 뷰 · 프로시저 결과 · 커서 · 운영(PROD) 접속 · 설정 `grid.edit` 끔 | 읽기 전용 |
+| `SELECT a, b FROM t` · `SELECT * FROM t WHERE …` · `SELECT t.a FROM t t` | Allowed |
+| JOIN · GROUP BY · DISTINCT · UNION · subquery in FROM · expression/alias columns (`a+1`, `a AS x`) | Read-only (the status bar says why) |
+| Views · procedure results · cursors · production (PROD) connections · setting `grid.edit` off | Read-only |
 
-행을 서버에서 **정확히 하나** 찾을 수 있어야 합니다. Nexa SQL은 다음 순서로 방법을 정합니다.
+Nexa SQL must be able to find **exactly one** row on the server for each edited row. It picks the method in this order:
 
-| 등급 | 조건 | 무엇으로 찾나 |
+| Grade | Condition | How the row is found |
 |---|---|---|
-| 1급 | PK 또는 UNIQUE 열이 결과에 전부 있다 | 그 키 열(원본 값) |
-| 1급-보완 | 키는 있는데 결과에서 빠졌다(`SELECT name FROM emp`) | 키 열을 **숨은 열**로 덧붙여 한 번 다시 조회(화면에는 안 보임 · `grid.edit_hidden_keys`) |
-| 2급 | 키가 없다 | DBMS 행 식별자를 숨은 열로 덧붙여 한 번 다시 조회 — Oracle `ROWID` · SQLite `rowid` · PostgreSQL `ctid`+`xmin`(`grid.edit_rowid`) · SQL Server/MySQL은 없음 |
-| 3급 | 키도 행 식별자도 없다 | 비교 가능한 **모든 열**의 원본 값(LOB·실수·긴 문자·xml/json·공간형 제외 · `grid.edit_all_cols`) |
-| 읽기 전용 | 위 어느 것도 안 된다 | — |
+| Grade 1 | All PK or UNIQUE columns are in the result | Those key columns (original values) |
+| Grade 1 (supplemented) | There is a key, but it is missing from the result (`SELECT name FROM emp`) | The key columns are appended as **hidden columns** and the query is re-run once (not shown on screen · `grid.edit_hidden_keys` · off by default) |
+| Grade 2 | No key | The DBMS row identifier is appended as a hidden column and the query is re-run once: Oracle `ROWID` · SQLite `rowid` · PostgreSQL `ctid`+`xmin` (`grid.edit_rowid` · off by default) · SQL Server/MySQL have none |
+| Grade 3 | Neither a key nor a row identifier | The original values of **all comparable columns** (LOB, floating-point, long text, xml/json and spatial columns excluded · `grid.edit_all_cols`) |
+| Read-only | None of the above works | — |
 
-숨은 열은 복사·텍스트 보기·⌘A/Ctrl+A 어디에도 나오지 않고 WHERE 절에만 쓰입니다. 다시 조회에 실패하면(예: SQLite `WITHOUT ROWID` 표) 원래 문장으로 돌아가 3급으로 판정합니다.
+Hidden columns never appear in copy, text view or ⌘A/Ctrl+A; they are used only in the WHERE clause. If the re-run fails (for example a SQLite `WITHOUT ROWID` table), Nexa SQL goes back to the original statement and treats the result as Grade 3.
 
-![그리드에서 고친 셀(강조) · 고친 행 왼쪽 띠 · 열 머리 타입 배지(AZ 문자 · 09 숫자 · DT 날짜)](images/detail-edited-cells.png)
+![Edited cells in the grid (highlighted) · stripe on the left of edited rows · type badges in column headers (AZ text · 09 number · DT date)](images/detail-edited-cells.png)
 
-*그리드에서 고친 셀(강조) · 고친 행 왼쪽 띠 · 열 머리 타입 배지(AZ 문자 · 09 숫자 · DT 날짜)*
+*Edited cells in the grid (highlighted) · stripe on the left of edited rows · type badges in column headers (AZ text · 09 number · DT date)*
 
-## 편집 방법
+## How to edit
 
-| 동작 | 키·마우스 |
+| Action | Key / mouse |
 |---|---|
-| 편집 시작 | Enter · **F2** · 더블클릭 · 그냥 타이핑(첫 글자로 시작) |
-| 확정 | Enter(아래 셀로) · Tab / Shift+Tab(오른쪽/왼쪽 셀로) · 다른 셀 클릭 |
-| 취소 | Esc |
-| 셀 비우기 / NULL | Delete · Backspace(빈 값 = NULL은 `grid.edit_empty`) · 우클릭 ▸ Set NULL |
-| 셀 이동(편집기 밖) | 화살표 · Tab / Shift+Tab |
-| 행 추가 · 복제 · 삭제 | 툴바 `+ ⧉ −` · 우클릭 메뉴(삭제는 표시만 · 적용 때 DELETE) — 복제·삭제는 **셀을 하나 고른 뒤** 켜집니다(행 추가는 언제나) |
-| 행 복제(키) | **Ctrl+D**(맥 ⌘D) |
-| 붙여넣기 | ⌘V/Ctrl+V — 탭·줄 구분 행렬을 선택 셀부터 채움(행이 모자라면 자동 추가 · 상한 `grid.paste_max_rows`) |
-| 되돌리기 / 다시 하기 | ⌘Z/Ctrl+Z · ⌘⇧Z/Ctrl+Y(그리드 편집 전용 이력) |
-| 변경 목록 · SQL 미리보기 | 우클릭 ▸ Changes / Preview SQL(보낼 문장을 리터럴로) |
-| 적용 · 전부 되돌리기 | 툴바 ✓ / ✕ |
-| 값 보기(편집하지 않고) | **Shift+Enter** · **Shift+더블클릭** — 읽기 전용 결과에서도 값 창이 바로 열립니다(2026-10-12) |
-| 지금 넣기(날짜 열) | **Ctrl+;** = 열 종류대로 지금(날짜 · 시간 · 일시 + 열 정밀도 소수 초) · **Ctrl+Shift+;** = 지금 시간(일시 셀은 날짜 유지) · 우클릭 ▸ **지금으로 ▸** 날짜/시간/일시/타임스탬프/서버 시각 · 값 창에서도 같은 키·메뉴 (2026-10-13) |
+| Start editing | Enter · **F2** · double-click · just start typing (the first character starts the edit) |
+| Confirm | Enter (moves to the cell below) · Tab / Shift+Tab (moves right/left) · click another cell |
+| Cancel | Esc |
+| Clear a cell / NULL | Delete · Backspace (whether empty means NULL is set by `grid.edit_empty`) · right-click ▸ Set NULL |
+| Move between cells (outside the cell editor) | Arrow keys · Tab / Shift+Tab |
+| Insert · duplicate · delete a row | Toolbar `+ ⧉ −` · right-click menu (delete only marks the row · DELETE is sent on apply). Duplicate and delete are enabled **after you select a cell** (insert is always available) |
+| Duplicate row (key) | **Ctrl+D** (Mac ⌘D) |
+| Paste | ⌘V/Ctrl+V: a tab/newline-separated block fills the grid starting at the selected cell (rows are added automatically if needed · limit `grid.paste_max_rows`) |
+| Undo / redo | ⌘Z/Ctrl+Z · ⌘⇧Z/Ctrl+Y (a history for grid edits only) |
+| List of changes · SQL preview | Right-click ▸ Show changes / Preview SQL (the statements to be sent, with literals) |
+| Apply · revert all | Toolbar ✓ / ✕ |
+| View a value (without editing) | **Shift+Enter** · **Shift+double-click**: the value window opens directly, even for read-only results (2026-10-12) |
+| Insert now (date columns) | **Ctrl+;** = now, according to the column type (date · time · date and time + fractional seconds at the column precision) · **Ctrl+Shift+;** = current time (a date-time cell keeps its date) · right-click ▸ **Set to now ▸** Date (today) / Time / Date and time / Timestamp (fractional seconds) / Server time (NOW) · the same keys and menu work in the value window (2026-10-13) |
 
-> **F2와 Ctrl+D(⌘D)는 결과 그리드에 포커스가 있을 때만** 위 동작을 합니다. 편집기 등 그리드 밖에서는 원래대로 F2 = 다음 북마크 · Ctrl+D = 다음 같은 낱말 선택입니다. Ctrl+F2 · Shift+F2처럼 다른 키가 함께 눌리면 그리드에서도 원래 동작입니다.
+> **F2 and Ctrl+D (⌘D) do the above only while the result grid has focus.** Outside the grid (in the editor, for example) they keep their usual meaning: F2 = next bookmark · Ctrl+D = select the next occurrence of the word. When another modifier is held (Ctrl+F2, Shift+F2), the grid uses the usual meaning too.
 
-편집 중인 셀은 표시 글자와 같은 자리에 상자가 열리고 긴 글은 첫머리부터 보입니다. 상자 안에서 더블클릭은 단어, 세 번 클릭은 전체 선택입니다(`editor.dblclick` · `editor.triple_click` · `editor.dblclick_underscore`).
+The edit box for a cell opens exactly where the cell text is drawn, and long text is shown from the beginning. Inside the box, double-click selects a word and triple-click selects everything (`editor.dblclick` · `editor.triple_click` · `editor.dblclick_underscore`).
 
-## 표시
+## Display
 
-![열 머리 카드](images/detail-result-header-card.png)
+![Column header card](images/detail-result-header-card.png)
 
-*열 머리에 잠시 머물면 카드가 뜹니다 — 출처 테이블 · 컬럼 · 타입 · 설명 · 탐색기에서 보기 / 설명 복사(단일 테이블 결과)
+*Hover over a column header and a card appears: source table · column · type · comment · view in the explorer / copy comment (single-table results)
 
-- **바뀐 셀** = 글자색 주황 + 굵게(배경은 살짝만). 값을 고쳤다가 원래 값으로 되돌리면 바뀐 것으로 치지 않습니다(A → B → A = 변경 없음).
-- **행 띠**: 추가 행 초록 · 바뀐 행 강조색 · 삭제 행 빨강 + 취소선 · 적용에 실패한 행 붉은 배경.
-- 푸터에 `수정 n · 추가 m · 삭제 k` — 적용 시 트랜잭션 범위입니다.
+- **Changed cells** = orange bold text (with only a faint background). If you change a value and then change it back, it no longer counts as changed (A → B → A = no change).
+- **Row stripes**: inserted rows green · changed rows in the accent color · deleted rows red with strikethrough · rows that failed to apply get a red background.
+- The footer shows `Edits n · added m · deleted k`: this is the scope of the transaction when you apply.
 
-## 적용과 안전 규칙
+## Apply and safety rules
 
-적용(✓)은 DELETE → 키 열을 바꾸는 UPDATE → 나머지 UPDATE → INSERT 순서로 **바인드 문장**을 만들어 한 트랜잭션에 보냅니다. 데이터 보호를 위해 다음은 설정으로 끌 수 없습니다.
+Apply (✓) builds **bound statements** in the order DELETE → UPDATEs that change key columns → other UPDATEs → INSERT and sends them in one transaction. To protect your data, the following cannot be turned off by any setting.
 
-1. **사전 검사** — UPDATE/DELETE마다 같은 WHERE로 `SELECT COUNT(*)`를 먼저 실행해 대상 행이 정확히 1이 아니면 **아무것도 쓰지 않습니다**(완전히 같은 행이 둘 있는 3급 표 등).
-2. **영향 행 수 1** — 실행한 문장이 1행이 아니면 즉시 중단.
-3. **되돌림** — 자동 커밋이면 전체 롤백 · 수동 커밋이면 세이브포인트로 되돌리고 필요하면 "ROLLBACK 필요"를 알립니다.
-4. **키 중복 사전 검사** — 적용 대기 변경 안에서 같은 키가 둘 이상이 되면 적용 전에 거부합니다.
+1. **Pre-check**: before every UPDATE/DELETE, `SELECT COUNT(*)` runs with the same WHERE clause. If the target is not exactly 1 row, **nothing is written** (for example a Grade 3 table with two identical rows).
+2. **Rows affected = 1**: if an executed statement affects anything other than 1 row, the apply stops immediately.
+3. **Rollback**: in auto-commit mode the whole apply is rolled back; in manual-commit mode it is rolled back to a savepoint, and if needed you are told that a ROLLBACK is required.
+4. **Duplicate key pre-check**: if the pending changes would make the same key appear twice, the apply is refused before anything is sent.
 
-실패하면 어느 문장(`UPDATE #3 (ID=5)`)이 어느 단계에서 왜 실패했는지 상태줄·로그·토스트에 그대로 적습니다.
+In addition, `grid.edit_key_check` (on by default) checks the server once before applying whether a key value you changed or inserted already exists in the table (results with a primary/unique key only). A key swap (A↔B) is refused too; apply it in two steps.
 
-## 적용 뒤 화면 갱신(`grid.edit_refresh`)
+When something fails, the status bar, the log and a toast say exactly which statement (`UPDATE #3 (ID=5)`) failed, at which step and why.
 
-| 값 | 동작 |
+## Refreshing the screen after apply (`grid.edit_refresh`)
+
+| Value | Behavior |
 |---|---|
-| `rows`(기본) | 바뀐 행만 키로 다시 읽어 **제자리에서** 교체 · 추가 행은 그 자리에 실제 행으로 · 삭제 행 제거 · 스크롤·정렬·선택 유지. 행을 식별할 수 없으면(시퀀스 키 · PostgreSQL ctid 등) 조회 전체를 다시 실행 |
-| `requery` | 늘 조회 전체 다시 실행 |
-| `local` | 다시 읽지 않고 편집한 값을 그대로 둠(서버 기본값·트리거 결과는 모름) |
+| `rows` (default) | Re-reads only the changed rows by key and replaces them **in place** · inserted rows become real rows where they are · deleted rows are removed · scroll position, sort and selection are kept. If a row cannot be identified (sequence keys · PostgreSQL ctid, etc.), the whole query is re-run |
+| `requery` | Always re-runs the whole query |
+| `local` | Does not re-read; the edited values stay as they are (server defaults and trigger results are not shown) |
 
-## 동시성(`grid.edit_concurrency`)
+## Concurrency (`grid.edit_concurrency`)
 
-| 값 | WHERE에 더 비교하는 것 |
+| Value | Extra columns compared in the WHERE clause |
 |---|---|
-| `key`(기본) | 키만 |
-| `key_old` | 키 + 내가 고친 열의 옛 값 |
-| `all_old` | 키 + 비교 가능한 모든 열의 옛 값 |
+| `key` (default) | Key only |
+| `key_old` | Key + the old values of the columns you edited |
+| `all_old` | Key + the old values of all comparable columns |
 
-다른 세션이 먼저 바꿨으면 사전 검사가 0행을 보고 아무것도 쓰지 않습니다.
+If another session changed the row first, the pre-check finds 0 rows and nothing is written.
 
-## 큰 값(LOB) — 값 보기 창
+## Large values (LOB): the value window
 
-> **바로 열기**: 셀에서 **Shift+Enter** 또는 **Shift+더블클릭**(2026-10-12). 그냥 더블클릭·Enter·F2는 편집을 시작합니다.
+> **Open it directly**: **Shift+Enter** or **Shift+double-click** on a cell (2026-10-12). A plain double-click, Enter or F2 starts editing.
 
-**NULL과 빈 문자열**(2026-10-13): 편집할 수 있는 글 셀이면 값 창 위에 **[NULL] [빈 문자열] [값]** 버튼이 있어 셋 중 하나로 정해 **셀에 반영**합니다. 그리드에서 NULL은 흐린 `NULL`, 빈 문자열은 흐린 `''`로 보입니다(`grid.null_text` · `grid.empty_text`). 셀 우클릭 ▸ **빈 문자열로** = 바로 `''`를 넣습니다. Oracle은 빈 문자열을 NULL로 저장하므로 [빈 문자열]·"빈 문자열로"가 없습니다.
+**NULL and empty strings** (2026-10-13): for an editable text cell, the value window has **[NULL] [Empty string] [Value]** buttons at the top. Pick one of the three and **Apply to cell**. In the grid, NULL is shown as a dimmed `NULL` and an empty string as a dimmed `''` (`grid.null_text` · `grid.empty_text`). Right-click a cell ▸ **Set empty string** puts `''` in right away. Oracle stores an empty string as NULL, so [Empty string] and "Set empty string" are not offered there.
 
-셀을 고르고 우클릭 ▸ **View value**(또는 Enter로 편집 대신 값 창)를 열면 값을 따로 봅니다.
+Select a cell and choose right-click ▸ **View value** (or open the value window with Enter instead of editing) to look at the value separately.
 
-| 값 | 창 | 할 수 있는 것 |
+| Value | Window | What you can do |
 |---|---|---|
-| 글(CLOB · TEXT · 긴 문자열) | Text(편집 가능 셀이면 그대로 편집) | **셀에 반영**(저장은 ✓ 적용) · 파일에서 넣기 · 파일로 저장 · 복사 |
-| 이진(BLOB · BYTEA · varbinary) | Hex(16진수 덤프) / Image(PNG·BMP·GIF 미리보기) | 파일에서 넣기(파일 그대로 셀에 · 라벨 `<파일 · n bytes>`) · 파일로 저장(바이트 그대로) |
-| JPEG(기저) | 미리보기(회색·YCbCr · 서브샘플링 · 재시작 간격) | 프로그레시브 JPEG는 안내만 |
-| 프로그레시브 JPEG/WebP | 형식은 알려 주지만 미리보기는 없음 | 파일로 저장해서 봅니다 |
+| Text (CLOB · TEXT · long strings) | Text (editable in place if the cell is editable) | **Apply to cell** (saving is ✓ Apply) · load from a file · save to a file · copy |
+| Binary (BLOB · BYTEA · varbinary) | Hex (hex dump) / Image (PNG · BMP · GIF preview) | Load from a file (the file goes into the cell as is · label `<file · n bytes>`) · save to a file (the bytes as they are) |
+| JPEG (baseline) | Preview (grayscale · YCbCr · subsampling · restart intervals) | Progressive JPEG shows a notice only |
+| Progressive JPEG/WebP | The format is recognized but there is no preview | Save to a file and view it there |
 
-상한 `grid.lob_view_max_mb`(16)를 넘는 값은 풀지 않고 16진수 앞부분만 보이며, `grid.lob_image_preview`를 끄면 이진은 늘 16진수입니다. 4,000자를 넘는 글과 이진은 CLOB/BLOB 타입으로 바인드해 저장합니다(Oracle VARCHAR2 4000 · SQL Server NVARCHAR(4000) 상한 회피).
+Values above the limit `grid.lob_view_max_mb` (16) are not decoded; only the first part is shown in hex. With `grid.lob_image_preview` off, binary values are always shown in hex. Text longer than 4,000 characters and binary values are bound as CLOB/BLOB types when saved (to avoid the Oracle VARCHAR2 4000 and SQL Server NVARCHAR(4000) limits).
 
-여러 행을 파일에서 한꺼번에 넣으려면 [파일로 넣기·내보내기](Bulk-Import-Export.md)를 보세요(그리드 편집은 한 행씩 안전하게, 대량 적재는 INSERT 전용입니다).
+To load many rows from a file at once, see [Importing and exporting files](Bulk-Import-Export.md) (grid editing changes rows safely one at a time; bulk loading is INSERT only).
 
-## 관련 설정
+## Related settings
 
-`grid.edit` · `grid.edit_empty` · `grid.edit_refresh` · `grid.edit_hidden_keys` · `grid.edit_rowid` · `grid.edit_all_cols` · `grid.edit_concurrency` · `grid.paste_max_rows` · `grid.lob_view_max_mb` · `grid.lob_image_preview` · `tx.prod_*`(운영 접속은 편집 불가).
+`grid.edit` · `grid.edit_empty` · `grid.edit_refresh` · `grid.edit_hidden_keys` · `grid.edit_rowid` · `grid.edit_all_cols` · `grid.edit_concurrency` · `grid.edit_key_check` · `grid.paste_max_rows` · `grid.lob_view_max_mb` · `grid.lob_image_preview` · `tx.prod_*` (production connections cannot be edited).
 
-> 기술 문서: 저장소 `docs/87-grid-data-editing.md`(설계 · 행 식별 등급 · 데이터 보호 불변식).
+> Technical document: `docs/87-grid-data-editing.md` in the repository (design · row identification grades · data protection invariants).
 
-## 행 식별 재조회는 기본으로 하지 않습니다 (2026-09-27)
+## No row-identification re-query by default (2026-09-27)
 
-키가 없는 표를 조회하면 예전에는 편집 준비를 위해 자동으로 한 번 더 조회(ROWID/빠진 키 열 주입)했습니다. 이제 **기본은 재조회 없음**입니다 — 결과에 PK/UNIQUE 열이 있으면 그대로 편집되고, 없으면 *모든 컬럼 값*으로 행을 맞춰 편집합니다(문장마다 정확히 1행인지 사전 검사).
+When you queried a table without a key, Nexa SQL used to re-run the query once automatically to prepare for editing (injecting ROWID or the missing key columns). Now the **default is no re-query**: if the result has PK/UNIQUE columns, it is edited with them; if not, rows are matched by *the values of all columns* (with the exactly-1-row pre-check for every statement).
 
-더 정확한 행 식별(ROWID·키 열)이 필요하면 결과 그리드에서 **편집 툴바 ⚿ 행 식별 열 가져오기(재조회 1회)** 를 고르세요 — 그 결과에만 적용됩니다. 항상 켜려면 설정 `grid.edit_rowid` / `grid.edit_hidden_keys`를 on으로.
+If you need more precise row identification (ROWID · key columns), choose **⚿ Fetch row identity (requery)** on the edit toolbar of the result grid. It applies to that result only. To always do it, turn the settings `grid.edit_rowid` / `grid.edit_hidden_keys` on.
 
-## 결과 필터(보기 전용 투영) (2026-10-05)
+## Result filter (view-only projection) (2026-10-05)
 
-![조건 바](images/result-condition-bar.png)
+![Condition bar](images/result-condition-bar.png)
 
-*조건 바 — WHERE 뒤 조건을 적고 Enter = 같은 탭에서 다시 조회*
+*Condition bar: type the condition that follows WHERE and press Enter = re-run the query in the same tab*
 
-![열 머리 깔때기 → 값 목록(엑셀 자동 필터처럼)](images/detail-value-filter-popup.png)
+![Column header funnel → value list (like Excel AutoFilter)](images/detail-value-filter-popup.png)
 
-*열 머리 깔때기 → 값 목록(엑셀 자동 필터처럼)*
+*Column header funnel → value list (like Excel AutoFilter)*
 
-![걸린 필터 = 칩 줄(× 로 하나씩 해제) · 깔때기 빗금](images/detail-filter-chips.png)
+![Active filters = chip strip (remove one at a time with ×) · hatched funnel](images/detail-filter-chips.png)
 
-*걸린 필터 = 칩 줄(× 로 하나씩 해제) · 깔때기 빗금*
+*Active filters = chip strip (remove one at a time with ×) · hatched funnel*
 
-필터는 이미 받아 온 결과에서 **보이는 행만 거르는 것**입니다 — 서버에 다시 묻지 않고 데이터도 바꾸지 않습니다.
+A filter **only hides rows** of a result that has already been fetched: it does not ask the server again and does not change the data. (Exception: when the result still has more rows on the server, the default `grid.filter_server` = auto re-runs the query on the server with the filter; see "Rows not fetched yet" below.)
 
-- **걸기**: 열 머리나 셀을 우클릭해 필터 항목을 고릅니다(열 타입에 따라 문자·숫자·날짜·불리언 조건 · 정규식 · NULL 여부). 한 열에 조건 하나, 여러 열의 조건은 기본으로 모두 만족(AND)하는 행만 남습니다. 필터 메뉴의 **필터 중 하나만 맞아도(OR)** 를 체크하면 하나라도 맞는 행이 남고 칩 사이에 "OR"가 붙습니다(조회 SQL·서버 재조회도 OR로).
-- **값 고르기**: 필터 ▸ **값 고르기 ▸** 에 그 열의 값이 체크 항목으로 나옵니다(받은 행에서 · NULL 제외 · 최대 30개 = 설정 `grid.filter_pick_max`). 하나 고르면 그 값만, 더 고르면 여러 값 중 하나(값 목록), 체크된 값을 다시 고르면 빠집니다.
-- **깔때기 · 값 목록**(2026-10-06 · 엑셀 자동 필터와 같은 방식): 열 머리 오른쪽 끝의 흐린 **깔때기**를 누르면 그 열 아래에 값 목록이 열립니다. 맨 위 **(모두 선택)** 은 전부/일부/없음 세 상태이고, 필터가 없으면 모든 값이 체크된 채로 열립니다. 남길 값만 체크하고 **확인**을 누르면 그 값들만 보이며, 전부 체크한 채 확인하면 필터가 없어집니다. **[필터 해제]** = 이 열의 필터를 지움 · **[취소]**·Esc = 바꾸지 않고 닫기 · Enter = 확인 · 팝업 밖을 클릭하면 닫히고 그 클릭은 그대로 진행됩니다. 위 검색 상자에 글자를 넣으면(대소문자 무시 · 한글은 자모로도 · 예 `ㄱ`) 목록이 좁혀지고 맞는 값이 모두 체크되며, 목록 위에 **(모든 검색 결과 선택)** 과 **필터에 현재 선택 내용 추가** 가 나옵니다 — 추가를 끈 채 확인하면 필터가 **검색 결과로 바뀌고**, 켜고 확인하면 **이미 고른 값에 더해집니다**. 검색어를 지우면 검색 전 체크로 돌아갑니다(검색어는 저장하지 않습니다). 목록은 받은 행의 값 최대 500개(`grid.filter_values_max`) · 우클릭 메뉴 **값 목록 팝업…** 으로도 엽니다. 목록 높이는 값 수와 상관없이 12행(`grid.filter_popup_rows`)으로 고정이라 검색해도 버튼 자리가 움직이지 않습니다. 맞는 값이 없으면 "일치하는 값 없음"이 보입니다.
-- **인라인 조건 입력란**(2026-10-06 · 10-07 개정 · DBeaver의 조건 바): 결과 그리드 바로 위 상자에 `WHERE` 뒤에 올 식을 쓰고 **Enter**(또는 Ctrl+Enter)를 누르면, 지금 결과를 만든 문장을 `SELECT * FROM ( … ) q WHERE 1=1 AND (식)`으로 감싸 **같은 결과 탭에서 서버에 다시 조회**합니다(받은 행만 거르는 위의 필터와 달리 전체 대상). 줄을 바꾸려면 **Shift+Enter** — 두 줄째가 되면 상자가 스스로 펼쳐집니다(최대 3줄 · `grid.cond_max_lines`). 상자 오른쪽 위 버튼: **×** = 글 전체 지우기 · **▾/▴** = 최대 줄까지 펼치기 / 한 줄로 접기(글은 그대로 · 접힌 상태에서는 캐럿 줄 하나만 보이고 키·휠로 줄을 옮깁니다) · **복사** = 감싼 SQL 복사. 글을 비우면 접힙니다. 글자를 치면 열 이름 · 함수 후보가 상자 아래에 뜹니다(Tab/Enter로 넣기). 식이 틀리면(없는 열 · 괄호 · 따옴표 · `;` 등) **실행하지 않고** 테두리가 빨갛게 되며 상태줄에 이유가 나오고, 서버가 오류를 돌려줘도 테두리가 빨갛게 되고 결과 그리드는 그대로 남습니다. **열 머리를 끌어 상자에 놓으면** 그 열 이름이 들어갑니다 — 기본은 조건 틀까지(문자 열 `열 = ''` · 숫자 열 `열 = 0` · 앞에 식이 있으면 ` AND `로 이음 · 끄기 = `grid.cond_drop_template`). 상자 안 Ctrl+C/X/V/A · Ctrl+Z/Y와 우클릭 메뉴(복사 · 잘라내기 · 붙여넣기 · 전체 선택)는 상자 글에만 작동합니다. Esc = 상자에서 나가기 · 끄기 = 설정 `grid.condition_bar`. 값 필터 칩 줄은 기본으로 숨겨져 있습니다 — 보려면 `grid.filter_strip`을 켜세요(조건 바 아래 두 번째 줄 · 필터가 있을 때만). 상자 글자는 결과 그리드와 같은 크기의 고정폭 글꼴입니다. 완성 후보는 편집기와 같은 규칙으로 뜹니다 — 두 글자부터(`intel.min_chars`) · 숫자로 시작하는 낱말(`1=1`)에는 뜨지 않음 · 처음엔 아무것도 고르지 않은 채 열리므로 ↓로 고르고, 고른 것이 없을 때 Enter는 그대로 **실행**, Tab은 그대로 통과합니다.
-- **열 이름 끌어 놓기**(2026-10-12): 열 머리를 누른 채 끌면 헤더 안에서는 열 순서를 바꾸는 미리보기, **조건 바 위나 그리드 밖으로 나가면 열 순서는 그대로 두고 커서 옆에 열 이름 칩**이 따라옵니다. **편집기 위에 놓으면 그 자리에 열 이름이 들어갑니다**(필요하면 따옴표로 감쌈 · `editor.quote_idents`) · **필터 상자(객체·프로젝트·북마크·아웃라인·확장 패널)나 찾기/바꾸기 상자에 놓아도** 그 상자의 캐럿 자리에 들어갑니다(놓을 수 있는 상자는 테두리가 강조됨 · 2026-10-13) · 조건 바 위에 놓으면 조건 틀이 붙습니다 · 헤더로 돌아오면 다시 열 이동입니다.
-- **글꼴 크기**(2026-10-07): **Ctrl+=**(키우기) · **Ctrl+-**(줄이기) · **Ctrl+휠**로 바꿉니다 — 편집기에 포커스(휠은 커서)가 있으면 편집기 글꼴(`editor.font_size`), 결과 그리드면 결과 글꼴(`grid.font_size`)이 바뀌고 상태줄에 "… 글꼴 크기: N px"가 잠깐 나옵니다. 값은 설정에 저장됩니다 · 되돌리기 = 명령 팔레트 **글꼴 크기 초기화**(`view.zoom_reset`). 편집기 줄 간격은 글꼴 크기를 따라갑니다(`editor.line_height_mode` · `editor.line_height` · [설정 창](Settings.md) "편집기 줄 간격").
-  - **깔때기 표시 방법**(`grid.filter_funnel`): **항상**(기본 · 모든 열에 흐리게) · **마우스가 열 머리 위에 있을 때만** · **없음**(필터가 걸린 열의 빗금 깔때기만 · 열기는 우클릭 ▸ 값 목록 팝업…). 깔때기·정렬 표식이 열 이름을 가리면 열이 그만큼 넓어집니다.
-  - **필터 사용 안 함**(`grid.filter_enabled` off): 깔때기 · 필터 메뉴 · 값 목록이 모두 사라지고 걸려 있던 필터도 풀립니다.
-  - **값 목록 범위**(`grid.filter_values_scope`): 기본은 **다른 열 필터를 통과한 행의 값만** 보여 줍니다(예: 부서를 먼저 거르면 이름 목록은 그 부서 사람만). 전체 값을 늘 보려면 `all`.
-  - 값에 쉼표가 들어 있어도(`BOX,POWER PULSE,SMF`) 그 값 하나로 거릅니다.
-  - 설정은 Preferences ▸ 데이터 편집기 ▸ **결과 필터**에 모여 있습니다.
-- **필터 줄**: 필터가 걸려 있는 동안 그리드 위에 한 줄이 생기고 조건마다 **칩** 하나(`열이름 조건 ×`)가 놓입니다. 칩의 **×** = 그 열의 필터만 지움 · 줄 오른쪽 끝의 **×** = 모두 지움 · 칩이 넘치면 `+N`으로 줄입니다. 필터가 하나도 없으면 줄은 사라집니다. 끄기 = 설정 `grid.filter_strip`(기본 on).
-- **몇 행이 보이는가**: 상태줄에 `n / N행`(보이는 행 / 받은 행)으로 나옵니다. 필터가 걸린 열은 머리의 깔때기 자리에 빗금 표식이 붙습니다(누르면 체크된 채로 값 목록이 다시 열림 · 머무르면 조건 툴팁).
-- **같은 조건으로 서버에서 다시 조회하려면**: 우클릭 ▸ **필터 조회 SQL 복사** — 지금 조건을 WHERE로 옮긴 조회 문장을 복사합니다. 정규식처럼 DBMS 문법으로 옮기기 어려운 조건은 받은 행에서 맞는 값의 목록으로 바뀌며, 목록은 `grid.filter_list_max`개에서 멈춥니다.
-- 필터는 **받은 행까지만** 봅니다. 아직 받지 않은 행(더 내려야 오는 행)은 조건에 맞아도 보이지 않습니다. 전체를 대상으로 하려면 필터 메뉴 맨 아래 **필터로 서버 재조회**를 고르세요 — 같은 조건으로 서버에서 다시 조회한 결과가 **새 결과 탭**에 열립니다(위의 조회 SQL을 복사해 직접 실행해도 같습니다).
+- **Adding a filter**: right-click a column header or a cell and choose a filter item (text, number, date or boolean conditions depending on the column type · regular expressions · NULL or not). One condition per column; by default only rows that match the conditions of all columns (AND) remain. Check **Match any filter (OR)** in the filter menu to keep rows that match any one of them; "OR" then appears between the chips (the filtered query SQL and the server re-query use OR too).
+- **Picking values**: Filter ▸ **Pick values ▸** lists the values of that column as check items (from fetched rows · NULL excluded · up to 30 = setting `grid.filter_pick_max`). Pick one to show only that value, pick more to show any of several values (a value list); picking a checked value again removes it.
+- **Funnel · value list** (2026-10-06 · works like Excel AutoFilter): click the dimmed **funnel** at the right end of a column header to open a value list below that column. **(Select All)** at the top has three states (all/some/none), and when there is no filter yet, every value starts checked. Check only the values to keep and press **OK** to see only those; pressing OK with everything checked removes the filter. **[Clear filter]** = clear this column's filter · **[Cancel]**/Esc = close without changes · Enter = OK · clicking outside the popup closes it and the click goes through as usual. Typing in the search box at the top (case-insensitive · Hangul also matches by jamo, e.g. `ㄱ`) narrows the list and checks all matching values, and **(Select All Search Results)** and **Add current selection to filter** appear above the list. With "add" unchecked, OK **replaces** the filter with the search results; with it checked, OK **adds them to the values already picked**. Clearing the search text brings back the checks from before the search (the search text is not saved). The list holds up to 500 values from fetched rows (`grid.filter_values_max`) · you can also open it with the right-click menu item **Value list popup**. The list height is fixed at 12 rows (`grid.filter_popup_rows`) regardless of how many values there are, so the buttons do not move while you search. When nothing matches, "No matching values" is shown.
+- **Inline condition box** (2026-10-06 · revised 10-07 · DBeaver's condition bar): type the expression that comes after `WHERE` in the box right above the result grid and press **Enter** (or Ctrl+Enter). The statement that produced the current result is wrapped as `SELECT * FROM ( … ) q WHERE 1=1 AND (expression)` and **re-run on the server in the same result tab** (unlike the filter above, which only filters fetched rows, this targets everything). Press **Shift+Enter** for a new line; from the second line the box expands by itself (up to 3 lines · `grid.cond_max_lines`). Buttons at the top right of the box: **×** = clear all text · **▾/▴** = expand to the maximum lines / collapse to one line (the text stays · when collapsed only the caret line is visible and keys or the wheel move between lines) · **Copy** = copy the wrapped SQL. Emptying the text collapses the box. As you type, column names and function candidates appear below the box (Tab/Enter inserts). If the expression is invalid (unknown column · brackets · quotes · `;` etc.), it is **not run**: the border turns red and the status bar gives the reason; if the server returns an error, the border also turns red and the result grid stays as it was. **Drag a column header and drop it on the box** to insert that column name; by default a condition template comes with it (text columns `col = ''` · numeric columns `col = 0` · joined with ` AND ` when there is already an expression · turn off with `grid.cond_drop_template`). Inside the box, Ctrl+C/X/V/A · Ctrl+Z/Y and the right-click menu (copy · cut · paste · select all) act only on the box text. Esc = leave the box · turn the box off with the setting `grid.condition_bar`. The value-filter chip strip is hidden by default; to see it, turn on `grid.filter_strip` (a second line below the condition bar · only when filters exist). The box text uses the same monospace font size as the result grid. Completion candidates follow the same rules as the editor: from two characters (`intel.min_chars`) · not for words starting with a digit (`1=1`) · the list opens with nothing selected, so press ↓ to pick; with nothing selected, Enter simply **runs** and Tab passes through.
+- **Dragging column names** (2026-10-12): press and drag a column header. Inside the header row you get a preview of reordering columns; **once you move over the condition bar or out of the grid, the column order is left alone and a chip with the column name follows the cursor**. **Drop it on the editor to insert the column name there** (quoted if needed · `editor.quote_idents`) · **dropping it on a filter box (object, project, bookmark, outline and extension panels) or the Find/Replace box** also inserts it at that box's caret (boxes that accept a drop get a highlighted border · 2026-10-13) · dropping on the condition bar adds a condition template · moving back to the header switches back to reordering columns.
+- **Font size** (2026-10-07): **Ctrl+=** (larger) · **Ctrl+-** (smaller) · **Ctrl+wheel**. When the editor has focus (for the wheel: the cursor is over it), the editor font (`editor.font_size`) changes; for the result grid, the result font (`grid.font_size`) changes, and the status bar briefly shows "… font size: N px". The value is saved in the settings · to reset, use the Command Palette **View: Reset font size (editor / result grid by focus)** (`view.zoom_reset`). The editor line spacing follows the font size (`editor.line_height_mode` · `editor.line_height` · "editor line spacing" in the [Preferences window](Settings.md)).
+  - **How the funnel is shown** (`grid.filter_funnel`): **Always** (default · dimmed on every column) · **On header hover** · **None (right-click menu)** (only the hatched funnel on filtered columns · open the list with right-click ▸ Value list popup). When the funnel or sort marker would cover a column name, the column becomes wider by that much.
+  - **Turning filters off** (`grid.filter_enabled` off): the funnel, the filter menu and the value list all disappear, and any active filters are cleared.
+  - **Value list scope** (`grid.filter_values_scope`): by default the list shows **only values from rows that pass the other columns' filters** (for example, after filtering by department, the name list shows only people in that department). To always see all values, use `all`.
+  - A value that contains commas (`A,B C,D`) is still filtered as one value.
+  - The settings are grouped under Preferences ▸ Data Editor ▸ **Result Filter**.
+- **Filter strip**: while filters are active, a line appears above the grid with one **chip** per condition (`column condition ×`). A chip's **×** = clear only that column's filter · the **×** at the right end of the line = clear all · when chips overflow they are shortened to `+N`. With no filters, the line disappears. Turn it on with the setting `grid.filter_strip` (off by default).
+- **How many rows are visible**: the status bar shows `n / N rows` (visible rows / fetched rows). A filtered column gets a hatched marker in place of the funnel in its header (click it to reopen the value list with the current checks · hover for a tooltip with the condition).
+- **To run the same condition on the server**: right-click ▸ **Copy filtered query** copies a query with the current conditions moved into WHERE. Conditions that are hard to express in DBMS syntax, such as regular expressions, become a list of the matching values from fetched rows, and the list stops at `grid.filter_list_max` entries.
+- **Rows not fetched yet**: with all rows fetched, a filter works only on those rows. When the result still has more rows on the server, the setting `grid.filter_server` decides: **auto (re-query on server)** (default) re-runs the query on the server with the filter in the same tab (the condition bar and filters combined · if it fails, the current result stays) · **local (fetched rows only)** filters fetched rows only and fetches at most `grid.filter_fill_pages` (3) more pages automatically · **ask** shows a hint once and then behaves like local. To target everything yourself, choose **Run filtered query on server** at the bottom of the filter menu: the result of re-running the same condition on the server opens in a **new result tab** (running the copied query SQL above yourself gives the same result).
 
-## 참조 행 보기(외래 키 따라가기) (2026-10-05)
+## Show referenced row (following foreign keys) (2026-10-05)
 
-테이블 하나를 그대로 조회한 결과에서 **외래 키 열의 셀을 우클릭 ▸ 참조 행 보기**를 고르면, 그 값이 가리키는 부모 테이블의 행을 **새 결과 탭**으로 조회합니다(부모의 기본 키로 `SELECT *` · 복합 키도 됩니다).
+In the result of a plain single-table query, **right-click a cell in a foreign key column ▸ Show referenced row** to query the parent table row that the value points to in a **new result tab** (`SELECT *` by the parent's primary key · composite keys work too).
 
-- 외래 키 열이 아니거나 값이 NULL이면 항목이 흐리고, 조인 · GROUP BY 같은 결과에서는 항목이 없습니다.
-- 테이블 제약은 결과가 오면 한 번 읽어 둡니다. 처음 한 번 "테이블 제약을 읽는 중"이 뜨면 잠시 뒤 다시 고르세요.
-- 끄기 = 설정 `grid.fk_follow`(끄면 제약도 읽지 않습니다).
+- If the column is not a foreign key or the value is NULL, the item is dimmed; for results with joins, GROUP BY and the like, the item is not shown.
+- Table constraints are read once when the result arrives. If "reading table constraints, try again in a moment" appears the first time, choose the item again a moment later.
+- Turn it off with the setting `grid.fk_follow` (when off, constraints are not read either).

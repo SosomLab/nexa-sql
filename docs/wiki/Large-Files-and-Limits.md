@@ -1,89 +1,91 @@
-# 큰 파일과 기능 제한 — Nexa SQL이 크기에 따라 무엇을 끄는가
+# Large files and feature limits — what Nexa SQL turns off by size
 
-> 사용자용 설명입니다. 기술 원장(근거 코드 · 실측)은 저장소의 [docs/72](../72-size-limits-and-large-file-constraints.md).
+**English** | [한국어](Large-Files-and-Limits-ko)
 
-Nexa SQL은 SQL 스크립트가 커지면 **탭마다** 단계를 정하고, 그 단계에서 부담이 큰 부가 기능을 자동으로 끕니다. 편집·선택·찾기·실행은 어느 크기에서도 그대로 됩니다 — 꺼지는 것은 "보기 좋게 해 주는" 기능뿐입니다.
+> This is the user guide. The technical ledger (source code · measurements) is [docs/72](../72-size-limits-and-large-file-constraints.md) in the repository.
 
-## 1. 단계는 이렇게 정해집니다
+As an SQL script grows, Nexa SQL sets a level **per tab** and automatically turns off the extra features that are costly at that level. Editing, selecting, finding and running work at any size — only the features that "make it look nice" are turned off.
 
-| 단계 | 기준(둘 중 하나라도 넘으면) | 기본값 |
+## 1. How the level is decided
+
+| Level | Criterion (exceeding either one) | Default |
 |---|---|---|
-| 보통 | — | — |
-| **L1** | 파일 크기 **또는** 줄 수 | **5 MB** / **100,000줄** |
-| **L2** | 파일 크기 또는 줄 수 | **20 MB** / **300,000줄** |
-| 열기 전에 묻기 | 파일 크기 | **50 MB** |
+| Normal | — | — |
+| **L1** | File size **or** line count | **5 MB** / **100,000 lines** |
+| **L2** | File size or line count | **20 MB** / **300,000 lines** |
+| Ask before opening | File size | **50 MB** |
 
-- 단계는 파일을 **열 때와 저장할 때** 다시 정합니다. 열 때 상태줄에 안내가 뜨고, 그 탭이 활성인 동안 상태줄 오른쪽에 `L1`/`L2` 표식이 늘 보입니다.
-- 기준 바꾸기: 설정 창 ▸ **Files** ▸ "Large file L1/L2 (MB · lines)" 또는 CLI
+- The level is decided again when the file is **opened and saved**. A notice appears in the status bar when it opens, and while that tab is active an `L1`/`L2` marker is always shown at the right of the status bar.
+- To change the criteria: settings window ▸ **Large files** ▸ "Large file level 1: size (MB)" · "Large file level 1: lines" · "Large file level 2: size (MB)" · "Large file level 2: lines", or the CLI
   `nsql config set file.large_l1_mb 10` · `nsql config set file.large_l2_lines 500000`
-- **이 탭만 전부 켜고 싶으면**: 명령 팔레트(Ctrl+Shift+P) ▸ *Toggle Large File Optimizations (This Tab)* — 상태줄의 `L1`/`L2` 표식이 사라지고 모든 기능이 켜집니다(다음에 열거나 저장할 때까지 유지).
+- **To turn everything on for this tab only**: Command Palette (Ctrl+Shift+P) ▸ *Toggle Large File Optimizations (This Tab)* — the `L1`/`L2` marker in the status bar disappears and every feature is on (until the next open or save).
 
-## 2. 단계별로 꺼지는 기능
+## 2. Features turned off per level
 
-| 기능 | L1부터 | L2부터 | 바꾸는 설정 |
+| Feature | From L1 | From L2 | Setting |
 |---|---|---|---|
-| 미니맵 | 끔 | 끔 | (단계 고정 · 보통 크기에서도 4,000줄까지만 그림) |
-| 같은 단어 상자(선택어 강조) | 끔 | 끔 | 단계 고정 |
-| 줄 변경 표시(거터 띠) | 끔 | 끔 | 단계 고정 |
-| 괄호 색·짝 표시(Rainbow Pairs 확장) | 끔 | 끔 | `file.large_ext_level` = `0`(제한 없음) / `l1` / `l2` · 확장 자체 상한 `ext.rainbow_pairs.max_kb`(기본 0 = 단계 따름) |
-| **구문 강조** | 켬 | **끔**(평문) | `file.large_syntax_level` = `0` / `l1` / `l2` |
-| 재시작 뒤 되돌리기(기록 파일) | 저장 안 함 | 저장 안 함 | 단계 고정(`editor.undo_persist_mb` 4 MB 이하 파일만) |
-| 외부에서 바뀐 파일 자동 병합 | 고치지 않았으면 그대로 다시 읽음 · 고쳤으면 어떻게 할지 물음 | 같음 | `file.external_merge_max_kb`(2 MB) |
-| SQL 포맷(Shift+Alt+F) — 문서 전체 | 안 됨 · 선택 영역이나 캐럿이 있는 문장만(캐럿 앞뒤 256 KB 안에서 찾음) | 같음 | `format.max_kb`(1 MB · 이보다 큰 문서도 같은 규칙 · 0 = 제한 없음) |
+| Minimap | off | off | (fixed by level · even at normal size it draws only up to 4,000 lines) |
+| Same-word boxes (selection-word highlight) | off | off | fixed by level |
+| Line change marks (gutter band) | off | off | fixed by level |
+| Bracket colors and pair marks (Rainbow Pairs extension) | off | off | `file.large_ext_level` = `off` (no limit) / `l1` / `l2` · the extension's own limit `ext.rainbow_pairs.max_kb` (default 0 = follow the level) |
+| **Syntax highlighting** | on | **off** (plain text) | `file.large_syntax_level` = `off` / `l1` / `l2` |
+| Undo after restart (history file) | not saved | not saved | fixed by level (only files up to `editor.undo_persist_mb` 4 MB) |
+| Automatic merge of files changed outside | re-read as is if you made no edits · asks what to do if you did | same | `file.external_merge_max_kb` (2 MB) |
+| SQL Format (Shift+Alt+F) — whole document | not available · only the selection or the statement at the caret (searched within 256 KB before and after the caret) | same | `format.max_kb` (1 MB · the same rule for larger documents · 0 = no limit) |
 
-## 3. 크기와 무관하게 늘 걸리는 상한
+## 3. Limits that always apply, whatever the size
 
-| 동작 | 상한 | 넘으면 | 설정 |
+| Action | Limit | Beyond it | Setting |
 |---|---|---|---|
-| 큰 선택 위에 타이핑·붙여넣기·삭제 | 한 번에 지우는 글자 **32 MB** | 먼저 안내가 뜨고, 같은 동작을 **한 번 더** 하면 실행 | `editor.undo_giant_mb`(0 = 안 물음) |
-| 다중 선택 구간 수(Ctrl+D · Alt+F3 · Ctrl+클릭 · Split into Lines · 열 선택) | **10,000개** | 거기서 멈추고 상태줄에 안내 | `editor.max_occurrences` |
-| 큰 선택 복사/잘라내기(Ctrl+C/X) | **32 MB** | 첫 누름은 안내, 3초 안에 다시 누르면 실행 | `editor.copy_confirm_mb`(0 = 안 물음) |
-| 되돌리기 메모리 | **64 MB** · 1,000 단계 | 오래된 단계부터 버림 | `editor.undo_budget_mb` · `editor.undo_max` |
-| 선택 되돌리기(Ctrl+U) | 500 단계 | 오래된 단계부터 버림 | — |
-| 파일 검색(Find in Files) | 파일 하나 **1 MB** | 그 파일은 건너뜀 | `search.max_file_kb` |
-| 결과 자동 페치 | **200행**씩 | 스크롤 끝에서 다음 200행 · Σ = 건수 · 전체 조회 버튼 | `grid.max_rows` |
-| 결과 메모리 | **1 GB** | 페치를 멈추고 안내 | `grid.memory_budget_mb` |
-| 결과 탭 | **8개** | 고정하지 않은 오래된 탭부터 닫힘 | `grid.result_tabs_max` |
-| 실행 카드 | **30장**(향상 모드 8) | 끝난 카드부터 사라짐 | `run.toast_max` |
-| 변수 값 | **1 MB** | 잘라 저장 + 안내 | `vars.max_value_kb` |
-| 프로젝트 폴더 열거 | 폴더당 **5,000** | "… 더 있음" | `project.scan_max` |
-| 파일 열기 다중 선택 | **10개** | 초과분은 제외 표시 | `file.open_max` |
-| 그리드 정규식 필터 → 조회 SQL 값 목록 | **1,000개** | 목록을 그 개수에서 멈추고 주석으로 알림 | `grid.filter_list_max` |
-| 프로젝트 자동 저장 — 미저장 탭 본문 | 탭 하나당 **8 MB**(합계가 아니라 탭마다) | 그 탭은 자동 저장에 보관되지 않음 · 한 번 알림 → 파일로 저장하세요 | `project.unsaved_max_mb`(0 = 제한 없음) |
-| Ctrl 줄 끝 라벨·설명(북마크 · 테이블/컬럼 설명) | 문서 **256 KB**까지 고른 범위 · **2 MB**까지 "문서 전체"는 보이는 영역으로 · 넘으면 끔 | 범위가 줄거나 꺼짐 | `ctrl.full_kb` · `ctrl.off_kb` |
-| 객체 hover 카드(설명·버튼) | 문서 **2 MB** | 카드가 뜨지 않음(향상 모드·큰 파일 모드도 끔) | `ctrl.off_kb` · `objlink.tooltip` |
+| Typing, pasting or deleting over a large selection | **32 MB** of characters removed at once | A notice appears first; doing the same action **once more** runs it | `editor.undo_giant_mb` (0 = never ask) |
+| Number of multi-selection ranges (Ctrl+D · Alt+F3 · Ctrl+click · Split into Lines · column selection) | **10,000** | Stops there with a notice in the status bar | `editor.max_occurrences` |
+| Copy/cut of a large selection (Ctrl+C/X) | **32 MB** | The first press shows a notice; pressing again within 3 seconds runs it | `editor.copy_confirm_mb` (0 = never ask) |
+| Undo memory | **64 MB** · 1,000 steps | Oldest steps are dropped first | `editor.undo_budget_mb` · `editor.undo_max` |
+| Undo selection (Ctrl+U) | 500 steps | Oldest steps are dropped first | — |
+| Find in Files | **8 MB** per file (2 MB in Speed boost mode) | That file is skipped | `search.max_file_kb` (0 = no limit) |
+| Automatic result fetch | **200 rows** at a time | Next 200 rows at the end of the scroll · Σ = row count · **Fetch all** button | `grid.max_rows` |
+| Result memory | **1 GB** | Fetching stops with a notice | `grid.memory_budget_mb` |
+| Result tabs | **8** | The oldest unpinned tabs are closed first | `grid.result_tabs_max` |
+| Run cards | **30** (8 in boost mode) | Finished cards disappear first | `run.toast_max` |
+| Variable value | **1 MB** | Truncated when stored + notice | `vars.max_value_kb` |
+| Project Explorer filter scan | **No limit** by default (0) · otherwise that many entries | "Scan stopped at N entries" | `project.scan_max` |
+| Multi-select in the open dialog | **10** | The rest are marked as excluded | `file.open_max` |
+| Grid regex filter → value list in the query SQL | **1,000** | The list stops at that count and a comment says so | `grid.filter_list_max` |
+| Project auto-save — text of unsaved tabs | **8 MB** per tab (per tab, not in total) | That tab is not kept by auto-save · one notice → save it to a file | `project.unsaved_max_mb` (0 = no limit) |
+| Ctrl end-of-line labels and descriptions (bookmarks · table/column descriptions) | The chosen range up to a **256 KB** document · up to **2 MB**, "whole document" becomes the visible area · beyond that, off | The range shrinks or it turns off | `ctrl.full_kb` · `ctrl.off_kb` |
+| Object hover card (description · buttons) | **2 MB** document | The card does not appear (also off in boost mode and large-file mode) | `ctrl.off_kb` · `objlink.tooltip` |
 
-## 4. 제한 없이 되는 것(궁금해할 만한 것)
+## 4. What works without limits (things you may wonder about)
 
-- **전체 선택(Ctrl+A)** · 드래그·Shift 선택 · 다중 캐럿 · 열 선택 — 어떤 크기든 즉시. 선택은 "시작·끝" 두 위치일 뿐이고 화면에 보이는 줄만 그리기 때문입니다. 그 선택 위에 편집하면 위 **32 MB 확인**이 한 번 막아 줍니다.
-- **찾기/바꾸기**(찾기 막대) — 줄 단위로 검색해 65 MB 파일에서도 됩니다.
-- **실행** — 편집기에 싣지 않고 파일에서 바로 실행(File ▸ *Run SQL File…*)도 있습니다. 다만 이 경로와 CLI `nsql`은 파일을 **통째로 읽어** 문장으로 나누므로(스트리밍 없음) 메모리는 파일 크기의 2~3배가 잠시 필요합니다.
+- **Select All (Ctrl+A)** · drag and Shift selection · multiple carets · column selection — instant at any size. A selection is just two positions, "start and end", and only the visible lines are drawn. If you edit over such a selection, the **32 MB confirmation** above stops you once.
+- **Find/Replace** (find bar) — it searches line by line, so it works even on a 65 MB file.
+- **Run** — you can also run straight from the file without loading it into the editor (File ▸ *Run SQL File*). However, this path and the CLI `nsql` **read the whole file** and split it into statements (no streaming), so memory of 2–3 times the file size is needed for a while.
 
-## 5. 50 MB가 넘으면 열기 전에 묻습니다
+## 5. Above 50 MB you are asked before opening
 
-| 선택 | 뜻 |
+| Choice | Meaning |
 |---|---|
-| 그대로 열기 | L2로 엽니다(위 표대로 부가 기능 끔) |
-| 앞부분만 8 MB | 읽기 전용으로 앞부분만(`file.large_head_mb`) |
-| 읽기 전용으로 열기 | 실수로 고치지 않게 |
-| 열지 않고 실행 | 편집기에 싣지 않고 실행만 |
+| Open normally | Opens at L2 (extra features off as in the table above) |
+| Open only the first 8 MB (read-only view) | Opens only the first part, read-only (`file.large_head_mb`) |
+| Open read-only | So you do not change it by accident |
+| Run the script without opening it | Only runs it, without loading it into the editor |
 
-묻지 않게 하려면 `nsql config set file.large_ask_mb 0`.
+To stop being asked: `nsql config set file.large_ask_mb 0`.
 
-**바이너리 파일**(이미지·압축·실행 파일 등 · 앞 8 KiB에 NUL이 있거나 제어 문자가 10 %를 넘으면)은 크기와 무관하게 본문 대신 **안내 탭** `이름 (바이너리)`가 열립니다 — 경로·크기만 보이고 읽기 전용이며 저장되지 않습니다. UTF-16 글 파일(BOM 있음)은 글로 열립니다. 이미지·문서 보기는 앞으로 확장 뷰어로 제공합니다. 판정은 파일 앞부분(8 KiB)만 읽어 하므로 수백 MB짜리 이미지·압축 파일도 바로 안내 탭으로 열리고, 프로젝트 탐색기에서 한 번 클릭하면 크기와 상관없이 미리보기 탭으로 열립니다. 글 파일이 미리보기 대신 정식 탭으로 열리면(설정이 꺼져 있거나 `file.async_load_mb` 이상) 로그 창에 그 이유와 경로가 남습니다.
+**Binary files** (images, archives, executables, etc. · a NUL in the first 8 KiB or more than 10 % control characters) open, whatever their size, as a **notice tab** `name (binary)` instead of their content — it shows only the path and size, is read-only and is never saved. UTF-16 text files (with BOM) open as text. Viewing images and documents will come later through extension viewers. The check reads only the beginning of the file (8 KiB), so even an image or archive of hundreds of MB opens as a notice tab right away, and a single click in the Project Explorer opens it as a preview tab regardless of size. When a text file opens as a regular tab instead of a preview (the setting is off, or it is at or above `file.async_load_mb`), the reason and the path are written to the log window.
 
-## 6. 성능 향상 모드와의 차이
+## 6. Difference from Speed boost mode
 
-설정 ▸ *Performance boost*(`perf.boost`)는 **모든 탭**에서 미니맵·강조·애니메이션 등을 끄는 전역 스위치이고, 위 단계는 **그 파일 하나의 크기**로 정해집니다. 둘 다 켜져 있으면 둘 다 꺼진 상태가 됩니다.
+Settings ▸ **Performance** ▸ *Speed boost* (`perf.boost`) is a global switch that turns off the minimap, highlighting, animations and so on in **every tab**, while the levels above are decided by **the size of that one file**. If both are on, the feature is off under both.
 
-## 7. 메모리 사용량 보기
+## 7. Seeing memory usage
 
-![메모리 창(보기 ▸ Memory)](images/memory-window.png)
+![Memory window (View ▸ Memory Usage)](images/memory-window.png)
 
-*메모리 창(보기 ▸ Memory) — 영역별 사용량 · 묶음 소계 · 변화량 ▲/▼*
+*Memory window (View ▸ Memory Usage) — usage per area · group subtotals · change ▲/▼*
 
-상태줄 오른쪽의 **`NN MB`** 가 이 앱의 메모리 총량(맥 = 활성 상태 보기의 "메모리" · Windows = Private Bytes)입니다. 클릭하면 **메모리 창**이 열립니다(View ▸ Memory Usage · 팔레트 "Memory Usage").
-- 위 막대 = 총량을 100 %로 **데이터 영역(색)** 과 **기타(회색 · 런타임·라이브러리)** 의 비율.
-- **Data** = 결과 데이터 · 결과 텍스트 캐시 · 편집기 본문 · 되돌리기 기록 · 편집기 그리기 캐시 · 메타(탐색기·완성) · 완성 · 로그 · 창 표면 · 아이콘 캐시. 값은 어림입니다.
-- **System** = 풋프린트 · 상주 · 익명(힙·스택) · 파일 매핑(라이브러리·글꼴) · 압축 · 힙 사용 중 · 힙 여유(예약·가상).
-- 창이 열려 있는 동안 **1초마다**(설정 `mem.refresh_ms`) 갱신되고, 닫으면 아무것도 돌지 않습니다. 힙 사용 중·힙 여유 두 줄은 힙 전체를 훑어야 해서 따로 **5초마다**(설정 `mem.heap_refresh_ms`) 갱신합니다 — 결과가 큰 상태에서 창을 열어 둬도 CPU를 거의 쓰지 않게 하려는 것입니다(10-08). **Top** 스위치 = 다른 창 위에 고정(설정 `mem.always_on_top`). 상태줄 숫자를 끄려면 `mem.statusbar`.
+**`NN MB`** at the right of the status bar is this app's total memory (Mac = "Memory" in Activity Monitor · Windows = Private Bytes). Click it to open the **Memory window** (View ▸ Memory Usage · palette "Memory Usage").
+- The top bar = the total as 100 %, split into the **data area (color)** and **other (gray · runtime and libraries)**.
+- **Data area** = one row per group — **Results** · **Editor** · **Metadata · completion** · **UI (logs · surfaces · icons)** · **Runtime**. Turn on the **Details** switch for one row per category (Result data · Result text cache · Editor text · Undo history · Editor draw cache · Metadata L1 (names · lists) · Metadata L2 (columns) · Metadata L3 (details) · Completion (words · candidates · icons) · Logs · Window surfaces · Icon caches · Find Objects results · Other (runtime · libraries · unaccounted)). The values are estimates.
+- **System** = Footprint (private) · Private working set (Task Manager) · Resident · Anonymous (heap · stacks) · File-backed (libraries · fonts) · Compressed · Heap in use · Heap free (reserved · virtual).
+- While the window is open it refreshes **every second** (setting `mem.refresh_ms`); when closed, nothing runs. The two rows Heap in use and Heap free have to walk the whole heap, so they refresh separately **every 5 seconds** (setting `mem.heap_refresh_ms`) — so that keeping the window open with a large result uses almost no CPU (10-08). **Top** switch = keep it above other windows (setting `mem.always_on_top`). To hide the status bar number: `mem.statusbar`.

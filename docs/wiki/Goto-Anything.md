@@ -1,105 +1,107 @@
-# Goto Anything(Ctrl+P) — 파일 · 줄 · 명령 · 심볼로 바로 가기
+# Goto Anything (Ctrl+P) — jump to files · lines · commands · symbols
 
-**Ctrl+P**(맥 ⌘P · 보기 ▸ Goto Anything)를 누르면 화면 위쪽에 입력란과 목록이 열립니다. VS Code의 Quick Open과 같은 방식으로, **입력란의 첫 글자(접두)** 에 따라 무엇을 찾을지가 바뀝니다. 아무 접두 없이 글자를 치면 파일을 찾습니다.
+**English** | [한국어](Goto-Anything-ko)
+
+Press **Ctrl+P** (Mac ⌘P · View ▸ Goto Anything) to open an input field and a list at the top of the screen. It works like VS Code's Quick Open: **the first character (prefix) of the input** decides what is searched. Typing letters without any prefix searches files.
 
 ![Ctrl+P](images/goto-anything-files.png)
 
-*Ctrl+P — 파일 이름 퍼지 검색(열린 탭 · 최근 · 프로젝트 폴더)*
+*Ctrl+P — fuzzy file name search (open tabs · recent · project folders)*
 
-![`>` 접두 = 명령 찾기](images/goto-anything-commands.png)
+![`>` prefix = find commands](images/goto-anything-commands.png)
 
-*`>` 접두 = 명령 찾기*
+*`>` prefix = find commands*
 
-![`@` 접두 = 지금 문서의 심볼(문장 · 객체)](images/goto-anything-symbols.png)
+![`@` prefix = symbols of the current document (statements · objects)](images/goto-anything-symbols.png)
 
-*`@` 접두 = 지금 문서의 심볼(문장 · 객체)*
+*`@` prefix = symbols of the current document (statements · objects)*
 
-## 입력창 접두사 정리
+## Input prefixes at a glance
 
-| 입력 예 | 동작 |
+| Input example | Action |
 |---|---|
-| `emp` | 파일 이름 퍼지 검색(열린 탭 → 최근 파일 → 프로젝트 폴더) · 오타 허용 |
-| `cache file 35` | **띄어쓰기 = 낱말 나누기** — 낱말마다 따로 맞춰 모두 맞는 파일(순서 무관 · `chche file 35`처럼 오타도) |
-| `sql/emp` | 경로 일부로 좁히기 |
-| `emp.sql:12` | 파일을 열고 해당 줄로 이동 |
-| `>` | 명령 실행(명령 팔레트 · 한국어 이름과 영어 명령 이름 둘 다로 찾음 — 예 `>save`) |
-| `:12` | 현재 파일의 해당 줄로 이동 |
-| `@select` | 현재 파일의 심볼로 이동 |
-| `@:` | 현재 파일의 심볼을 종류별로 묶어 보기 |
-| `#emp` | 워크스페이스 전체 심볼 검색(**다음 단계** — 지금은 안내만 · 현재 파일은 `@`) |
-| `%where` | 파일 내용 빠른 검색(Quick Search · `줄 번호: 내용` 최대 300행) |
-| `?` | 사용 가능한 접두사 도움말(항목을 고르고 Enter = 그 접두가 입력란에 들어감) |
+| `emp` | Fuzzy file name search (open tabs → recent files → project folders) · typos tolerated |
+| `cache file 35` | **Space = word split** — each word is matched separately and files matching all of them remain (order does not matter · typos too, like `chche file 35`) |
+| `sql/emp` | Narrow by a path fragment |
+| `emp.sql:12` | Open the file and go to that line |
+| `>` | Run a command (Command Palette · finds by the Korean name and the English command name alike — e.g. `>save`) |
+| `:12` | Go to that line of the current file |
+| `@select` | Go to a symbol of the current file |
+| `@:` | Symbols of the current file grouped by kind |
+| `#emp` | Workspace-wide symbol search (**next step** — only a notice for now · use `@` for the current file) |
+| `%where` | Quick search in file contents (Quick Search · `line number: content`, up to 300 rows) |
+| `?` | Help on the available prefixes (pick an item and press Enter = that prefix goes into the input) |
 
-> 파일을 연 뒤 다시 Ctrl+P를 눌러 바로 `@`나 `:`로 이어서 이동할 수도 있습니다.
+> After opening a file, you can press Ctrl+P again and continue right away with `@` or `:`.
 
-## 검색 방식 상세
+## Search details
 
-입력란에서 쓸 수 있는 모든 방식과 기호입니다. `?`를 치면 앱 안 도움말에 접두 10행과 아래 요약 6줄이 나옵니다.
+These are all the methods and symbols you can use in the input field. Typing `?` shows in-app help with 10 prefix rows and the 6-line summary below.
 
-> · 일치 규칙: 입력한 글자가 그 순서대로 들어 있으면 맞음(사이 빠짐 허용 · cfl -> cache_file) · 입력한 글자가 하나라도 없으면 안 맞음 · 대소문자 무시  
-> · 띄어쓰기 = 낱말: 낱말마다 모두 맞아야 함(AND) · 예 `cache file 35` · `_` `-` `.` `/`도 낱말 경계  
-> · 순위: 열린 탭 > 최근 > 프로젝트 파일 · 파일 이름 안 일치 > 경로 일치 · 이어진 글자·낱말 머리글자 가점 · 흩어진 일치 감점  
-> · 범위: 프로젝트 폴더 전부(백그라운드 색인 · 60초 캐시) · `project.exclude`의 폴더는 건너뜀 · 숨김/점 파일 = `file.show_hidden` / `file.show_dot`  
-> · 결과: 상위 400개 - `…외 N개`면 더 입력해 좁히기 · 목록 위 안내 줄 = 읽는 중 진행 / `project.scan_max` 상한  
-> · 키: ↑↓ 이동 · Enter 열기 · Esc 닫기 · 파일을 연 뒤 다시 Ctrl+P → @ 또는 :로 이어서
+> · Matching: typed letters must appear in that order, gaps allowed (cfl -> cache_file); every typed letter must exist; case ignored  
+> · Space = words: every word must match (AND), e.g. `cache file 35`; `_` `-` `.` `/` separate words  
+> · Ranking: open tabs > recent > project files; match inside the file name > path; consecutive letters and word starts score higher; scattered matches lower  
+> · Scope: all project folders (indexed in the background, cached 60 s); folders in `project.exclude` are skipped (Settings > Project > Excluded folders [Edit...]); hidden/dot files follow `file.show_hidden` / `file.show_dot`  
+> · Results: top 400 shown - `...and N more` means type more; the line above the list reports scanning progress or a `project.scan_max` cap  
+> · Keys: Up/Down move - Enter open - Esc close - after opening a file press Ctrl+P again and continue with @ or :
 
-아래는 각 줄의 자세한 설명입니다.
+Each line is explained in detail below.
 
-### 접두 기호(첫 글자)
+### Prefix symbols (first character)
 
-| 기호 | 찾는 것 | 예 |
+| Symbol | Searches | Example |
 |---|---|---|
-| (없음) | 파일 | `emp` · `sql/emp` · `cache file 35` |
-| `이름:줄` · `이름#L줄` | 파일을 열고 그 줄로 | `emp.sql:12` · `emp.sql#L12` |
-| `>` | 명령(한국어 이름 · 영어 명령 id 둘 다) | `>save` · `>저장` |
-| `:` | 현재 파일의 줄 | `:120` |
-| `@` | 현재 파일의 심볼 | `@select` |
-| `@:` | 현재 파일의 심볼을 종류별로 | `@:` |
-| `#` | 워크스페이스 심볼(다음 단계 · 지금은 안내만) | `#emp` |
-| `%` | 파일 내용 빠른 검색(최대 300행) | `%where` |
-| `?` | 이 도움말 | `?` |
+| (none) | Files | `emp` · `sql/emp` · `cache file 35` |
+| `name:line` · `name#Lline` | Open the file at that line | `emp.sql:12` · `emp.sql#L12` |
+| `>` | Commands (Korean name · English command id alike) | `>save` · `>저장` |
+| `:` | A line of the current file | `:120` |
+| `@` | Symbols of the current file | `@select` |
+| `@:` | Symbols of the current file by kind | `@:` |
+| `#` | Workspace symbols (next step · only a notice for now) | `#emp` |
+| `%` | Quick search in file contents (up to 300 rows) | `%where` |
+| `?` | This help | `?` |
 
-### 퍼지 규칙(파일 · 명령 · 심볼 공통)
+### Fuzzy rules (shared by files · commands · symbols)
 
-- **순서대로 포함**: 친 글자가 이름 안에 **그 순서대로** 들어 있으면 맞습니다 — 사이에 다른 글자가 있어도 됩니다(**빠진 글자 허용** · `cchfl` → `cache_file`).
-- **대소문자 무시**: `CACHE` = `cache`.
-- **`\`와 `/`는 같음**: `downloads\many`와 `downloads/many`가 같은 결과(프로젝트 파일 · 최근 파일 모두).
-- **띄어쓰기 = 낱말 나누기(AND)**: 공백으로 나눈 낱말마다 따로 맞추고, **모든 낱말이 맞는** 항목만 남습니다(낱말 순서 무관). 이름 안의 `_` `-` `.` `/`는 낱말 경계로 취급돼 `cache file 35`가 `cache_file_35.txt`에 맞습니다.
-- **오타 허용의 범위**: 파일 행은 `이름  -  경로`로 이름이 두 번 들어 있어, 순서가 조금 어긋난 오타도 앞의 이름과 뒤의 경로에 걸쳐 글자가 순서대로 맞으면 찾아집니다(`chche` → `cache_file…  -  …/cache_file…`). 이름에 **없는 글자**를 친 경우(`xache`)는 맞지 않습니다 — 글자 교정(편집 거리) 기능은 아닙니다.
+- **Contained in order**: it matches when the typed letters appear in the name **in that order** — other letters may sit between them (**gaps allowed** · `cchfl` → `cache_file`).
+- **Case ignored**: `CACHE` = `cache`.
+- **`\` and `/` are the same**: `downloads\many` and `downloads/many` give the same result (both project files and recent files).
+- **Space = word split (AND)**: each space-separated word is matched separately, and only items where **every word matches** remain (word order does not matter). `_` `-` `.` `/` inside a name count as word boundaries, so `cache file 35` matches `cache_file_35.txt`.
+- **How far typos are tolerated**: a file row contains the name twice, as `name  -  path`, so a typo with slightly shuffled order is still found when the letters match in order across the name in front and the path behind it (`chche` → `cache_file…  -  …/cache_file…`). Typing a letter that is **not in** the name (`xache`) does not match — this is not spelling correction (edit distance).
 
-### 순위
+### Ranking
 
-1. 출처: **열린 탭(✓) > 최근 파일 > 프로젝트 폴더**(같은 파일은 앞쪽 하나만).
-2. 같은 출처 안에서는 점수 순: 파일 **이름 안에서** 맞으면 경로에서만 맞는 것보다 위 · 질의가 **이어진 글자**로 들어 있으면 위 · 낱말 **머리글자**(`_` `-` `.` `/` 뒤 · 첫 글자)로 맞으면 가점(`cf35` → `cache_file_35.txt`) · 글자가 **흩어져** 맞을수록 감점.
-3. 결과는 **상위 400행**까지 보이고, 넘치면 "…외 N개 - 더 입력해 좁히기"가 나옵니다.
+1. Source: **open tabs (✓) > recent files > project folders** (the same file appears only once, at the earliest place).
+2. Within the same source, by score: a match **inside the file name** ranks above a match only in the path · the query appearing as **consecutive letters** ranks higher · matching word **starts** (after `_` `-` `.` `/` · the first letter) earns a bonus (`cf35` → `cache_file_35.txt`) · the more **scattered** the letters, the lower the score.
+3. Up to the **top 400 rows** are shown; beyond that, "…and N more - type more to narrow" appears.
 
-### 범위
+### Scope
 
-- 프로젝트 폴더 전체(프로젝트가 열려 있을 때) · 열린 탭 · 최근 파일.
-- 프로젝트 폴더 목록은 **60초 캐시** — 60초가 지나 다시 열면 뒤에서 다시 읽고, 그동안은 이전 목록을 그대로 씁니다.
-- 제외: 설정 `project.exclude`(기본 `.git,.svn,.hg,node_modules,target,.nsql` · **설정 ▸ 프로젝트 ▸ 제외 폴더 [편집…]** 에서 목록으로 추가/삭제)의 이름을 가진 폴더 · 숨김/점 파일은 `file.show_hidden` · `file.show_dot`을 따름 · 큰 폴더 상한 `project.scan_max`(0 = 무제한).
+- All project folders (when a project is open) · open tabs · recent files.
+- The project folder list is **cached for 60 seconds** (setting `project.index_ttl_secs` · default 60 · 0 = every time) — opening it again after 60 seconds re-reads it in the background, and the previous list is used meanwhile.
+- Excluded: folders whose names are in the setting `project.exclude` (default `.git,.svn,.hg,node_modules,target,.nsql` · add/remove them as a list in **Preferences ▸ Project ▸ Excluded folder names (Goto Anything index) [Edit…]**) · hidden/dot files follow `file.show_hidden` · `file.show_dot` · limit for big folders `project.scan_max` (0 = unlimited).
 
-### 화면 표시
+### What you see
 
-- **안내 줄**(입력란 바로 아래 · 결과 위): "프로젝트 폴더 읽는 중… 지금까지 N개" · 상한(`project.scan_max`)에 닿음 · "…외 N개".
-- **혜성 테두리**: 프로젝트 폴더를 읽는 동안 입력란 테두리를 도는 선이 보이고(최소 0.6초), 다 읽으면 두 번 깜빡인 뒤 완료 테두리 · 글자를 치면 원래대로 · 캐시로 바로 열리면 그리지 않습니다(객체 탐색기 검색 상자와 같은 그림).
+- **Notice line** (right below the input · above the results): "Scanning project folders… N files so far" · the limit (`project.scan_max`) was reached · "…and N more".
+- **Comet border**: while project folders are being read, a line runs around the input border (at least 0.6 s); when reading finishes it blinks twice and then shows the done border · typing returns it to normal · it is not drawn when the list opens straight from the cache (same drawing as the Object Explorer search box).
 
-### 키
+### Keys
 
-- ↑ / ↓ = 고르기 · Enter = 열기/실행 · Esc = 닫기.
-- 파일을 연 뒤 다시 **Ctrl+P** → `@`(심볼) · `:`(줄)로 이어서 이동.
+- ↑ / ↓ = select · Enter = open/run · Esc = close.
+- After opening a file, press **Ctrl+P** again → continue with `@` (symbols) · `:` (lines).
 
-## 목록과 순위
+## List and ranking
 
-- 파일 목록은 **열린 탭(✓) → 최근 파일 → 프로젝트 폴더의 파일** 순으로 올라옵니다. 같은 파일이 여러 곳에 있으면 앞쪽 하나만 보입니다.
-- 순위: 파일 **이름** 안에서 맞으면 경로에서 맞는 것보다 위 · 이어진 글자로 맞으면 위 · 낱말 머리글자(`_` `/` `.` 뒤)로 맞으면 가점(`cf35` → `cache_file_35.txt`) · 글자가 흩어져 맞으면 아래. 결과는 최대 400행이고 넘치면 "…외 N개 - 더 입력해 좁히기"가 보입니다.
-- 각 행은 `이름  -  위치`(프로젝트 파일 = 프로젝트 폴더 기준 상대 경로)로 보입니다.
-- 프로젝트 폴더 파일은 뒤에서 병렬로 읽어 들이며, 읽히는 대로 목록이 늘어납니다. 읽는 동안은 **입력란 바로 아래**(결과 위)에 "프로젝트 폴더 읽는 중… 지금까지 N개"가 보입니다. 1분이 지나 다시 읽을 때는 **이전 목록을 그대로 보이다가** 다 읽으면 바꿉니다(큰 폴더 상한 = 설정 `project.scan_max` · 스레드 = `project.scan_threads`).
-- **제외 폴더**: 설정 `project.exclude`(기본 `.git,.svn,.hg,node_modules,target,.nsql`)에 있는 이름의 폴더는 Goto Anything이 읽지 않습니다(빌드 산출물이 수십만 개여도 빠르게 · 프로젝트 탐색기 트리에는 그대로 보임). 숨김·점 파일은 `file.show_hidden` · `file.show_dot`을 따릅니다.
-- ↑/↓ = 고르기 · Enter = 열기/실행 · Esc = 닫기.
+- The file list comes in the order **open tabs (✓) → recent files → files in project folders**. When the same file is in several places, only the earliest one is shown.
+- Ranking: a match inside the file **name** ranks above a match in the path · consecutive letters rank higher · matching word starts (after `_` `/` `.`) earns a bonus (`cf35` → `cache_file_35.txt`) · scattered matches rank lower. Up to 400 rows are shown; beyond that, "…and N more - type more to narrow" appears.
+- Each row is shown as `name  -  location` (project files = relative path from the project folder).
+- Project folder files are read in parallel in the background, and the list grows as they come in. While reading, "Scanning project folders… N files so far" is shown **right below the input** (above the results). When it re-reads after a minute, it **keeps showing the previous list** and swaps it when the read is done (limit for big folders = setting `project.scan_max` · threads = `project.scan_threads`).
+- **Excluded folders**: Goto Anything does not read folders whose names are in the setting `project.exclude` (default `.git,.svn,.hg,node_modules,target,.nsql`) (fast even with hundreds of thousands of build outputs · they still show in the Project Explorer tree). Hidden and dot files follow `file.show_hidden` · `file.show_dot`.
+- ↑/↓ = select · Enter = open/run · Esc = close.
 
-## 메뉴의 단축키 표시
+## Shortcuts shown in menus
 
-풀다운 메뉴(파일 · 편집 · 보기 …) 항목 오른쪽에 그 명령의 단축키가 함께 보입니다(예: 저장 Ctrl+S · Goto Anything Ctrl+P · 로그 창 F10). 단축키를 바꾸면 메뉴 표시도 따라 바뀝니다.
+Items of the pull-down menus (File · Edit · View …) show the command's shortcut on the right (for example Save Ctrl+S · Goto Anything Ctrl+P · Log window F10). When you change a shortcut, the menu follows.
 
-> 기술 기록: journal 2026-10-07 §7·§10~§12 · TODO T-286(Goto Anything) · T-287(메뉴 단축키) · T-289(교체식 목록) · T-290(제외 폴더) · 조사 [105](../105-fast-file-enumeration-survey.md).
+> Technical notes: journal 2026-10-07 §7 · §10–§12 · TODO T-286 (Goto Anything) · T-287 (menu shortcuts) · T-289 (swap-in list) · T-290 (excluded folders) · survey [105](../105-fast-file-enumeration-survey.md).

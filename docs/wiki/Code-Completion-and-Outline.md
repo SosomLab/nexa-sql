@@ -1,154 +1,153 @@
-# 코드 완성과 아웃라인
+# Code completion and outline
 
-편집기에서 타이핑할 때 뜨는 후보 팝업(IntelliSense)과, 현재 문서의 심볼 목록(아웃라인)입니다.
+**English** | [한국어](Code-Completion-and-Outline-ko)
 
-## 3분 사용법(시험용 요약)
+This page covers the candidate popup that appears while you type in the editor (IntelliSense) and the list of symbols in the current document (the outline).
 
-1. 접속한 뒤 새 탭에서 `SELECT * FROM ` 까지 치고 잠깐 기다리거나 **Ctrl+Space**(맥 **⌃Space** · Control) → 현재 스키마의 테이블·뷰 · 스키마 이름 · 사전 뷰(`ALL_TABLES` · `sys.tables` · `pg_catalog.pg_class` …)가 뜹니다. `sc`처럼 약어를 쳐도 `SALES_CUSTOMER`가 걸립니다(퍼지).
-2. 테이블을 고르고 ` e`(alias)를 붙인 뒤 `SELECT e.`을 치면 **`.`을 치는 즉시** 그 테이블의 컬럼(오른쪽 열 = `PK NUMBER(4)` · `FK … NOT NULL`)이 뜹니다. 탐색기가 아직 안 읽은 테이블이면 "컬럼 불러오는 중…"이 잠깐 보이고 곧 채워집니다.
-3. `SELECT nv`를 치면 **내장 함수** `NVL`이 시그니처(`NVL(expr1, expr2)`)와 함께 뜹니다. Enter → `NVL()`이 들어가고 캐럿은 괄호 안 · 상태줄에 `ƒ NVL(expr1, expr2)`(시그니처 도움). `SYSDATE`처럼 인자가 없는 것은 괄호 없이 들어갑니다.
-4. Oracle: `DBMS_OUTPUT.`을 치면 `PUT_LINE` 등 패키지 멤버가 뜹니다. SQL Server: `sys.` · `INFORMATION_SCHEMA.` · PostgreSQL: `pg_catalog.` · `information_schema.` 뒤에 카탈로그 뷰.
-5. `INSERT INTO emp (`를 치면 첫 후보가 **전체 컬럼**(`EMPNO, ENAME, …`)입니다 — Enter 한 번으로 컬럼 목록 완성.
-6. 후보가 많으면 팝업이 **스크롤**됩니다(보이는 행 수 = 설정 `intel.popup_rows` 12 · 휠 · PgUp/PgDn/Home/End).
-7. Preferences ▸ Editors ▸ **Code completion**에서 `Insert table alias`를 켜면 FROM 뒤 테이블을 고를 때 `SALES_CUSTOMER sc`처럼 alias까지 들어갑니다(문장 안 alias와 겹치면 `sc2`).
-8. **Ctrl+R** = Goto Symbol(문서 심볼 팔레트) · 활동 막대의 아웃라인 아이콘 = 심볼 패널.
+## Three-minute tour (summary for testing)
 
-## 코드 완성
+1. After connecting, type `SELECT * FROM ` in a new tab and wait a moment, or press **Ctrl+Space** (Mac **⌃Space** · Control). The tables and views of the current schema, schema names and dictionary views (`ALL_TABLES` · `sys.tables` · `pg_catalog.pg_class` …) appear. An abbreviation such as `sc` also finds `SALES_CUSTOMER` (fuzzy).
+2. Pick a table, add ` e` (an alias), then type `SELECT e.`: **as soon as you type `.`** the columns of that table appear (right-hand column = `PK NUMBER(4)` · `FK … NOT NULL`). If the explorer has not read that table yet, "Loading columns…" shows briefly and the list fills in shortly.
+3. Type `SELECT nv` and the **built-in function** `NVL` appears with its signature (`NVL(expr1, expr2)`). Enter inserts `NVL()` with the caret inside the parentheses, and the status bar shows `ƒ NVL(expr1, expr2)` (signature help). Functions without arguments, such as `SYSDATE`, are inserted without parentheses.
+4. Oracle: type `DBMS_OUTPUT.` and package members such as `PUT_LINE` appear. SQL Server: catalog views after `sys.` · `INFORMATION_SCHEMA.` · PostgreSQL: after `pg_catalog.` · `information_schema.`.
+5. Type `INSERT INTO emp (` and the first candidate is **all columns** (`EMPNO, ENAME, …`): one Enter completes the column list.
+6. When there are many candidates, the popup **scrolls** (visible rows = setting `intel.popup_rows` 10 · wheel · PgUp/PgDn/Home/End).
+7. Turn on `Insert table alias` in Preferences ▸ Editors ▸ **Code completion**, and picking a table after FROM inserts the alias too, as in `SALES_CUSTOMER sc` (`sc2` if it clashes with an alias already in the statement).
+8. **Ctrl+R** = Goto Symbol (palette of document symbols) · the outline icon in the activity bar = the symbol panel.
 
-![완성 팝업과 상세 카드](images/detail-completion-popup.png)
+## Code completion
 
-*완성 팝업과 상세 카드 — 별칭 `e.` 뒤 컬럼 후보 · 타입 · NOT NULL*
+![Completion popup and detail card](images/detail-completion-popup.png)
 
-| 언제 | 무엇 |
+*Completion popup and detail card: column candidates after the alias `e.` · type · NOT NULL*
+
+| When | What |
 |---|---|
-| `.`을 치면 즉시 | `alias.` · `table.` = 그 테이블의 컬럼(타입 · PK/FK/UQ · NOT NULL) · `schema.` = 그 스키마의 객체 · `DBMS_OUTPUT.` 같은 시스템 패키지 = 멤버 · `sys.`/`INFORMATION_SCHEMA.`/`pg_catalog.` = 카탈로그 뷰 |
-| 식별자 2자 + 잠깐(250 ms) | 문맥에 맞는 후보(아래 표) |
-| **Ctrl+Space**(맥 ⌃Space) | 언제든 수동으로(설정과 무관) · 맥에서 시스템 설정 ▸ 키보드 단축키 ▸ 입력 소스의 "이전 입력 소스 선택"이 ⌃Space면 OS가 먼저 가져가므로 그 항목을 끄거나 `key.edit.complete`를 바꾼다 |
-| `(`를 치면 | 내장 함수·패키지 멤버의 **시그니처가 상태줄에**(`ƒ NVL(expr1, expr2)`) |
+| Immediately when you type `.` | `alias.` · `table.` = the columns of that table (type · PK/FK/UQ · NOT NULL) · `schema.` = the objects of that schema · system packages such as `DBMS_OUTPUT.` = members · `sys.`/`INFORMATION_SCHEMA.`/`pg_catalog.` = catalog views |
+| 2 identifier characters + a short pause (250 ms) | Candidates that fit the context (table below) |
+| **Ctrl+Space** (Mac ⌃Space) | Manually, at any time (regardless of settings) · on a Mac, if "Select the previous input source" under System Settings ▸ Keyboard Shortcuts ▸ Input Sources is ⌃Space, the OS takes it first, so turn that item off or change `key.edit.complete` |
+| When you type `(` | The **signature in the status bar** for built-in functions and package members (`ƒ NVL(expr1, expr2)`) |
 
-문맥별 후보:
+Candidates by context:
 
-| 자리 | 후보 |
+| Position | Candidates |
 |---|---|
-| `FROM` · `JOIN` · `UPDATE` · `INSERT INTO` 뒤(콤마 목록 포함) | 현재 스키마의 테이블·뷰·시노님 · 스키마 이름 · 이 문장의 CTE · **사전 뷰**(`ALL_TABLES` · `USER_OBJECTS` · `V$SESSION` · `sys.tables` · `pg_catalog.pg_stat_activity` · `sqlite_master` …) |
-| `alias.` 뒤 | 그 테이블의 컬럼 — 탐색기에서 아직 안 읽은 테이블이면 "컬럼 불러오는 중…"이 보이고, 곧 다시 열면 채워집니다 |
-| SELECT 목록 · WHERE · ON … | **모든 alias 테이블의 컬럼**(오른쪽에 alias · FROM 순서 → 순번 · 아직 안 읽은 테이블은 채워지면 표시) — 확정하면 `A.컬럼`으로 들어가고 **Alt를 누른 채 확정하면 컬럼명만**(`intel.qualify_columns` 끄면 반대) · **내장 함수**(방언별 · 시그니처) · **시스템 패키지 이름** · 문서 심볼(DEFINE·VARIABLE·선언 변수·프로시저) · 키워드 · 이 문서의 단어 |
-| `INSERT INTO 테이블 (` 바로 뒤 | 첫 후보 = **그 테이블의 전체 컬럼**(한 조각) |
-| 문장 시작 | 키워드 · 문서 심볼 |
+| After `FROM` · `JOIN` · `UPDATE` · `INSERT INTO` (including comma lists) | Tables, views and synonyms of the current schema · schema names · CTEs of this statement · **dictionary views** (`ALL_TABLES` · `USER_OBJECTS` · `V$SESSION` · `sys.tables` · `pg_catalog.pg_stat_activity` · `sqlite_master` …) |
+| After `alias.` | The columns of that table. If the explorer has not read the table yet, "Loading columns…" is shown, and reopening shortly afterwards shows them filled in |
+| SELECT list · WHERE · ON … | **Columns of all aliased tables** (alias on the right · ordered by FROM order → column position · tables not read yet appear once filled) — confirming inserts `A.column`, and **confirming while holding Alt inserts the column name only** (reversed when `intel.qualify_columns` is off) · **built-in functions** (per dialect · with signatures) · **system package names** · document symbols (DEFINE · VARIABLE · declared variables · procedures) · keywords · words in this document |
+| Right after `INSERT INTO table (` | First candidate = **all columns of that table** (one snippet) |
+| Start of a statement | Keywords · document symbols |
 
-- 키: ↑/↓ 고르기 · PgUp/PgDn/Home/End · 휠(커서가 팝업 위에 있을 때만 · 밖에서 굴리면 팝업이 닫히고 편집기가 스크롤) · **Enter 또는 Tab** 확정 · Esc 닫기 · 계속 타이핑하면 그대로 걸러집니다 · Backspace로 접두가 없어지면 닫힙니다.
-- 큰 문서: 1 MB(`intel.max_doc_kb`)를 넘으면 캐럿 앞뒤 256 KB만 읽어 문맥을 정하고 문서 낱말은 내지 않습니다. 큰 파일 1단계(5 MB)에서는 자동 팝업이 꺼지고 **⌃Space는 됩니다** · 2단계(20 MB)는 꺼집니다. 요청이 느린 탭(30 ms 초과 연속 2회)은 문서 낱말을 스스로 끕니다. **실행 속도 향상 모드**는 아이콘·상세 카드·문서 낱말·접속 직후 미리 읽기를 끕니다(⌃Space 완성은 그대로).
-- 밖에서 바뀐 객체(다른 도구로 만든 테이블 등)가 안 보이면 **Ctrl+Shift+R**(맥 ⌘⇧R) = 메타데이터 캐시 새로 고침(현재 스키마 · 테이블/컬럼 설명도 다시 읽음 · 메뉴 이름은 10-21부터 "메타데이터 캐시"). Edit 메뉴·팔레트에 "이 서버"/"전 서버" 범위도 있고, 탐색기의 서버·스키마 우클릭 "메타 새로 고침"도 같습니다. 탐색기 "새로 고침"을 하면 그 범위의 완성 캐시도 함께 낡음 표시되어 다음 요청 때 다시 읽습니다.
-- 확정 뒤: 함수는 `NAME()` + 캐럿 안(`intel.insert_parens`) · 키워드 뒤 공백(`intel.insert_space` · 기본 끔) · FROM 뒤 테이블에 alias(`intel.insert_alias` · 기본 끔).
-- 일치 규칙(설정 `intel.match`): 퍼지(기본 · `sc` → `SALES_CUSTOMER`) · 포함 · 접두. 한글은 조합 중 자모로도 걸립니다.
-- 목록이 길면 첫 200개(`intel.max_items`)만 보이고 끝에 "N개 더" 줄이 붙습니다. **끝까지 스크롤하거나 End**를 누르면 다음 200개가 이어 붙습니다(End = 전부).
-- FROM 자리: 테이블·뷰·구체화 뷰·시노님이 **한 층**에서 이름·일치로 경쟁하고, 함수·패키지는 그 아래 층(테이블 함수 먼저 · 설정 `intel.from_routines`) · 프로시저와 SQL Server 스칼라 함수는 FROM에 올 수 없어 보이지 않습니다. 함수를 고르면 `NAME()` 안에 캐럿. `스키마.테이블.`까지 치면 FROM 자리에서는 팝업이 뜨지 않습니다(테이블 수준까지). 항목 왼쪽 아이콘 = 탐색기와 같은 종류 도형(`intel.icons`).
-- `*` 또는 `A.*` 바로 뒤에서 완성을 부르면 **모든 컬럼 (N)** 하나만 뜹니다. 고르면 별표가 컬럼 목록으로 바뀝니다(`A.*` = 별칭 A의 컬럼 · `*` = FROM의 모든 테이블 컬럼에 별칭 붙여 · 구분 = 설정 `intel.star_layout`(**한 줄** `A, B, C` 기본 / 여러 줄 = 한 줄에 하나씩·쉼표가 줄 맨 앞·들여쓰기 없음) · 쉼표 뒤 공백 `intel.star_comma_space` Space(기본)/Tab). 오른쪽 카드에 목록이 보입니다.
-- `JOIN 테이블 ON` 바로 뒤(빈 자리)에서 완성을 부르면 **외래 키로 만든 조인 조건**이 첫 줄에 뜹니다(예 `e.dept_id = d.id` · 복합 키는 `AND` · 어느 쪽이 외래 키를 가졌든). 제약 정보는 그때 처음 읽으므로 처음 한 번은 잠깐 "불러오는 중"일 수 있습니다. 끄기 = `intel.join_fk`.
-- 강조: 친 글자와 **전체가 같은 항목은 굵은 파랑**, 부분 일치는 **일치한 글자만 강조색**(`DMS_` = 접두 4글자 · `MI40` = 약어 글자 4개).
-- 순서(접두를 쳤을 때): 정확 > 접두 > 단어 경계(`_` 뒤) > 포함 > 약어 > 부분열(연속 일치·낱말 시작이 많을수록 앞). 같은 등급이면 **최근에 확정한 것** → 출처 → 아래 둘러보기 순서 → 짧은 이름. **접두 없이 열면**(둘러보기) 같은 층 안에서는 **이름순**입니다(테이블·뷰가 섞여 알파벳 순 · 사전 뷰·함수는 그 아래 층). 컬럼 목록 조각은 늘 맨 위.
-- 둘러보기 순서(접두가 없을 때): alias 컬럼은 **테이블 안 순번**, 객체는 **테이블 → 뷰 → 구체화 뷰 → 시노님** 뒤 이름순, 키워드는 자주 쓰는 순.
-- 항목은 `컬럼이름 : 타입`이고 오른쪽에 PK/FK/UQ/NN 표식. **클릭 = 선택**(옆 카드에 상세), **더블 클릭 또는 Enter = 확정**. 팝업 옆 **상세 카드**(`intel.detail_card`)에 컬럼이면 테이블·순번·타입·Not Null과 이 컬럼이 든 키/인덱스/제약(몇 번째인지 `#i/n`), 테이블이면 컬럼 수·PK·인덱스, 함수면 시그니처가 보입니다. 배경/글자 투명도는 `intel.detail_bg_alpha`/`intel.detail_text_alpha`.
-- 문자열·주석 안에서는 뜨지 않습니다. 큰 파일(L1 이상) · SQL 구문이 아닌 탭 · 이진 내용에서는 꺼집니다.
+- Keys: ↑/↓ to choose · PgUp/PgDn/Home/End · wheel (only while the cursor is over the popup · scrolling outside closes the popup and scrolls the editor) · **Enter or Tab** to confirm · Esc to close · keep typing to filter further · the popup closes when Backspace removes the prefix.
+- Large documents: above 1 MB (`intel.max_doc_kb`), only 256 KB before and after the caret are read to determine the context, and document words are not offered. At large-file level 1 (5 MB) the automatic popup is off but **⌃Space still works** · at level 2 (20 MB) completion is off. A tab whose requests are slow (over 30 ms twice in a row) turns document words off by itself. **Speed boost** mode turns off icons, detail cards, document words and the preload right after connecting (⌃Space completion still works).
+- If objects changed elsewhere (a table created with another tool, etc.) do not appear, press **Ctrl+Shift+R** (Mac ⌘⇧R) = Refresh Metadata Cache (Current Schema) (table/column comments are re-read too · the menu name has said "Metadata Cache" since 10-21). The Edit menu and the palette also offer "(This Server)" and "(All Servers)" scopes, and right-clicking a server or schema in the explorer ▸ "Refresh Metadata Cache" does the same. An explorer "Refresh" also marks the completion cache for that scope as stale, so it is re-read on the next request.
+- After confirming: functions become `NAME()` with the caret inside (`intel.insert_parens`) · a space after keywords (`intel.insert_space` · off by default) · an alias for tables after FROM (`intel.insert_alias` · off by default).
+- Matching rule (setting `intel.match`): fuzzy (default · `sc` → `SALES_CUSTOMER`) · contains · prefix. Hangul also matches by jamo while it is being composed.
+- When the list is long, only the first 200 (`intel.max_items`) are shown, with a "N more" line at the end. **Scroll to the end or press End** to append the next 200 (End = all).
+- FROM position: tables, views, materialized views and synonyms compete by name and match in **one tier**; functions and packages are in the tier below (table functions first · setting `intel.from_routines`) · procedures and SQL Server scalar functions cannot appear in FROM, so they are not shown. Picking a function puts the caret inside `NAME()`. Once you have typed `schema.table.`, no popup appears in the FROM position (completion goes down to table level only). The icon to the left of each item = the same kind shape as in the explorer (`intel.icons`).
+- Invoking completion right after `*` or `A.*` shows a single item, **All columns (N)**. Picking it replaces the star with the column list (`A.*` = the columns of alias A · `*` = all columns of every table in FROM, with aliases · separation = setting `intel.star_layout` (**One line** `A, B, C` by default / Multiple lines = one per line, comma at the start of the line, no indentation) · after the comma `intel.star_comma_space` = Active tab setting (default · that tab's indent unit) / Space / Tab). The card on the right shows the list.
+- Invoking completion right after `JOIN table ON` (in an empty position) shows a **join condition built from the foreign key** on the first line (e.g. `e.dept_id = d.id` · composite keys joined with `AND` · whichever side holds the foreign key). Constraint information is read only at that moment, so the first time you may briefly see "loading". Turn it off with `intel.join_fk`.
+- Highlighting: an item that **matches what you typed exactly is bold blue**; for a partial match **only the matched characters are in the accent color** (`DMS_` = 4 prefix characters · `MI40` = 4 abbreviation characters).
+- Order (when you have typed a prefix): exact > prefix > word boundary (after `_`) > contains > abbreviation > subsequence (more consecutive matches and word starts rank higher). Within the same grade: **recently confirmed** → source → the browsing order below → shorter names. **When opened without a prefix** (browsing), items within the same tier are in **name order** (tables and views mixed alphabetically · dictionary views and functions in the tier below). Column-list snippets are always at the top.
+- Browsing order (no prefix): alias columns in **their order in the table**, objects as **tables → views → materialized views → synonyms** then by name, keywords by frequency of use.
+- Items look like `column_name : type`, with PK/FK/UQ/NN markers on the right. **Click = select** (details in the side card), **double-click or Enter = confirm**. The **detail card** next to the popup (`intel.detail_card`) shows, for a column, the table, position, type, Not Null and the keys/indexes/constraints it belongs to (its place as `#i/n`); for a table, the column count, PK and indexes; for a function, its signature. Background/text transparency: `intel.detail_bg_alpha`/`intel.detail_text_alpha`.
+- The popup does not appear inside strings or comments. It is off for large files (L1 and above), tabs that are not SQL syntax, and binary content.
 
-### 설정(Preferences ▸ Editors ▸ Code completion)
+### Settings (Preferences ▸ Editors ▸ Code completion)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `intel.enabled` | on | 인텔리센스 전체(끄면 아웃라인·Goto Symbol도) |
-| `intel.auto_activation` | on | 타이핑 중 자동으로 열기(Ctrl+Space · 맥 ⌃Space는 늘 됨) |
-| `intel.delay_ms` | 250 | 식별자를 친 뒤 팝업까지 지연 |
-| `intel.trigger_chars` | `.` | 치는 즉시 여는 글자 |
-| `intel.min_chars` | 2 | 자동 완성을 시작하는 식별자 길이 |
+| `intel.enabled` | on | IntelliSense as a whole (off also disables the outline and Goto Symbol) |
+| `intel.auto_activation` | on | Open automatically while typing (Ctrl+Space · Mac ⌃Space always works) |
+| `intel.delay_ms` | 250 | Delay from typing an identifier to the popup |
+| `intel.trigger_chars` | `.` | Characters that open the popup immediately |
+| `intel.min_chars` | 2 | Identifier length at which automatic completion starts |
 | `intel.match` | fuzzy | prefix · contains · fuzzy |
-| `intel.recent_boost` | on | 최근 확정 우선 |
-| `intel.max_items` | 200 | 랭킹 뒤 남기는 후보 수 |
-| `intel.popup_rows` | 12 | 보이는 행 수(넘치면 스크롤) |
-| `intel.keywords` | on | 키워드 후보 |
-| `intel.document_words` | on | 문서 단어 후보 |
-| `intel.insert_case` | default | 삽입 대소문자(default · upper · lower · match) |
-| `intel.show_types` | on | 오른쪽 열(타입 · 종류 · 시그니처) |
-| `intel.functions` | on | 내장 함수 · 시스템 패키지 · 사전 뷰(정적 표 · 서버 접속 0 — 접속 뒤에는 서버에서 읽은 권한 반영 사전이 우선) |
-| `intel.preload` | on | 접속 직후 현재 스키마의 테이블·뷰·시노님 + 권한 반영 사전 뷰 미리 읽기(메타 세션 · 한 번) |
-| `intel.insert_parens` | on | 함수 확정 = `NAME()` + 캐럿 안 |
-| `intel.insert_alias` | off | FROM 뒤 테이블 확정 = alias까지 |
-| `intel.insert_space` | off | 키워드 확정 = 공백 하나 |
-| `intel.insert_columns` | on | `INSERT INTO t (` 뒤 전체 컬럼 조각 |
-| `intel.join_fk` | on | `JOIN 테이블 ON` 뒤 첫 후보 = 외래 키로 만든 조인 조건 |
-| `intel.signature_help` | on | `(` 뒤 상태줄 시그니처 |
-| `intel.signature_card` | on | 아는 함수의 괄호 안에 있는 동안 캐럿 바로 위에 시그니처 카드(끄면 상태줄만) |
-| `intel.budget_ms` | 30 | 후보 조립이 이보다 오래 걸리면 로그 창에 한 줄 |
+| `intel.recent_boost` | on | Prefer recently confirmed items |
+| `intel.max_items` | 200 | Number of candidates kept after ranking |
+| `intel.popup_rows` | 10 | Visible rows (scrolls when there are more) |
+| `intel.keywords` | on | Keyword candidates |
+| `intel.document_words` | on | Document word candidates |
+| `intel.insert_case` | default | Case of inserted text (default · upper · lower · match) |
+| `intel.show_types` | on | Right-hand column (type · kind · signature) |
+| `intel.functions` | on | Built-in functions · system packages · dictionary views (static tables · no server access — after connecting, the dictionary read from the server with your privileges takes precedence) |
+| `intel.preload` | on | Right after connecting, preload the tables, views and synonyms of the current schema + privilege-aware dictionary views (metadata session · once) |
+| `intel.insert_parens` | on | Confirming a function = `NAME()` + caret inside |
+| `intel.insert_alias` | off | Confirming a table after FROM = alias too |
+| `intel.insert_space` | off | Confirming a keyword = one space |
+| `intel.insert_columns` | on | All-columns snippet after `INSERT INTO t (` |
+| `intel.join_fk` | on | First candidate after `JOIN table ON` = join condition built from the foreign key |
+| `intel.signature_help` | on | Signature in the status bar after `(` |
+| `intel.signature_card` | on | While the caret is inside the parentheses of a known function, a signature card right above the caret (off = status bar only) |
+| `intel.budget_ms` | 30 | If assembling candidates takes longer than this, one line goes to the log window |
 
-> 메타(테이블·컬럼)는 왼쪽 객체 탐색기가 읽어 둔 것과 **같은 저장소**입니다. **접속 직후 현재 스키마의 테이블·뷰·시노님과 이 계정이 볼 수 있는 사전 뷰(Oracle `ALL_`/`DBA_`/`V$` · SQL Server `sys.`/`INFORMATION_SCHEMA.` · PG `pg_catalog.`/`information_schema.`)를 한 번 읽어 두므로**(`intel.preload` · 끄면 처음 완성을 요청할 때) FROM 뒤에 바로 현재 스키마 테이블이 뜹니다. **다른 스키마는 `스키마.`를 치는 순간 읽어 오고**("객체 불러오는 중…" → 채워짐), 열린 문서가 더 이상 그 이름을 쓰지 않으면 바로 메모리에서 내립니다. 탐색기에서 펼친 것도 같은 저장소에 쌓이고, 접속을 끊으면 비워집니다. 완성이 서버에 따로 접속하지는 않습니다(탐색기의 메타 세션을 씁니다). 내장 함수·사전 뷰 표는 앱에 내장된 정적 표라 접속 없이도 뜹니다(빠진 함수는 문서 단어로 보완).
+> Metadata (tables, columns) lives in **the same store** that the object explorer on the left reads into. **Right after connecting, the tables, views and synonyms of the current schema and the dictionary views this account can see (Oracle `ALL_`/`DBA_`/`V$` · SQL Server `sys.`/`INFORMATION_SCHEMA.` · PG `pg_catalog.`/`information_schema.`) are read once** (`intel.preload` · when off, on the first completion request), so tables of the current schema appear right after FROM. **Other schemas are read the moment you type `schema.`** ("Loading objects…" → filled in), and they are dropped from memory as soon as no open document uses that name any more. What you expand in the explorer goes into the same store, and the store is emptied when you disconnect. Completion never opens its own connection to the server (it uses the explorer's metadata session). The built-in function and dictionary view tables are static tables built into the app, so they appear even without a connection (missing functions are covered by document words).
 
-## 아웃라인
+## Outline
 
-![아웃라인 패널](images/outline.png)
+![Outline panel](images/outline.png)
 
-*아웃라인 패널 — 스크립트의 문장 · 객체를 목록으로, 클릭하면 그 줄로*
+*Outline panel: the statements and objects of the script as a list; click to go to that line*
 
-**Outline = a map of declared names (10-25 · English).** By default the panel shows only *symbols*: objects created by `CREATE`, routines (procedures, functions, packages, bodies, triggers, types), CTEs, `DEFINE`/`VARIABLE`, cursors, labels and declared variables — as a tree (a package body contains its subprograms; a procedure contains its local declarations). Plain statements are hidden; turn them on with the four toggles to the right of the filter box: **Select · DML · DDL · Other** (Other = client commands such as `EXEC`/`PRINT`/`SET`, anonymous blocks and other SQL). The header shows *visible/total*, the chevrons expand or collapse everything, ←/→ fold a row, and the selection follows the caret. Goto Symbol (Ctrl+R) uses the same toggles. Settings: **Preferences ▸ Editors ▸ Outline** — `outline.show_select` · `outline.show_dml` · `outline.show_ddl` · `outline.show_other` (off) · `outline.show_declared` (on) · `outline.expand_depth` (1 = routines visible, their inner declarations folded) · `outline.follow_caret` (on).
+**Outline = a map of declared names (10-25).** By default the panel shows only *symbols*: objects created by `CREATE`, routines (procedures, functions, packages, bodies, triggers, types), CTEs, `DEFINE`/`VARIABLE`, cursors, labels and declared variables — as a tree (a package body contains its subprograms; a procedure contains its local declarations). Plain statements are hidden; turn them on with the four toggles to the right of the filter box: **Select · DML · DDL · Other** (Other = client commands such as `EXEC`/`PRINT`/`SET`, anonymous blocks and other SQL). The header shows *visible/total*, the chevrons expand or collapse everything, ←/→ fold a row, and the selection follows the caret. Goto Symbol (Ctrl+R) uses the same toggles. Settings: **Preferences ▸ Editors ▸ Outline** — `outline.show_select` · `outline.show_dml` · `outline.show_ddl` · `outline.show_other` (off) · `outline.show_declared` (on) · `outline.expand_depth` (1 = routines visible, their inner declarations folded) · `outline.follow_caret` (on) · `outline.sort` (order of sibling symbols: file order by default · name · kind) · `outline.grid_columns` (on · while the result grid has focus, the outline lists its columns: check to show/hide, click a name to jump to that column).
 
-**아웃라인 = 선언된 이름의 지도(10-25 · D-357)** — 기본으로는 *심볼*만 트리로 보입니다(CREATE 대상 · 루틴 · CTE · `DEFINE`/`VARIABLE` · 커서 · 라벨 · 선언 변수 · 패키지 본문 ▸ 서브프로그램 ▸ 지역 선언). 일반 문장은 숨김이고 필터 틀 오른쪽 토글 4개(**Select · DML · DDL · Other**)로 켭니다. 머리 = 보임/전체 · 셰브론 = 모두 펼침/접음 · ←/→ = 행 접기 · 선택은 캐럿을 따라갑니다 · Goto Symbol(Ctrl+R)도 같은 토글을 따릅니다. 설정 = **Preferences ▸ Editors ▸ Outline**(위 7키).
+Turn on the **Outline** icon in the activity bar (or View ▸ Outline) to list the symbols of the current tab with line numbers: statement heads (dimmed) · `DEFINE`/`VARIABLE` · CTEs · `CREATE …` targets · PL/SQL `PROCEDURE`/`FUNCTION` (bold · indented when inside a package)/`PACKAGE [BODY]`/`TRIGGER`/`TYPE`/`CURSOR`/`<<label>>` · variables in declaration sections · T-SQL `DECLARE @v`. Click or Enter = go there · the filter box works like in the other panels (Hangul jamo) · **type-ahead** (with the list focused, typing a character = jump to that symbol · ↑/↓ = move among the matches · Hangul). After an edit the list updates a moment later (when idle), and switching tabs switches to that tab's symbols.
 
-활동 막대의 **아웃라인** 아이콘(또는 View ▸ Outline)을 켜면 현재 탭의 심볼이 줄 번호와 함께 나열됩니다: 문장 머리(흐리게) · `DEFINE`/`VARIABLE` · CTE · `CREATE …` 대상 · PL/SQL `PROCEDURE`/`FUNCTION`(굵게 · 패키지 안이면 들여쓰기)/`PACKAGE [BODY]`/`TRIGGER`/`TYPE`/`CURSOR`/`<<라벨>>` · 선언부 변수 · T-SQL `DECLARE @v`. 클릭·Enter = 그 자리로 · 필터 틀은 다른 패널과 같습니다(한글 자모) · **타입어헤드**(목록 포커스에서 글자 = 그 심볼로 · ↑/↓ = 일치하는 것들 사이 · 한글). 편집하면 잠시 뒤(유휴 때) 갱신되고 탭을 바꾸면 그 탭 것으로 바뀝니다.
+**Comments: Ctrl+/ (Mac ⌘/) = toggle line comment `--` · Ctrl+Shift+? (Mac **⌘⌥/**) = toggle block comment `/* … */`** (on the selection, or the current line when there is none · press again to undo). On a Mac, ⌘⇧? is taken first by macOS "Search the Help menu"; turn that item off under System Settings ▸ Keyboard Shortcuts ▸ App Shortcuts to use it.
 
-**주석 — Ctrl+/(맥 ⌘/) = 줄 주석 `--` 토글 · Ctrl+Shift+?(맥 **⌘⌥/**) = 블록 주석 `/* … */` 토글**(선택 영역, 없으면 현재 줄 · 다시 누르면 원복). 맥의 ⌘⇧?는 macOS "도움말 메뉴 검색"이 먼저 가져가므로 시스템 설정 ▸ 키보드 단축키 ▸ 앱 단축키에서 그 항목을 끄면 쓸 수 있습니다.
+**Goto Symbol: Ctrl+R (Mac ⌘R)** shows the same list in a palette; type a name and press Enter to go there (the same key as Sublime).
 
-**Goto Symbol — Ctrl+R(맥 ⌘R)**: 같은 목록을 팔레트에 띄워 이름을 치고 Enter로 바로 이동합니다(Sublime과 같은 키).
+## Not there yet (planned · T-178 follow-up)
 
-## 아직 없는 것(예정 · T-178 후속)
+A worker for computing candidates (if the time budget is measured to be exceeded · no overruns so far). Postfix completion (`.count`), running statements from the popup and ML ranking have been decided against. FK join-condition completion, hover cards, Ctrl+click navigation and the signature card next to the caret are already in (T-178 closed 11-04).
 
-후보 계산 워커(예산 초과가 실측되면 · 지금까지 초과 없음). 후위 완성(`.count`) · 팝업에서 문장 실행 · ML 정렬은 하지 않기로 했습니다. JOIN 조건 완성(FK) · hover 카드 · Ctrl+클릭 바로가기 · 캐럿 옆 시그니처 카드는 이미 들어갔습니다(11-04 T-178 종결).
+## Completion by object kind (10-01)
 
-## 종류 자리 완성(10-01)
+In the following positions you get **only objects of that kind** instead of keywords.
 
-다음 자리에서는 키워드 대신 **그 종류의 객체만** 나옵니다.
-
-| 입력 | 나오는 것 |
+| Input | What appears |
 |---|---|
-| `USE ` (SQL Server) | 서버의 데이터베이스 목록 · MySQL은 스키마(=DB) |
-| `ALTER SESSION SET CURRENT_SCHEMA = ` (Oracle) · `SET search_path TO ` (PostgreSQL) | 스키마 |
-| `EXEC ` · `EXECUTE ` · `CALL ` | 현재 스키마의 프로시저·함수(Oracle은 패키지도) + 스키마 · SQL Server는 `sp_help` 같은 시스템 프로시저 |
-| `DROP VIEW ` · `DROP PROCEDURE IF EXISTS ` · `ALTER SEQUENCE ` 등 | 그 종류의 객체(`DROP TABLE`은 종전처럼 테이블) |
+| `USE ` (SQL Server) | The server's databases · for MySQL, schemas (= databases) |
+| `ALTER SESSION SET CURRENT_SCHEMA = ` (Oracle) · `SET search_path TO ` (PostgreSQL) | Schemas |
+| `EXEC ` · `EXECUTE ` · `CALL ` | Procedures and functions of the current schema (packages too for Oracle) + schemas · for SQL Server, system procedures such as `sp_help` |
+| `DROP VIEW ` · `DROP PROCEDURE IF EXISTS ` · `ALTER SEQUENCE ` etc. | Objects of that kind (`DROP TABLE` gives tables as before) |
 
-- `JOIN t ON ` 뒤에는 이제 테이블이 아니라 **컬럼**이 나옵니다(`GRANT … ON` · `CREATE INDEX … ON` · `COMMENT ON`만 객체).
-- `ALTER TABLE t ` 뒤 · `MERGE … USING src s ON ` 뒤 · `CREATE INDEX ix ON t(` 안에서 그 테이블의 컬럼이 나옵니다.
-- SQL Server 변경 문장의 `OUTPUT INSERTED.` · `DELETED.` 뒤에는 대상 테이블의 컬럼이 나옵니다.
-- MySQL에 문법 파일이 생겨 `USE` · `SHOW TABLES` · `LIMIT` · `ON DUPLICATE KEY UPDATE` 같은 키워드가 제자리에 나옵니다.
+- After `JOIN t ON ` you now get **columns**, not tables (only `GRANT … ON` · `CREATE INDEX … ON` · `COMMENT ON` give objects).
+- After `ALTER TABLE t `, after `MERGE … USING src s ON ` and inside `CREATE INDEX ix ON t(`, the columns of that table appear.
+- After `OUTPUT INSERTED.` · `DELETED.` in SQL Server data-changing statements, the columns of the target table appear.
+- MySQL now has a grammar file, so keywords such as `USE` · `SHOW TABLES` · `LIMIT` · `ON DUPLICATE KEY UPDATE` appear in the right places.
 
-> **`ALTER TABLE` 절(10-08)**: `ALTER TABLE t ` 뒤에서 `ADD`·`MODIFY`(Oracle)·`ALTER COLUMN`(SQL Server·PostgreSQL)·`DROP CONSTRAINT` 같은 다음 낱말이 완성 목록에 나옵니다. `DROP FUNCTION` 뒤에는 함수가 나옵니다.
+> **`ALTER TABLE` clauses (10-08)**: after `ALTER TABLE t `, the next words such as `ADD` · `MODIFY` (Oracle) · `ALTER COLUMN` (SQL Server · PostgreSQL) · `DROP CONSTRAINT` appear in the completion list. After `DROP FUNCTION`, functions appear.
 
-### 시스템 프로시저 파라미터(SQL Server · 10-08)
+### System procedure parameters (SQL Server · 10-08)
 
-`EXEC sys.sp_updateextendedproperty ` 처럼 시스템 프로시저 이름 뒤에서 **Ctrl+Space**(또는 `@`를 치기 시작)하면 그 프로시저의 `@파라미터`가 타입과 함께 나옵니다 — `@name` · `@value` · `@level0type` …. `@l`까지 치면 `@level…`만 남고, 이미 쓴 파라미터는 빠집니다. `, ` 다음에도 나오며, 값을 쓰는 자리(`= ` 뒤)에서는 뜨지 않습니다. 이름 뒤에 있는 동안 상태줄(또는 시그니처 카드)에 전체 시그니처가 보입니다.
+After a system procedure name, as in `EXEC sys.sp_updateextendedproperty `, press **Ctrl+Space** (or start typing `@`) to get that procedure's `@parameters` with their types: `@name` · `@value` · `@level0type` …. Typing `@l` leaves only `@level…`, and parameters you have already written are left out. They also appear after `, `, but not in a value position (after `= `). While the caret is after the name, the full signature is shown in the status bar (or the signature card).
 
-- 대상 = 내장 표의 30종(확장 속성 추가/수정/삭제 · `sp_rename` · `sp_help` 계열 · `sp_columns` · `sp_tables` · `sp_executesql` · 연결된 서버 · `xp_cmdshell` 등). 사용자 프로시저의 파라미터는 아직 아닙니다.
+- Covered = the 30 procedures in the built-in table (adding/updating/dropping extended properties · `sp_rename` · the `sp_help` family · `sp_columns` · `sp_tables` · `sp_executesql` · linked servers · `xp_cmdshell`, etc.). Parameters of user procedures are not covered by this table (see below).
 
-### 자료형 · 사용자 정의 함수(10-09)
+### Data types · user-defined functions (10-09)
 
-자료형을 쓰는 자리에서 그 DBMS의 **내장 자료형**이 꼴과 함께 나옵니다(예 `NUMBER(p, s)` · `VARCHAR2(n [CHAR|BYTE])` · `decimal(p, s)`). 서버에 사용자 정의 타입(TYPE · 도메인 · 테이블 타입)이 있으면 함께 나옵니다.
+Where a data type is expected, the DBMS's **built-in data types** appear with their forms (e.g. `NUMBER(p, s)` · `VARCHAR2(n [CHAR|BYTE])` · `decimal(p, s)`). If the server has user-defined types (TYPE · domains · table types), they appear too.
 
-| 자리 | 예 |
+| Position | Example |
 |---|---|
-| 형변환 | `CAST(a AS ` · `CONVERT(` · PostgreSQL `a::` |
-| 변수 선언 | Oracle `DECLARE` 아래 `v_x ` · 프로시저 `IS`/`AS` 뒤 · SQL Server `DECLARE @x ` · `VAR x ` |
-| 루틴 머리 | 파라미터 `p IN ` · SQL Server `@a ` · `RETURN ` · `RETURNS ` |
-| 테이블 | `CREATE TABLE t (id ` · `ALTER TABLE t ADD c ` · `MODIFY` · `ALTER COLUMN` |
+| Type conversion | `CAST(a AS ` · `CONVERT(` · PostgreSQL `a::` |
+| Variable declaration | Oracle `v_x ` under `DECLARE` · after a procedure's `IS`/`AS` · SQL Server `DECLARE @x ` · `VAR x ` |
+| Routine header | Parameter `p IN ` · SQL Server `@a ` · `RETURN ` · `RETURNS ` |
+| Table | `CREATE TABLE t (id ` · `ALTER TABLE t ADD c ` · `MODIFY` · `ALTER COLUMN` |
 
-- 별칭(`SELECT a AS `)이나 본문의 식 자리에는 자료형이 끼어들지 않습니다.
-- `SELECT ` · `WHERE x = ` 같은 식 자리에는 내장 함수와 함께 **현재 스키마의 사용자 정의 함수·패키지**가 스키마 접두 없이 나옵니다(처음 한 번은 잠깐 "불러오는 중").
-- 내장 자료형을 빼려면 설정 `intel.types`를 끕니다(사용자 정의 타입은 그대로 나옵니다).
-- 아직 안 되는 것: PostgreSQL `$$ … $$` 본문 안 · Oracle `%TYPE`/`%ROWTYPE`.
+- Data types do not intrude on aliases (`SELECT a AS `) or expression positions in the body.
+- In expression positions such as `SELECT ` · `WHERE x = `, the **user-defined functions and packages of the current schema** appear along with built-in functions, without a schema prefix (the first time, "loading" may show briefly).
+- To leave out built-in data types, turn off the setting `intel.types` (user-defined types still appear).
+- Not supported yet: inside PostgreSQL `$$ … $$` bodies · Oracle `%TYPE`/`%ROWTYPE`.
 
-### 사용자 프로시저 인자(10-08)
+### User procedure arguments (10-08)
 
-- **SQL Server**: `EXEC PROC_TEST ` 뒤(또는 `, ` 뒤)에서 Ctrl+Space를 누르면 그 프로시저의 `@인자`가 타입과 함께 나옵니다(예 `@VS_PROJECT_CD VARCHAR(100)`). 처음 한 번은 서버에서 인자 목록을 읽느라 "불러오는 중"이 잠깐 보이고, 오면 목록이 채워집니다. 이미 쓴 `@인자`는 빠집니다. T-SQL은 괄호 없는 `EXEC proc @a = 1, @b = 2` 꼴이 표준입니다(괄호는 오류).
-- **이름 지정 인자(Oracle · PostgreSQL)**: `EXEC APPDB.SP_TEST1(` 또는 `SELECT fn(`의 인자 시작(`(`·`,` 뒤)에서 Ctrl+Space를 누르면 `p_pjt_code => ` 같은 **이름 지정 인자 조각**이 나옵니다. 이미 `이름 =>`로 적은 인자는 빠집니다.
-- 값을 쓰는 자리(`= ` 뒤 · `=> ` 뒤)에서는 인자 목록이 뜨지 않습니다.
+- **SQL Server**: press Ctrl+Space after `EXEC PROC_TEST ` (or after `, `) to get that procedure's `@arguments` with types (e.g. `@VS_CODE VARCHAR(100)`). The first time, "loading" shows briefly while the argument list is read from the server, then the list fills in. `@arguments` you have already written are left out. In T-SQL the standard form is `EXEC proc @a = 1, @b = 2` without parentheses (parentheses are an error).
+- **Named arguments (Oracle · PostgreSQL)**: press Ctrl+Space at the start of an argument (after `(` or `,`) in `EXEC APPDB.SP_TEST1(` or `SELECT fn(` to get **named-argument snippets** such as `p_pjt_code => `. Arguments already written as `name =>` are left out.
+- No argument list appears in value positions (after `= ` · after `=> `).
 
-### SQL Server 3부 이름(10-01)
+### SQL Server three-part names (10-01)
 
-- 스키마 없는 이름은 **현재 DB의 현재 스키마**(보통 `dbo`)로 해석됩니다. `USE 다른DB`를 실행하면 그 기준이 바뀝니다.
-- `다른DB.` 뒤에는 그 DB의 스키마, `다른DB.dbo.` 뒤에는 그 DB·스키마의 테이블·뷰, `FROM 다른DB.dbo.T t` 뒤의 `t.`에는 그 테이블의 컬럼이 나옵니다 — 현재 DB의 같은 이름 객체와는 다른 객체로 다룹니다. 처음 한 번은 서버에서 읽어 오므로 "불러오는 중"이 잠깐 보일 수 있습니다.
-
+- A name without a schema is resolved in **the current schema of the current database** (usually `dbo`). Running `USE OtherDB` changes that base.
+- After `OtherDB.` you get that database's schemas, after `OtherDB.dbo.` the tables and views of that database and schema, and after `t.` in `FROM OtherDB.dbo.T t` the columns of that table. These are treated as different objects from same-named objects in the current database. The first time they are read from the server, so "loading" may show briefly.

@@ -1,69 +1,71 @@
-# Ctrl 객체 링크와 설명 툴팁
+# Ctrl object links and description tooltips
 
-SQL 편집기에서 **Ctrl(macOS는 ⌘)을 누르고 있는 동안** 문장 속 테이블·뷰·컬럼·프로시저/함수 이름이 **링크**가 됩니다. 마우스를 올리면 그 이름에 밑줄이 생기고 객체의 **설명(코멘트)** 이 툴팁으로 뜨며, 클릭하면 설명을 복사할 수 있습니다.
+**English** | [한국어](Object-Links-ko)
 
-## 3분 사용법
+In the SQL editor, **while you hold Ctrl (⌘ on macOS)**, the names of tables, views, columns and procedures/functions in a statement become **links**. When you move the mouse over one, the name is underlined and the object's **description (comment)** appears as a tooltip; clicking can copy the description.
 
-![Ctrl 링크 카드](images/detail-object-link-card.png)
+## Quick start (3 minutes)
 
-*Ctrl 링크 카드 — 컬럼 · 타입 · 설명 · 탐색기에서 보기 / 설명 복사 버튼*
+![Ctrl link card](images/detail-object-link-card.png)
 
-1. 접속한 상태에서 SQL 탭에 커서를 두고 **Ctrl**을 누른 채로 마우스를 이름 위에 올립니다. 기본은 **마우스 아래 링크 하나만** 1 px 밑줄(설정 `objlink.display`에서 "Ctrl 동안 전부"로 바꿀 수 있음).
-2. **우상단**에 `테이블 TB_ORDER` + 설명이 뜹니다(스키마 접두는 `objlink.show_schema`로 · 기본 끔). 설명이 없으면 "(설명 없음)". 이름이 **현재 연결의 메타에 없으면**(다른 DB의 테이블 · 오타) 밑줄이 **밝은 벽돌색 물결**로 바뀌고 **툴팁·카드는 뜨지 않습니다**(10-08 · 밑줄만) — 구조상 객체 자리이지만 설명을 가져올 곳이 없다는 뜻입니다.
-3. **좌클릭** = 설명을 클립보드로(상태줄에 "… 설명 복사됨"). **Shift+좌클릭** = `이름 - 설명` 형태로(테이블 `TB_ORDER - 주문` · 컬럼 `TB_ORDER.ORD_NO - 주문 번호` · 스키마 접두는 `objlink.show_schema`). **우클릭** = 메뉴 "설명 복사" · "이름 - 설명 복사" · **"객체 탐색기에서 보기"**(실제 객체로 확인된 링크에서만 켜짐 — 왼쪽 객체 탐색기를 그 객체까지 펼쳐 선택합니다. 테이블·뷰·프로시저·함수·패키지는 물론 `패키지.프로시저`는 패키지 아래 Procedures/Functions의 그 멤버를, 컬럼은 테이블 아래 Columns의 그 컬럼을 고릅니다. 폴더를 아직 읽지 않았으면 읽는 동안 잠깐 기다렸다가 선택됩니다).
-4. Ctrl을 떼면 밑줄과 툴팁이 사라지고 편집기는 평소처럼 동작합니다.
+*Ctrl link card — column · type · description · Reveal in Object Explorer / Copy description buttons*
 
-> **키보드로**: 객체 이름에 캐럿을 두고 **F4**(또는 팔레트 ▸ "객체 탐색기에서 보기")를 누르면 왼쪽 객체 탐색기에서 그 객체가 선택됩니다 — 컬럼이면 소속 테이블 아래의 그 컬럼. Ctrl을 누르거나 마우스를 쓸 필요가 없습니다(2026-10-05).
-> **객체 정보를 탭으로**: 탐색기에서 객체를 고른 뒤 **Shift+F4**(팔레트 ▸ "객체 정보를 탭으로 열기")를 누르면 아래 객체 상세 패널의 내용이 읽기 전용 탭 `ℹ 스키마.이름`으로 열립니다(복사·검색·비교용 · 저장할 필요 없음). 팔레트 ▸ **데이터 200행 보기**는 고른 테이블·뷰를 바로 조회해 새 결과 탭에 보여 줍니다.
-> **다른 스키마의 같은 이름**: 스키마 없이 쓴 이름이 지금 스키마에 없으면 링크는 "미확인"으로 남고 다른 스키마로 몰래 바꾸지 않습니다. 대신 다른 스키마에 같은 이름이 있으면 우클릭 메뉴(또는 F4)에 **다른 스키마의 같은 이름 ▸** 목록이 나와 직접 골라 탐색기에서 볼 수 있습니다.
-> **결과 그리드에서**: 열 머리를 우클릭 ▸ "객체 탐색기에서 보기"를 고르면 그 테이블의 그 컬럼이 탐색기에서 선택됩니다. 테이블 하나를 그대로 조회한 결과에서만 됩니다 — 조인 · GROUP BY · DISTINCT · 계산 열이 든 결과에서는 항목이 흐립니다(어느 테이블의 컬럼인지 확실할 때만 갑니다).
+1. While connected, put the cursor in an SQL tab, hold **Ctrl** and move the mouse over a name. By default **only the link under the mouse** gets a 1 px underline (you can change it to "All links while Ctrl is held" in the setting `objlink.display`).
+2. `Table TB_ORDER` + the description appears **at the top right** (schema prefix with `objlink.show_schema` · off by default). Without a description you see "(no description)". If the name is **not in the current connection's metadata** (a table in another DB · a typo), the underline becomes a **light brick-red wave** and **no tooltip or card appears** (10-08 · underline only) — the position is structurally an object, but there is nowhere to get a description from.
+3. **Ctrl+click** = by default it **adds a caret** (multi-cursor · the same spot again = remove), as elsewhere in the editor. The setting `ctrl.click` can change it to **Copy description** (description to the clipboard · the status bar says "Copied description of …") or **Reveal in Object Explorer**. **Ctrl+Shift+click** = copy as `name - description` (table `TB_ORDER - Orders` · column `TB_ORDER.ORD_NO - Order number` · schema prefix with `objlink.show_schema`). **Ctrl+right-click** = the editor menu by default; with the setting `ctrl.right_click` = **Link menu** you get the menu "Copy Description" · "Copy Name - Description" · **"Reveal in Object Explorer"** (enabled only on links confirmed as real objects — it expands the Object Explorer on the left down to that object and selects it. Besides tables, views, procedures, functions and packages, `package.procedure` selects that member under the package's Procedures/Functions, and a column selects that column under the table's Columns. If the folder has not been read yet, it waits a moment while it is read and then selects it).
+4. Release Ctrl and the underline and tooltip disappear; the editor behaves as usual.
 
-> **Ctrl 없이 잠깐 머물기**: 포인터를 객체 이름 위에 0.7초쯤 두면 설명 툴팁만 뜹니다(밑줄 없음 · 클릭하면 보통처럼 캐럿이 옮겨 갑니다). 벗어나거나 키를 누르면 사라집니다. 끄기 = `objlink.hover_ms` 0 (2026-10-05).
+> **From the keyboard**: put the caret on an object name and press **F4** (or palette ▸ "Reveal in Object Explorer") to select that object in the Object Explorer on the left — for a column, that column under its table. No need for Ctrl or the mouse (2026-10-05).
+> **Object info in a tab**: pick an object in the explorer and press **Shift+F4** (palette ▸ "Open object info in a tab") to open the content of the object detail panel below as a read-only tab `ℹ schema.name` (for copying, searching, comparing · no need to save). Palette ▸ **Show first 200 rows** queries the selected table or view right away and shows it in a new result tab.
+> **The same name in another schema**: if a name written without a schema is not in the current schema, the link stays "unconfirmed" and is not quietly switched to another schema. Instead, if another schema has the same name, the right-click menu (or F4) shows a **Same name in other schemas ▸** list so you can choose one yourself and reveal it in the explorer.
+> **From the result grid**: right-click a column header ▸ "Reveal in Object Explorer" to select that column of that table in the explorer. It works only for a result that queries one table as is — for results with joins · GROUP BY · DISTINCT · computed columns the item is dimmed (it goes there only when it is certain which table the column belongs to).
+
+> **Hovering without Ctrl**: leave the pointer on an object name for about 0.7 seconds and only the description tooltip appears (no underline · a click moves the caret as usual). It disappears when you move away or press a key. To turn it off = `objlink.hover_ms` 0 (2026-10-05).
 >
-> **머물기 카드의 버튼**: 툴팁 아래에 버튼 셋이 붙습니다 — **객체 탐색기에서 보기**(트리에서 그 객체를 펼쳐 선택) · **데이터 200행 보기**(테이블·뷰를 새 결과 탭으로 조회) · **설명 복사**(Shift+클릭 = `이름 - 설명` · 10-08). 포인터를 카드로 옮겨도 카드는 그대로이고, 버튼을 누르면 카드가 닫힙니다. 버튼 없이 글만 보려면 `objlink.card_buttons` off (2026-10-06).
+> **Buttons on the hover card**: three buttons are attached under the tooltip — **Reveal in Object Explorer** (expand and select the object in the tree) · **Show first 200 rows** (query a table or view in a new result tab) · **Copy description** (Shift+click = `name - description` · 10-08). Moving the pointer onto the card keeps it open, and pressing a button closes it. For text only, without buttons: `objlink.card_buttons` off (2026-10-06).
 
-## 무엇이 링크가 되나
+## What becomes a link
 
-| 자리 | 판정 |
+| Position | Treated as |
 |---|---|
-| `FROM t` · `JOIN s.t` · `INSERT INTO t` · `UPDATE t` · `FROM a, b` | 테이블/뷰 |
-| `a.col`(a = 별칭) | a의 테이블 컬럼 |
-| `col`(접두 없음) | 문장의 테이블 중 그 컬럼을 가진 테이블(컬럼 목록이 아직 안 읽혔으면 다음 Ctrl 때) |
-| `fn(` · `pkg.fn(` · `s.pkg.fn` | 카탈로그에 있는 프로시저/함수/패키지(내장 함수 `NVL`·`SUM`은 아님) |
-| 키워드 · 별칭 자체 · WITH/파생 테이블 이름 · 문자열·숫자·바인드·주석 | 링크 아님 |
+| `FROM t` · `JOIN s.t` · `INSERT INTO t` · `UPDATE t` · `FROM a, b` | Table/view |
+| `a.col` (a = alias) | Column of a's table |
+| `col` (no prefix) | The table in the statement that has that column (if the column lists are not read yet, on the next Ctrl) |
+| `fn(` · `pkg.fn(` · `s.pkg.fn` | A procedure/function/package in the catalog (not built-in functions like `NVL` · `SUM`) |
+| Keywords · aliases themselves · WITH/derived table names · strings · numbers · binds · comments | Not a link |
 
-설명은 객체 탐색기의 메타(코멘트)에서 옵니다. 아직 읽지 않은 코멘트는 처음 hover에서 요청되어 곧 채워집니다.
+Descriptions come from the Object Explorer's metadata (comments). Comments not read yet are requested on the first hover and filled in shortly.
 
-> **스키마를 적었는데 그 스키마에 없을 때**(10-08): `APPDB.SP_X`처럼 적은 스키마에 그 객체가 없으면 벽돌색 물결(미확인)만 보입니다. 다른 스키마를 대신 찾아 주지 않습니다 — 링크는 **적힌 스키마(없으면 현재 스키마)에 실제로 있는지**만 봅니다.
+> **When the schema you wrote does not have it** (10-08): if the schema you wrote, as in `APPDB.SP_X`, does not have that object, you only see the brick-red wave (unconfirmed). It does not look in other schemas for you — a link only checks whether the object **really exists in the schema written (or the current schema if none)**.
 
-> **DDL과 확장 속성에서도**(10-08): `ALTER TABLE … ADD (…)`·`MODIFY`의 컬럼, SQL Server의 괄호 없는 `ADD a T, b T`, `COMMENT ON COLUMN 스키마.테이블.컬럼`, `PRIMARY KEY (…)` 목록이 컬럼 링크가 됩니다. **제약 이름**(`ADD/DROP CONSTRAINT PK_…`, `CONSTRAINT DF_… DEFAULT …`)도 링크이며 hover하면 종류(PK/UK/FK/CHECK)·컬럼·참조가 보이고, 우클릭 ▸ 객체 탐색기에서 보기는 테이블 아래 그 제약을 고릅니다. `EXEC sys.sp_addextendedproperty … @level0name = N'dbo', @level1name = N'TB_ORDER', @level2name = N'ORD_NO'`처럼 **확장 속성 인자 문자열 속 이름**도 스키마·테이블·컬럼 링크가 됩니다.
+> **In DDL and extended properties too** (10-08): columns in `ALTER TABLE … ADD (…)` · `MODIFY`, SQL Server's `ADD a T, b T` without parentheses, `COMMENT ON COLUMN schema.table.column`, and `PRIMARY KEY (…)` lists become column links. **Constraint names** (`ADD/DROP CONSTRAINT PK_…`, `CONSTRAINT DF_… DEFAULT …`) are links too; hovering shows the kind (PK/UK/FK/CHECK), columns and references, and right-click ▸ Reveal in Object Explorer selects that constraint under the table. **Names inside extended property argument strings**, as in `EXEC sys.sp_addextendedproperty … @level0name = N'dbo', @level1name = N'TB_ORDER', @level2name = N'ORD_NO'`, also become schema, table and column links.
 
-## 시스템 객체
+## System objects
 
-`DBMS_XPLAN.DISPLAY_CURSOR` · `DBMS_OUTPUT.PUT_LINE` 같은 **시스템 패키지 멤버**와 `ALL_TABLES` · `DUAL` 같은 **사전 객체**는 탐색기에 없어도 링크가 됩니다(내장 표). 시스템 패키지 멤버의 툴팁은 **시그니처**(인자 목록)입니다. "객체 탐색기에서 보기"는 탐색기에 없는 객체라 꺼져 있습니다. 내장 표에 없는 패키지는 아직 링크가 아닙니다.
+**System package members** such as `DBMS_XPLAN.DISPLAY_CURSOR` · `DBMS_OUTPUT.PUT_LINE` and **dictionary objects** such as `ALL_TABLES` · `DUAL` become links even though they are not in the explorer (built-in table). The tooltip of a system package member is its **signature** (argument list). "Reveal in Object Explorer" is off for them because they are not in the explorer. Packages not in the built-in table are not links yet.
 
-## 향상 모드 · 큰 파일에서는
+## In boost mode and large files
 
-- **실행 속도 향상 모드**(Preferences ▸ Performance `perf.boost`)와 **큰 파일 모드**(L1 이상)에서는 밑줄을 **그리지 않습니다**(표시 방식이 "표시 안 함"으로 고정 · 화면을 다시 그릴 일이 없음). Ctrl을 누른 채 이름 위에 올리면 툴팁과 클릭은 그대로 동작합니다.
-- 큰 파일 모드이거나 문서가 `objlink.max_kb`(기본 512 KB)보다 크면 **화면에 보이는 부분**(앞뒤 문장 끝까지)만 분석합니다.
-- SQL 구문이 아닌 탭에서는 동작하지 않습니다. 접속이 없으면 이름은 전부 미확인 객체(벽돌색 밑줄 · 카드 없음)로 보입니다.
+- In **Speed boost mode** (Preferences ▸ Performance `perf.boost`) and **large-file mode** (L1 and up) the underline is **not drawn** (the display mode is fixed to "Do not draw" · nothing to redraw). Holding Ctrl over a name still gives the tooltip and the clicks.
+- In large-file mode, or when the document is larger than `objlink.max_kb` (default 512 KB), only the **visible part** (out to the ends of the statements before and after) is analyzed.
+- It does not work in tabs whose syntax is not SQL. Without a connection, every name shows as an unconfirmed object (brick-red underline · no card).
 
-## 설정(Preferences ▸ Editor ▸ Object Links)
+## Settings (Preferences ▸ Editors ▸ Object Links)
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `objlink.enabled` | 켬 | Ctrl 동안 링크 기능 |
-| `objlink.display` | 마우스 아래 링크만 | 밑줄 표시 방식: Ctrl 동안 전부 · 마우스 아래 링크만 · 표시 안 함(동작만) |
-| `objlink.tooltip` | 켬 | 설명 툴팁 표시 |
-| `objlink.tooltip_pos` | 우상단 | 툴팁 자리(우상단 · 좌상단 · 우하단 · 좌하단 · 창 밖으로는 안 나감) |
-| `ctrl.click` | 캐럿 추가 | **Ctrl+클릭 동작**(설정 ▸ Ctrl 키): 캐럿 추가(다중 커서 · 같은 자리 다시 = 제거) · 설명 복사 · 객체 탐색기에서 보기. 옛 `objlink.click` 값은 자동으로 옮겨집니다. |
-| `ctrl.right_click` | 편집기 메뉴 | **Ctrl+우클릭**: 편집기 메뉴 · 링크 메뉴(설명 복사 · 이름 - 설명 복사 · 객체 탐색기에서 보기). |
-| `ctrl.shift_click` | 이름 - 설명 | **Ctrl+Shift+클릭**: `이름 - 설명` 복사 · 설명만 복사 · 편집기로. |
-| `objlink.hover_ms` | 700 | Ctrl 없이 포인터를 객체 이름 위에 이만큼(ms) 머물면 설명 툴팁만 보입니다(밑줄·클릭 동작 없음) · 0 = 끔(Ctrl을 누를 때만) |
-| `objlink.card_buttons` | on | 머물기 툴팁에 동작 버튼 셋(탐색기에서 보기 · 데이터 200행 보기 · 설명 복사)을 붙입니다 · off = 글만 |
-| `objlink.show_schema` | 끔 | 툴팁·상태줄 이름에 스키마를 붙임(`APPDB.TB_ORDER`) · 끄면 `TB_ORDER`(컬럼은 `테이블.컬럼`) |
-| `objlink.line_color` · `line_width` · `line_style` | 테마 강조색 · 1 px · 실선 | **정상 객체**(메타에 있음) 밑줄의 색 `#RRGGBB` · 두께(0 = 밑줄 없음) · 모양(실선 · 대시 · 점선 · 물결 · 대시 물결) |
-| `objlink.bad_color` · `bad_width` · `bad_style` | `#B7472A` 벽돌색 · 1 px · 물결 | **미확인 객체**(현재 연결의 메타에 없음) 밑줄의 색 · 두께 · 모양 |
-| `objlink.max_kb` | 512 | 이 크기 넘는 문서는 보이는 부분만 분석(0 = 무제한) |
+| `objlink.enabled` | on | Links while Ctrl is held |
+| `objlink.display` | Only under the pointer | How underlines are shown: All links while Ctrl is held · Only under the pointer · Do not draw (actions only) |
+| `objlink.tooltip` | on | Show the description tooltip |
+| `objlink.tooltip_pos` | Top right | Tooltip position (Top right · Top left · Bottom right · Bottom left · never goes outside the window) |
+| `ctrl.click` | Add caret | **Ctrl+click action** (Settings ▸ Ctrl Key): Add caret (multi-cursor · the same spot again = remove) · Copy description · Reveal in Object Explorer. An old `objlink.click` value is moved over automatically. |
+| `ctrl.right_click` | Editor menu | **Ctrl+right-click**: Editor menu · Link menu (Copy Description · Copy Name - Description · Reveal in Object Explorer). |
+| `ctrl.shift_click` | Copy name - description | **Ctrl+Shift+click**: Copy name - description · Copy description · Editor (range selection). |
+| `objlink.hover_ms` | 700 | Without Ctrl, leaving the pointer on an object name this long (ms) shows only the description tooltip (no underline or click action) · 0 = off (only while Ctrl is held) |
+| `objlink.card_buttons` | on | Attaches three action buttons to the hover tooltip (Reveal in Object Explorer · Show first 200 rows · Copy description) · off = text only |
+| `objlink.show_schema` | off | Adds the schema to names in the tooltip and status bar (`APPDB.TB_ORDER`) · off = `TB_ORDER` (columns as `table.column`) |
+| `objlink.line_color` · `line_width` · `line_style` | theme accent · 1 px · Solid | Underline color `#RRGGBB` · thickness (0 = no underline) · shape (Solid · Dashed · Dotted · Wavy · Dashed wavy) for **known objects** (in the metadata) |
+| `objlink.bad_color` · `bad_width` · `bad_style` | `#B7472A` brick red · 1 px · Wavy | Underline color · thickness · shape for **unconfirmed objects** (not in the current connection's metadata) |
+| `objlink.max_kb` | 512 | Documents larger than this are analyzed only in the visible part (0 = unlimited) |
 
-> 좌클릭 동작은 뒤에 "객체 정보 탭"으로 바뀔 수 있습니다(설계 [docs/77](../77-data-workbench-architecture.md) · [docs/96](../96-object-links.md)).
+> The click action may later change to an "object info tab" (design [docs/77](../77-data-workbench-architecture.md) · [docs/96](../96-object-links.md)).

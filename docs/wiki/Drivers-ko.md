@@ -1,0 +1,36 @@
+# 드라이버
+
+[English](Drivers) | **한국어**
+
+> **설치본 = Oracle OCI만(10-23 · D-350).** 나머지 드라이버(PostgreSQL · SQL Server · MySQL/MariaDB · SQLite · Oracle Thin · DuckDB · ClickHouse · Db2 · ODBC)는 확장이며 첫 접속 때 자동 설치됩니다(`driver.auto_install` · 기본 켬) · 또는 `nsql driver install <id>` · 릴리스 `drivers-v<ver>`.
+
+> **드라이버 자체 완결(10-25).** Db2 드라이버는 DRDA를 직접 말하므로 IBM 클라이언트가 필요 없습니다(아래 clidriver 절차는 Windows ODBC 폴백용). Linux/macOS의 ODBC 드라이버는 드라이버 관리자를 함께 담고 있어 **벤더 ODBC 드라이버만 설치하면 되고 unixODBC는 필요 없습니다.**
+
+## IBM Db2 — 네이티브 드라이버(권장)
+
+Nexa SQL은 자체 DRDA 드라이버로 Db2(LUW)에 접속합니다 — IBM 클라이언트·ODBC가 필요 없습니다. `db2://사용자:비밀번호@호스트:50000/DB`로 처음 접속하면(또는 데이터베이스 로그인 창 DB 종류 **Db2**) 드라이버 패키지(`db2` · 최신 `drivers-v<ver>` 릴리스)를 자동으로 내려받아 설치합니다(`nsql driver install db2`로도 설치). 폐쇄망은 `nsql driver install --file nsql-drivers-all-<버전>-<os>-<arch>.zip`. 서버가 지원하면 암호화 로그인(SECMEC 9)을 쓰며, 운영 환경은 TLS(`?tls=required`)를 권장합니다.
+
+## IBM Db2 — clidriver 설치(ODBC 폴백 · `?driver=odbc`)
+
+`db2://…?driver=odbc`로 ODBC 경로를 명시할 때만 필요합니다(주로 Windows). 이때 ODBC 드라이버 확장이 Db2 방언으로 접속합니다. Linux/macOS의 clidriver는 32비트 SQLLEN `libdb2.so`뿐이라 ODBC 드라이버 관리자와 맞지 않으니 위 네이티브 드라이버를 쓰세요. IBM 클라이언트 라이브러리는 **동봉하지 않으므로** PC마다 한 번 설치합니다(무료 · 로그인 없이 받음): <https://public.dhe.ibm.com/ibmdl/export/pub/software/data/db2/drivers/odbc_cli/>
+
+| OS | 파일(v12.1.4) | 비고 |
+|---|---|---|
+| Linux x86-64 | `linuxx64_odbc_cli.tar.gz`(≈25 MB) | v12.1은 glibc 2.34 이상과 x86-64-v2 CPU 필요 |
+| macOS Apple silicon | `macarm64_odbc_cli.tar.gz`(≈18 MB) | v12.1부터 지원 |
+| macOS Intel | `macos64_odbc_cli.tar.gz`(≈21 MB) | Intel Mac은 v11.5.9까지 지원 |
+| Windows x64 | `ntx64_odbc_cli.zip`(≈26 MB) | 관리자 권한으로 `db2cli install -setup` 등록 |
+
+1. OS에 맞는 파일(위 표)을 받아 `/opt/ibm`(Windows는 원하는 폴더)에 풉니다.
+2. 드라이버 이름 `IBM DB2 ODBC DRIVER`를 등록합니다 — Linux/macOS = `odbcinst.ini`에 `Driver=<clidriver>/lib/libdb2.so`(v12.1.4에는 `libdb2o.so` 없음 · CI 10-25 확인 · macOS `.dylib`는 미확인) · Windows = 관리자 권한으로 `db2cli install -setup`.
+3. 접속 = `db2://사용자:비밀번호@호스트:50000/DB?driver=odbc`. 드라이버가 없으면 오류 메시지에 설치된 ODBC 드라이버 목록이 함께 나옵니다. 다른 이름으로 등록했다면 `?driver=<이름>`.
+
+Linux / macOS 예(압축을 풀고 `odbcinst.ini`에 등록):
+
+```sh
+sudo mkdir -p /opt/ibm && cd /opt/ibm
+sudo tar xzf ~/Downloads/linuxx64_odbc_cli.tar.gz          # → /opt/ibm/clidriver
+printf '[IBM DB2 ODBC DRIVER]\nDriver=/opt/ibm/clidriver/lib/libdb2.so\nFileUsage=1\nDontDLClose=1\n' | sudo tee -a /etc/odbcinst.ini
+```
+
+자세한 근거(버전 · 크기 · 재배포 조건 · 연결 키워드) = 저장소 `docs/121a-db2-research.md` ② · 네이티브 드라이버 = `docs/121b-db2-drda-research.md`.

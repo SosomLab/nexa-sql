@@ -1,91 +1,93 @@
-# 변수
+# Variables
 
-실행해 볼 수 있는 예제 = 저장소 `examples/variables/`(**common.sql** = 공통 언어 전부 · 서버 없이 SQLite로 · oracle/mssql/pg/sqlite.sql = 방언별 · README에 절 ↔ 방언 표). 설계 전문 = docs/63(§12 개념 총정리).
+**English** | [한국어](Variables-ko)
 
-크게 두 종류(+ 시스템·내장·환경 변수)가 있습니다.
+Runnable examples = `examples/variables/` in the repository (**common.sql** = the whole common language · runs without a server on SQLite · oracle/mssql/pg/sqlite.sql = per dialect · the README has a section ↔ dialect table). Full design = docs/63 (§12 summary of the concepts).
 
-| 종류 | 문법 | 어디서 계산 |
+There are two main kinds (+ system, built-in and environment variables).
+
+| Kind | Syntax | Where it is computed |
 |---|---|---|
-| **바인드 변수** | `VARIABLE v NUMBER` · `EXEC :v := 값` · `EXEC :v := 식` · 문장 안의 `:v` | 리터럴 대입은 클라이언트(왕복 0) · 식은 서버 · 값은 진짜 바인드로 전달 |
-| **치환 변수** | `DEFINE v = 글` · `&v` · `&&v` · `${v[:형식]}` · `${env:이름}` | 클라이언트가 문장을 보내기 전에 글자로 바꿈 |
+| **Bind variables** | `VARIABLE v NUMBER` · `EXEC :v := value` · `EXEC :v := expression` · `:v` inside a statement | A literal assignment on the client (0 round trips) · an expression on the server · the value is passed as a real bind |
+| **Substitution variables** | `DEFINE v = text` · `&v` · `&&v` · `${v[:format]}` · `${env:NAME}` | The client replaces them as text before sending the statement |
 
-## 변수 안의 변수 — 언제 펴지나
+## Variables inside variables — when are they expanded
 
 ```
 DEFINE v1 = 2
 DEFINE v2 = &v1 + 5
 DEFINE v1 = 5
-SELECT &v2 FROM dual;    -- 대입 시: 2 + 5 · 사용 시: 5 + 5
+SELECT &v2 FROM dual;    -- at assignment: 2 + 5 · at use: 5 + 5
 ```
 
-설정 **Session ▸ 변수 안의 변수 확장 시점**(`vars.expand_at`):
+Setting **Script & variables ▸ Expand variables inside variables** (`vars.expand_at`):
 
-| 값 | 뜻 |
+| Value | Meaning |
 |---|---|
-| `assign`(기본) | `DEFINE`할 때 바꿉니다(SQL*Plus · psql · sqlcmd와 같음). 나중에 `v1`을 바꿔도 `v2`는 그대로. |
-| `use` | 원문을 보관하고 **쓸 때마다** 재귀로 펴 줍니다(깊이 16 · 순환 참조는 오류). `DEFINE` 목록과 변수 창은 `원문 → 현재 값`으로 보여 줍니다. 바인드 식(`EXEC :v2 := :v1 + 5`)도 `:v1`이 바뀐 뒤 `:v2`를 쓰는 문장 앞에서 **자동으로 다시 계산**합니다(서버 왕복 1회 · 바뀌지 않았으면 0). |
+| `assign` (default · At assignment) | Replaced at `DEFINE` time (same as SQL*Plus · psql · sqlcmd). Changing `v1` later leaves `v2` as it is. |
+| `use` (At use (recursive)) | Keeps the original text and expands it recursively **every time it is used** (depth 16 · a circular reference is an error). The `DEFINE` list and the Variables window show `original → current value`. Bind expressions (`EXEC :v2 := :v1 + 5`) are also **recomputed automatically** before a statement that uses `:v2` once `:v1` has changed (1 server round trip · 0 if nothing changed). |
 
-## 변수 창(View ▸ Variables)
+## Variables window (View ▸ Variables)
 
-![변수 창](images/variables-window.png)
+![Variables window](images/variables-window.png)
 
-*변수 창 — 이름 · 타입 · 값 · 층(탭 / 공유 / 글로벌)*
+*Variables window — name · type · value · layer (tab / shared / global)*
 
-![`VAR`로 선언한 변수를 바인드(`:min_salary`)로 쓴 실행](images/variables-run.png)
+![A run using a variable declared with `VAR` as a bind (`:min_salary`)](images/variables-run.png)
 
-*`VAR`로 선언한 변수를 바인드(`:min_salary`)로 쓴 실행*
+*A run using a variable declared with `VAR` as a bind (`:min_salary`)*
 
-바인드 변수(탭 층 · 연결 공유 층)와 치환 변수(`&이름` · 타입 `DEFINE`)를 한 표에서 봅니다. 값을 고치면 다음 실행에 반영됩니다. 비밀로 보이는 이름(`PASSWORD` 등)은 가려집니다.
+Bind variables (tab layer · connection-shared layer) and substitution variables (`&name` · type `DEFINE`) are shown in one table. A value you change applies to the next run. Variables whose name contains a keyword from `vars.secret_names` (default `PASS,PWD,SECRET,TOKEN` · comma-separated · case-insensitive) and variables read with `ACCEPT … HIDE` are treated as secrets and masked as `******` (Variables window · `DEFINE` list · `PRINT` · log). Secret rows in the Variables window have a 👁 button at the right end of the value column: the real value is shown **only while you hold it down**, and it never goes to the log or to saved files (`vars.reveal_secret` · on by default).
 
-**값이 늙었을 때(10-24)** — 확장 시점이 *사용 시*(`vars.expand_at=use`)이면 `:B := :A + 10`처럼 수식으로 정의된 변수는 `:A`가 바뀐 뒤 값 칸이 흐려지고 `60 ⟳ := :A + 10`처럼 보입니다(서버에 다시 묻지 않음). 변수 창이 열려 있으면 실행이 끝날 때 한 번에 다시 계산합니다(설정 **Script ▸ Variables ▸ 실행 끝에 재계산** `vars.refresh_on_run` · 기본 켬 · 오류로 끝난 실행 뒤에는 안 함). 창의 **[⟳ 재계산]** 버튼으로 직접 할 수도 있습니다.
+**When a value is stale (10-24)** — with expansion *at use* (`vars.expand_at=use`), a variable defined by an expression, such as `:B := :A + 10`, is dimmed in the value column after `:A` changes and shows as `60 ⟳ := :A + 10` (the server is not asked again). If the Variables window is open, they are recomputed together when a run finishes (setting **Script & variables ▸ Recompute stale variables after a run (Variables window open)** `vars.refresh_on_run` · on by default · not after a run that ended with an error). You can also do it yourself with the window's **[↻ Recompute]** button.
 
-## 자주 쓰는 것
+## Common uses
 
-- `${v:q}` = SQL 글자 상수로 감싸기 · `${v:id}` = 식별자 인용 · `${env:PATH}` = OS 환경 변수.
-- `SET DEFINE OFF` = `&`를 글자로.
-- **`'R&D'`가 SQL Server · PostgreSQL · MySQL · SQLite 탭에서는 입력 창 없이 그대로 가는 이유**(10-10): `&`는 그 DBMS들에서 문자열과 비트 연산(`a & b`)에 흔히 쓰이는 글자입니다. 그래서 Oracle이 아닌 탭에서는 `DEFINE v = …` · `:setvar v …`로 **정의한 이름만** `&v`로 바꾸고, 정의하지 않은 `&x`는 손대지 않습니다. Oracle 탭은 SQL*Plus처럼 정의 안 된 이름을 묻습니다. 모든 DBMS에서 묻게 하려면 스크립트 첫 줄에 `SET DEFINE ON`을 쓰거나 설정 `script.define = on`으로 바꿉니다([Settings](Settings.md)).
-- 스크립트 인자 `&1 &2 …` = `nsql run file.sql arg1 arg2`.
+- `${v:q}` = wrap as an SQL string literal · `${v:id}` = quote as an identifier · `${env:PATH}` = OS environment variable.
+- `SET DEFINE OFF` = treat `&` as plain text.
+- **Why `'R&D'` goes through as-is, without an input prompt, in SQL Server · PostgreSQL · MySQL · SQLite tabs** (10-10): in those DBMSs `&` is a common character in strings and in bitwise operations (`a & b`). So in non-Oracle tabs only names you **defined** with `DEFINE v = …` · `:setvar v …` are replaced as `&v`, and an undefined `&x` is left alone. Oracle tabs ask for undefined names, like SQL*Plus (to keep `&name` inside string literals as text, turn off the setting `script.define_in_strings` · on by default). To be asked in every DBMS, put `SET DEFINE ON` on the first line of the script or change the setting `script.define = on` ([Settings](Settings.md)).
+- Script arguments `&1 &2 …` = `nsql run file.sql arg1 arg2`.
 
-> **같은 변수를 다른 프로시저에**(10-08): 선언 없이 생긴 변수(예: `EXEC SP_TEST1(:RET, 'SSS')`로 생긴 `:RET`)를 다른 프로시저의 OUT 자리에 다시 넘기면(`EXEC SP_TEST2(:RET, 'SSS')` · REF CURSOR OUT) 그 프로시저의 인자 타입으로 자동으로 바뀝니다. 타입을 바꾸고 싶지 않으면 `VAR RET NUMBER`처럼 타입을 적어 선언하세요.
+> **The same variable in another procedure** (10-08): if you pass a variable that was created without a declaration (for example `:RET` created by `EXEC SP_TEST1(:RET, 'SSS')`) to an OUT position of another procedure (`EXEC SP_TEST2(:RET, 'SSS')` · REF CURSOR OUT), it automatically takes that procedure's argument type. If you do not want its type to change, declare it with a type, such as `VAR RET NUMBER`.
 
-> **커서 결과 탭 이름**(10-08): REF CURSOR 변수(`:R1` · `:R2` · 프로시저의 OUT 커서)나 한 문장이 낸 결과 집합 여럿은 **결과1 · 결과2 …** 번호로 탭이 열립니다. 같은 탭에서 다시 실행하면 같은 번호를 다시 씁니다. 변수 이름(`R1`)으로 탭 이름을 보고 싶으면 설정 `grid.result_tab_title`을 `table`로 바꾸세요.
+> **Cursor result tab names** (10-08): REF CURSOR variables (`:R1` · `:R2` · a procedure's OUT cursors) and multiple result sets from one statement open as numbered tabs **Result 1 · Result 2 …**. Running again in the same tab reuses the same numbers. To see the variable name (`R1`) as the tab name, set `grid.result_tab_title` to `table`.
 
-## 변수 지우기(10-07)
+## Removing variables (10-07)
 
-| 명령 | 지우는 것 |
+| Command | What it removes |
 |---|---|
-| `VAR 이름 DROP` | 이 탭의 그 변수 |
-| `VAR 이름 DROP GLOBAL` | 이 탭과 글로벌의 그 변수 |
-| `VAR CLEAR` | 이 탭의 변수 전부(글로벌은 남음) |
-| `VAR CLEAR GLOBAL` | 이 탭 + 글로벌 변수 전부 |
-| `VAR CLEAR ALL` | 이 탭 + 연결 공유 + 글로벌 변수 전부 |
+| `VAR name DROP` | That variable in this tab |
+| `VAR name DROP GLOBAL` | That variable in this tab and in global |
+| `VAR CLEAR` | All variables in this tab (global ones stay) |
+| `VAR CLEAR GLOBAL` | This tab + all global variables |
+| `VAR CLEAR ALL` | This tab + connection-shared + all global variables |
 
-같은 이름이 탭과 글로벌에 둘 다 있으면 **탭 값이 쓰이고**, 탭 값을 지우면 글로벌 값이 다시 쓰입니다. **값은 그 변수가 있는 곳에 들어갑니다**: `VAR A GLOBAL` 뒤 `EXEC :A := 10`(또는 `SELECT … INTO :A`)이면 글로벌 A가 10이 됩니다. 이 탭에서만 다른 값을 쓰려면 먼저 `VAR A`(또는 `VAR A NUMBER`)로 이 탭에 선언하세요 — 그다음 `:A := 5`는 이 탭에만 들어가고 글로벌은 10 그대로입니다. `VAR A DROP`이면 다시 글로벌 10이 쓰입니다.
+If the same name exists both in the tab and in global, **the tab value is used**; remove the tab value and the global value is used again. **A value goes where the variable lives**: after `VAR A GLOBAL`, `EXEC :A := 10` (or `SELECT … INTO :A`) sets the global A to 10. To use a different value only in this tab, first declare it in this tab with `VAR A` (or `VAR A NUMBER`) — after that `:A := 5` goes only into this tab and the global stays 10. `VAR A DROP` brings back the global 10.
 
-- 선언하면서 값 주기: `VAR A NUMBER = 10 GLOBAL` · `VAR A GLOBAL = 10` · 연결 공유 `VAR x VARCHAR2(30) SHARE`.
-- `SHOW VARIABLES`는 같은 이름의 모든 층을 보여 주고, 지금 쓰이는 줄에 `Active` `*`가 붙습니다. 변수 창에서는 가려진 줄이 흐리게 보입니다.
-- 타입 없이 생긴 변수는 값에 따라 타입이 바뀝니다(숫자 → 글자 등). 타입을 적어 선언하면 고정됩니다.
-- 타입을 잘못 쓰면(`VARCHAR2(50) GLOBAAL` 등) 변수를 만들지 않고 오류를 냅니다.
+- Declare with a value: `VAR A NUMBER = 10 GLOBAL` · `VAR A GLOBAL = 10` · connection-shared `VAR x VARCHAR2(30) SHARE`.
+- `SHOW VARIABLES` shows every layer for the same name and marks the row in use with `Active` `*`. In the Variables window, hidden rows are dimmed.
+- A variable created without a type changes type with its value (number → text, etc.). Declaring it with a type fixes the type.
+- A wrong type (`VARCHAR2(50) GLOBAAL`, etc.) is an error and the variable is not created.
 
-## CLI에서 글로벌 변수(10-07)
+## Global variables in the CLI (10-07)
 
-`nsql run`(CLI)은 기본으로 글로벌 변수 파일(`vars/global.sql`)을 쓰지 않습니다 — 배치 스크립트가 화면에서 쓰던 값에 영향을 받지 않게 하려는 것입니다. CLI도 글로벌 변수를 이어 쓰려면 설정 `vars.cli_global`을 켭니다(`nsql config set vars.cli_global on`).
+`nsql run` (CLI) does not use the global variable file (`vars/global.sql`) by default — so that batch scripts are not affected by values you used in the GUI. To let the CLI carry global variables too, turn on the setting `vars.cli_global` (`nsql config set vars.cli_global on`).
 
-## 내장 변수 — `${workspaceFolder}`처럼(설정 `vars.intrinsic` · 기본 켬)
+## Built-in variables — like `${workspaceFolder}` (setting `vars.intrinsic` · on by default)
 
-앱이 아는 값을 VS Code와 같은 이름·문법으로 스크립트와 경로 설정(`log.file` · `oracle.client_dir` · `oracle.tns_admin`)에서 씁니다. 찾는 순서 = **`DEFINE` 변수 → 내장 변수 → 글자 그대로**, `${env:이름}`은 **내장 별칭(`NSQL_*`) → OS 환경 변수**.
+Values the app knows are available in scripts and in path settings (`log.file` · `oracle.client_dir` · `oracle.tns_admin`) with the same names and syntax as VS Code. Lookup order = **`DEFINE` variable → built-in variable → text as it is**; for `${env:NAME}` it is **built-in alias (`NSQL_*`) → OS environment variable**.
 
-| 이름 | 값 | 별칭(`${env:…}`로도) |
+| Name | Value | Alias (also via `${env:…}`) |
 |---|---|---|
-| `workspaceFolder` · `workspaceFolderBasename` · `workspaceFile` · `workspaceName` | 프로젝트 파일 폴더 · 그 이름 · 프로젝트 파일 · 프로젝트 이름(프로젝트가 없으면 없음) | `NSQL_PROJECT_DIR` · `NSQL_PROJECT_FILE` · `NSQL_PROJECT_NAME` |
-| `workspaceFolder:이름` | 등록 폴더(마지막 폴더 이름으로) | — |
-| `file` · `fileDirname` · `fileBasename` · `fileBasenameNoExtension` · `fileExtname` · `relativeFile` · `relativeFileDirname` · `fileWorkspaceFolder` | 활성 탭의 파일(미저장 탭이면 화면 언어로 `(저장되지 않은 탭)` / `(unsaved tab)` · CLI = 스크립트 파일) | `NSQL_FILE` · `NSQL_FILE_DIR` · `NSQL_FILE_NAME` |
-| `lineNumber` · `columnNumber` | 캐럿(1 기준) | — |
-| `userHome` · `nsqlHome` · `cwd` · `execPath` · `pathSeparator`(=`/`) · `os` | 홈 · 앱 설정 폴더 · 현재 폴더 · 실행 파일 · OS 구분자 · `windows`/`macos`/`linux` | `NSQL_USER_HOME` · `NSQL_HOME` · `NSQL_CWD` · `NSQL_EXEC` · `NSQL_OS` |
-| `profile` · `dialect` | 활성 접속 프로필 이름 · 방언 | `NSQL_PROFILE` · `NSQL_DIALECT` |
-| `config:키` | 설정 값(예 `${config:db.fetch_size}`) | — |
+| `workspaceFolder` · `workspaceFolderBasename` · `workspaceFile` · `workspaceName` | Project file folder · its name · the project file · the project name (none without a project) | `NSQL_PROJECT_DIR` · `NSQL_PROJECT_FILE` · `NSQL_PROJECT_NAME` |
+| `workspaceFolder:name` | A registered folder (by its last folder name) | — |
+| `file` · `fileDirname` · `fileBasename` · `fileBasenameNoExtension` · `fileExtname` · `relativeFile` · `relativeFileDirname` · `fileWorkspaceFolder` | The active tab's file (for an unsaved tab `(unsaved tab)`, translated to the UI language · CLI = the script file) | `NSQL_FILE` · `NSQL_FILE_DIR` · `NSQL_FILE_NAME` |
+| `lineNumber` · `columnNumber` | The caret (1-based) | — |
+| `userHome` · `nsqlHome` · `cwd` · `execPath` · `pathSeparator` (=`/`) · `os` | Home · app settings folder · current folder · executable · OS separator · `windows`/`macos`/`linux` | `NSQL_USER_HOME` · `NSQL_HOME` · `NSQL_CWD` · `NSQL_EXEC` · `NSQL_OS` |
+| `profile` · `dialect` | Name of the active connection profile · dialect | `NSQL_PROFILE` · `NSQL_DIALECT` |
+| `config:key` | A setting value (e.g. `${config:db.fetch_size}`) | — |
 
-형식 접미도 됩니다: `${fileBasename:q}` = `'a.sql'`. 모르는 이름·없는 문맥은 글자 그대로 남습니다(묻지 않음). 단 파일 계열(`${file…}`·`relativeFile…`·`NSQL_FILE*`)은 미저장 탭에서 글자 그대로 두지 않고 `(저장되지 않은 탭)`(영어 화면 `(unsaved tab)`)이 됩니다. CLI(`nsql run`)에는 프로젝트가 없어 `${workspaceFolder}`가 없고 `${file}`은 스크립트 경로입니다.
+Format suffixes work too: `${fileBasename:q}` = `'a.sql'`. Unknown names and missing context are left as text (no prompt). The file family (`${file…}` · `relativeFile…` · `NSQL_FILE*`), however, is not left as text in an unsaved tab but becomes `(unsaved tab)` (translated in the Korean UI). The CLI (`nsql run`) has no project, so there is no `${workspaceFolder}`, and `${file}` is the script path.
 
 ```
 SPOOL ${workspaceFolder}/out/${fileBasenameNoExtension}.log

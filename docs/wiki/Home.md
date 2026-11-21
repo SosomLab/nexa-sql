@@ -1,52 +1,54 @@
-# Nexa SQL 위키
+# Nexa SQL Wiki
 
-Nexa SQL = 크로스플랫폼 경량 SQL 클라이언트(IDE) + CLI `nsql`(Windows · macOS · Linux · 올 러스트 단일 바이너리).
+**English** | [한국어](Home-ko)
 
-지원 데이터베이스(내장) = Oracle · SQL Server · PostgreSQL · SQLite · **MySQL/MariaDB**(10-22 추가 · 접속 문자열 `mysql://사용자@호스트:3306/DB` · `mariadb://`도 같음). Oracle만 Instant Client가 따로 필요하고(Thin 모드는 불필요) 나머지는 설치 없이 바로 접속한다.
+Nexa SQL = a cross-platform, lightweight SQL client (IDE) + the CLI `nsql` (Windows, macOS, Linux · an all-Rust single binary).
 
-![Nexa SQL 메인 화면](images/main-window.png)
+Supported databases = Oracle · SQL Server · PostgreSQL · SQLite · **MySQL/MariaDB** (connection string `mysql://user@host:3306/DB` · `mariadb://` works the same) and more (see [Connections](Connections.md)). The installer includes only the Oracle OCI driver, which needs Oracle Instant Client. Every other driver, Oracle Thin included, is an extension driver: the first time you connect, it is downloaded and installed automatically (setting `driver.auto_install`, on by default) and then the connection opens. Developer builds include all drivers.
 
-*Nexa SQL 메인 화면 — 객체 탐색기 · 편집기 · 결과 그리드(열 머리 타입 배지 · 조건 바)*
+![Nexa SQL main window](images/main-window.png)
 
-## 페이지
+*Nexa SQL main window — Object Explorer · editor · result grid (type badges in the column headers · condition bar)*
 
-| 페이지 | 내용 |
+## Pages
+
+| Page | Contents |
 |---|---|
-| [드라이버(Drivers)](Drivers.md) | 드라이버 자동 설치(Db2 네이티브 · drivers-v0.1.4) · ODBC 폴백용 IBM Db2 clidriver · ODBC 드라이버 등록 확인 |
-| [접속](Connections.md) || [접속](Connections.md) | 간략 접속(접속 문자열 한 줄 → 바로 접속 · 프로필 자동 저장 · 비밀번호는 저장 안 함) |
-| [프로젝트와 작업 환경](Project-Workspace.md) | 프로젝트 파일에 무엇이 저장되고(탭 · 캐럿 · 북마크 · 미저장 스크립트) 어떻게 복원되는지 · 자동 저장 · 종료 흐름 · OPEN FILES · 탐색기 |
-| [북마크](Bookmarks.md) | 키 · 니모닉 · 표시(거터 · 미니맵 · 줄 끝 라벨) · 패널 · 저장 위치 · CLI `nsql bookmark` |
-| [변수](Variables.md) | 바인드/치환 변수 · 변수 안의 변수 확장 시점(`vars.expand_at`) · 변수 창 |
-| [탐색기와 필터](Explorers-and-Filters.md) | 필터 토글(Aa · ab · 정규식 · 경로) · 타입어헤드(글자를 치면 그 이름으로 이동 · 한글) · 선택 규칙(빈 곳 클릭) · DBMS 아이콘 · 탭 색(미저장 탭 이름 색) · 객체 상세 패널 |
-| [Goto Anything(Ctrl+P)](Goto-Anything.md) | 파일 이름 퍼지 검색 · `이름:줄` · 접두 `>` 명령 · `:` 줄 · `@` 심볼 · `%` 내용 · `?` 도움말 · 메뉴의 단축키 표시 |
-| [코드 완성과 아웃라인](Code-Completion-and-Outline.md) | 완성 팝업(트리거 · 문맥별 후보 · 일치/순서 규칙 · 설정) · 아웃라인 패널 · Goto Symbol(Ctrl+R) |
-| [결과 그리드에서 데이터 편집](Data-Editing.md) | 편집 가능 조건 · 행 식별 등급(키 · 숨은 키 열 · ROWID · 전 열) · 키 · 표시 · 적용의 안전 규칙(사전 검사 · 1행 · 롤백) · 적용 뒤 갱신 · 동시성 · 설정 |
-| [라이선스](License.md) | 무료로 쓸 수 있는 것 · Pro가 여는 것과 무료 대체 경로 · 요청 코드 → 이메일 → 설치 3단계 · PC 추가/교체(재발급) · 백업·제거 · 상태가 이상할 때 |
-| [파일로 넣기·내보내기(대량 적재)](Bulk-Import-Export.md) | CSV/TSV/JSON Lines를 표에 넣기(GUI Import 창 · CLI `nsql import`) · 빠른 내보내기(`--fast`) · 속도와 경로 · 실패했을 때 · 설정 `bulk.*` |
-| [단축키와 사용자 키맵 파일](Keyboard-Shortcuts.md) | 단축키 설정 창 · `Packages/User/Default (<OS>).sublime-keymap`(Sublime 형식) · 조건(context) 키 표 · 2단 코드 · "(파일)" 표시 |
-| [설정 창](Settings.md) | 카드 순서 · 키 이름 복사(Shift/Ctrl+클릭 = 보이는 설정 전부) · 고급(Advanced) · 키 이름 규칙과 바뀐 키 · 바뀐 기본값 |
-| [트랜잭션 로그](Transaction-Log.md) | 문장·트랜잭션 결과 · 행 클릭 = 보낸 문장 / 바인드 변수 / 값 치환 문장 세 층 · 거르기 |
-| [큰 파일과 기능 제한](Large-Files-and-Limits.md) | 파일 크기·줄 수에 따라 무엇이 꺼지고(L1/L2) 어떤 상한이 늘 걸리는지 · 바꾸는 설정 |
-| [SQL 포맷](SQL-Formatting.md) | Shift+Alt+F 기본 포맷 · 내장 Basic 공통 옵션(콤마 위치 · 공백/탭 · `WHERE 1=1` · 별칭) · 확장 포맷터(SQL Formatter for kiros33)를 기본으로 지정 · 미리보기 탭 |
-| [Output 탭](Output-Tab.md) | 서버 메시지(DBMS_OUTPUT · PRINT · RAISE NOTICE) · 컴파일 결과 · 오류 · 문장 완료 줄이 모이는 탭 · 언제 나타나는지(`output.show`/`output.activate`) · 객체 소스 탭의 F5 = 한 단위 실행 |
-| [Ctrl 객체 링크와 설명 툴팁](Object-Links.md) | Ctrl(⌘)을 누르는 동안 테이블·컬럼·루틴이 링크 · 코멘트 툴팁(우상단 · 위치 설정) · 좌클릭 = 설명 복사 · 우클릭 메뉴 · 향상 모드·큰 파일 자동 끔 |
+| [Drivers](Drivers.md) | Automatic driver install (native Db2 · the latest drivers release) · IBM Db2 clidriver for the ODBC fallback · checking ODBC driver registration |
+| [Connections](Connections.md) | Quick connect (one connection string → connect right away · profile saved automatically · the password is not saved) · No password · Oracle Role · supported databases · ODBC |
+| [Projects and workspace](Project-Workspace.md) | What a project file stores (tabs · carets · bookmarks · unsaved scripts) and how it is restored · Autosave · exit flow · OPEN FILES · explorer |
+| [Bookmarks](Bookmarks.md) | Keys · mnemonics · display (gutter · Minimap · end-of-line labels) · Bookmarks Panel · where they are stored · CLI `nsql bookmark` |
+| [Variables](Variables.md) | Bind/substitution variables · when variables inside variables are expanded (`vars.expand_at`) · Variables window |
+| [Explorers and filters](Explorers-and-Filters.md) | Filter toggles (Aa · ab · regex · path) · Type-ahead (type letters to jump to that name · Korean too) · selection rules (click on empty space) · DBMS icons · tab colors (name color of unsaved tabs) · Object Details panel |
+| [Goto Anything (Ctrl+P)](Goto-Anything.md) | Fuzzy file-name search · `name:line` · prefixes `>` command · `:` line · `@` symbol · `%` content · `?` help · shortcuts shown in menus |
+| [Code completion and outline](Code-Completion-and-Outline.md) | Completion popup (triggers · candidates by context · matching/ordering rules · settings) · Outline panel · Goto Symbol (Ctrl+R) |
+| [Editing data in the result grid](Data-Editing.md) | When editing is possible · row identity levels (key · hidden key columns · ROWID · all columns) · keys · display · safety rules for applying (pre-check · one row · rollback) · refresh after applying · concurrency · settings |
+| [License](License.md) | What you can use for free · what Pro unlocks and the free alternatives · request code → email → install in 3 steps · adding/replacing a PC (reissue) · backup and removal · when the status looks wrong |
+| [Import and export files (bulk load)](Bulk-Import-Export.md) | Loading CSV/TSV/JSON Lines into a table (GUI Import Data window · CLI `nsql import`) · fast export (`--fast`) · speed and paths · when it fails · settings `bulk.*` |
+| [Keyboard shortcuts and the user keymap file](Keyboard-Shortcuts.md) | Keyboard Shortcuts window · `Packages/User/Default (<OS>).sublime-keymap` (Sublime format) · context key table · two-step chords · the "(file)" marker |
+| [Preferences window](Settings.md) | Card order · copying key names (Shift/Ctrl+click = all visible settings) · Advanced · key naming rules and renamed keys · changed defaults |
+| [Transaction log](Transaction-Log.md) | Statement and transaction results · click a row = three layers: statement sent / bind variables / statement with values substituted · filtering |
+| [Large files and feature limits](Large-Files-and-Limits.md) | What turns off by file size and line count (L1/L2) and which limits always apply · settings that change them |
+| [SQL formatting](SQL-Formatting.md) | Shift+Alt+F default format · built-in Basic common options (comma position · spaces/tabs · `WHERE 1=1` · aliases) · making an extension formatter (SQL Formatter for kiros33) the default · preview tab |
+| [Output tab](Output-Tab.md) | The tab that collects server messages (DBMS_OUTPUT · PRINT · RAISE NOTICE) · compile results · errors · statement completion lines · when it appears (`output.show`/`output.activate`) · F5 in an object source tab = run as one unit |
+| [Ctrl object links and description tooltips](Object-Links.md) | While Ctrl (⌘) is held, tables, columns and routines become links · comment tooltip (top right · position setting) · left click = copy the description · right-click menu · turned off automatically in enhanced mode and for large files |
 
 
-## 화면 둘러보기
+## A tour of the screen
 
-![실행 상태 카드](images/detail-run-status-card.png)
+![Run status card](images/detail-run-status-card.png)
 
-*실행 상태 카드 — 문장 · 시작 시각 · 경과 · 행 수 · 전송량*
+*Run status card — statement · start time · elapsed · row count · data transferred*
 
-![세션 창](images/sessions-window.png)
+![Sessions window](images/sessions-window.png)
 
-*세션 창 — 서버별 공유/전용 연결 · 상태 · 유휴 시간*
+*Sessions window — shared/private connections per server · state · idle time*
 
-![열 머리 타입 배지](images/detail-column-type-badges.png)
+![Type badges in column headers](images/detail-column-type-badges.png)
 
-*결과 열 머리의 타입 배지(AZ 문자 · 09 숫자 · DT 날짜 · ID 식별자) — 색 = 레거시 / 일반 / 특수*
+*Type badges in result column headers (AZ text · 09 number · DT date · ID identifier) — color = legacy / normal / special*
 
-> 그림은 영어 화면 · 라이트 테마 · SQLite 데모 DB로 찍었습니다(2026-10-07 · Windows · 위키와 홈페이지 공용).
+> The screenshots were taken with the English UI, the light theme and the SQLite demo DB (2026-10-07 · Windows · shared by the wiki and the homepage).
 
-> 이 폴더(`docs/wiki/`)가 원본이고 `scripts/wiki-publish.sh`가 GitHub 위키 저장소로 복사합니다. 이미지는 `images/`(Windows 캡처 = 격리 홈 + 기동 명령 · 맥 캡처 = `scripts/mac-capture.sh`).
-> 기술 원장·설계 문서는 저장소 `docs/`(예: 제한 원장 = docs/72).
+> This folder (`docs/wiki/`) is the source; `scripts/wiki-publish.sh` copies it to the GitHub wiki repository. Images are in `images/` (Windows captures = isolated home + startup command · Mac captures = `scripts/mac-capture.sh`).
+> The technical ledgers and design documents are in the repository's `docs/` (e.g. the limits ledger = docs/72).

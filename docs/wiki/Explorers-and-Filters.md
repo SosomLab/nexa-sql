@@ -1,238 +1,239 @@
-# 탐색기와 필터
+# Explorers and filters
 
-왼쪽 활동 막대의 패널 넷(객체 탐색기 · 파일 검색 · 프로젝트 · 북마크 · 확장)은 같은 규칙을 씁니다.
+**English** | [한국어](Explorers-and-Filters-ko)
 
-> **키보드로 객체 탐색기 다루기**(2026-10-05): 항목을 고른 뒤 **Shift+F10** = 그 행 옆에 우클릭 메뉴가 열립니다(마우스 우클릭과 같은 항목). 명령 팔레트의 **오브젝트 탐색기** 묶음(행 조회 SQL · 소스 열기 · 이름 복사 · 새로 고침 · 메타 새로 고침 · 용량 확인)도 고른 항목에 동작합니다. 삭제처럼 확인을 묻는 동작은 메뉴에서만 고를 수 있습니다.
+The panels of the left activity bar (Object Explorer · Find in Files · Project · Bookmarks · Extensions) follow the same rules.
 
-## 필터 틀
+> **Using the Object Explorer from the keyboard** (2026-10-05): select an item and press **Shift+F10** to open the right-click menu next to that row (same items as a mouse right-click). The **Object Explorer** group of the Command Palette (Select rows · Open source · Copy name · Refresh · Refresh Metadata Cache · Load sizes) also acts on the selected item. Actions that ask for confirmation, such as delete, can be chosen only from the menu.
 
-> **객체 탐색기 검색은 폴더를 자동으로 펼치지 않습니다**(10-08) — 폴더 라벨에 `일치/전체`, 스키마 옆에 `일치 N`이 붙으니 필요한 곳만 직접 펼치세요. 예전처럼 일치하는 곳을 자동으로 펼치려면 설정 `explorer.filter_expand`를 켭니다.
+## Filter box
 
-> **객체 탐색기 검색 범위**(10-15) — 기본은 **전체 DBMS**입니다(Oracle·PostgreSQL = 서버의 모든 스키마 · SQL Server = 모든 데이터베이스 · 검색을 시작할 때 차례로 읽습니다). 현재 스키마/데이터베이스만 찾으려면 설정 `explorer.search_scope`를 **현재 스키마/데이터베이스**로 바꿉니다.
+> **Object Explorer search does not expand folders automatically** (10-08) — folder labels show `matches/total` and schemas show `N matches`, so expand only the places you need. To auto-expand matching places as before, turn on the setting `explorer.filter_expand`.
 
-![객체 탐색기 필터](images/object-explorer-filter.png)
+> **Object Explorer search range** (10-15) — the default is the **whole DBMS** (Oracle · PostgreSQL = every schema on the server · SQL Server = every database · read one after another when a search starts). To search only the current schema/database, set `explorer.search_scope` to **current schema/database**.
 
-*객체 탐색기 필터 — 글자를 치면 맞는 객체와 그 위 폴더만 남고 일치 부분이 강조됩니다*
+![Object Explorer filter](images/object-explorer-filter.png)
 
-| 토글 | 뜻 |
+*Object Explorer filter — as you type, only matching objects and the folders above them remain, and the matching part is highlighted*
+
+| Toggle | Meaning |
 |---|---|
-| `Aa` | 대소문자 구분 |
-| `ab` | 단어 단위 |
-| `(.*)` | 정규식(잘못된 식이면 틀이 빨개지고 아무것도 안 걸립니다) |
-| 폴더 체크(프로젝트만) | **경로 포함** — `폴더/이름` 경로에 일치(`crates/x` 같은 검색) |
-| 설명 포함(객체 탐색기만) | **Include Description** — 이름뿐 아니라 테이블·뷰 **설명(코멘트)** 에도 일치합니다(기본 꺼짐 · 설정 `explorer.search_desc`와 같은 값). 켜고 검색어를 넣으면 스키마마다 설명을 뒤에서 읽어 오므로 처음 한 번은 잠깐 걸립니다. SQLite에는 설명이 없습니다 |
-| 눈 · 점(프로젝트 틀 오른쪽) | 숨김 파일 · 점 파일(Windows) 표시 — 파일 대화상자와 같은 설정 |
+| `Aa` | Match case |
+| `ab` | Whole word |
+| `(.*)` | Regular expression (an invalid expression turns the box red and matches nothing) |
+| Folder check (Project only) | Match the path too — matches against the `folder/name` path (searches like `crates/x`) |
+| Include description (Object Explorer only) | **Include Description** — matches table and view **descriptions (comments)** as well as names (off by default · same value as the setting `explorer.search_desc`). When you turn it on and type a search term, descriptions are read in the background for each schema, so the first time takes a moment. SQLite has no descriptions |
+| Eye · dot (right of the Project box) | Show hidden files · dot files (Windows) — the same setting as the file dialog |
 
-토글이 전부 꺼져 있으면 공백으로 나눈 낱말을 **전부 포함**하는 항목(대소문자 무시)이 걸립니다.
+When all toggles are off, items that **contain all** of the space-separated words (case-insensitive) match.
 
-**한글은 조합 중에도 걸립니다** — 필터·찾기/바꾸기·파일 검색·북마크 필터 모두 IME가 글자를 완성하기 전의 "ㄱ"·"기"로 "가나"·"긴급"을 찾습니다(자모열 비교: "ㄱ" ⊂ 가 · "기" ⊂ 긴 · "달" ⊂ 닭). 정규식 모드는 글자 그대로입니다.
+**Hangul matches while it is still being composed** — the filter, Find/Replace, Find in Files and the bookmark filter all find "가나" and "긴급" from "ㄱ" or "기" before the IME has finished the syllable (jamo-sequence comparison: "ㄱ" ⊂ 가 · "기" ⊂ 긴 · "달" ⊂ 닭). Regular expression mode compares characters as they are.
 
-### 프로젝트 필터는 뒤에서 열거합니다
+### The project filter enumerates in the background
 
-필터에 글을 넣으면 아직 펼치지 않은 폴더도 이름을 찾으려고 열거하는데, 이 일은 **워커 스레드**(설정 Project ▸ 필터 열거 스레드 수 · 기본 4)가 폴더 단위로 나눠 **병렬로** 하고, 결과는 도착하는 대로 트리에 합쳐집니다 — 키 입력이나 화면이 멈추지 않고, 폴더·파일이 많아도(예: Downloads 1만 개) 끝까지 갑니다. 열거하는 동안 목록 아래에 "열거 중… 폴더 N개"가 보이고, 글을 바꾸면 이전 열거는 취소되고 새로 시작합니다(이미 읽은 폴더는 다시 읽지 않습니다). 읽지 못한 폴더(권한 · 사라짐)는 "읽지 못한 폴더 N개"로 세어지고 **로그 창**에 경로와 이유가 남습니다(워커가 여럿이어도 한 줄로 병합).
+When you type in the filter, folders you have not expanded yet are also enumerated to find names. This work is done **in parallel** per folder by **worker threads** (Preferences ▸ Project ▸ Project explorer: filter scan threads · default 4), and results are merged into the tree as they arrive — key input and the screen do not freeze, and it runs to the end even with many folders and files (for example 10,000 in Downloads). While it runs, "Scanning… N folders" is shown below the list; when you change the text, the previous scan is cancelled and a new one starts (folders already read are not read again). Folders that could not be read (permissions · removed) are counted as "N folder(s) could not be read (see Log)", and their paths and reasons go to the **Log window** (merged into one stream even with several workers).
 
-`project.scan_max`(기본 0 = 무제한)는 트리에 담는 항목 수의 **메모리 보호용 상한**입니다. 0이 아니면 그 수에서 열거를 멈추고 "N개에서 열거를 멈췄습니다"가 뜹니다 — 그 뒤의 파일은 보지 못했으므로 "일치 없음"이 곧 "없음"은 아닙니다.
+`project.scan_max` (default 0 = unlimited) is a **memory-protection limit** on the number of entries kept in the tree. If it is not 0, the scan stops at that number and "Scan stopped at N entries" appears — files after that point were not seen, so "no match" does not mean "not there".
 
-## 타입어헤드 — 글자를 치면 그 이름으로
+## Type-ahead — type letters to jump to a name
 
-목록에 포커스가 있을 때(필터 상자가 아니라 목록을 클릭한 상태) 글자를 치면 그 글자로 **시작하는 항목**으로 바로 이동합니다. 객체 탐색기 · 프로젝트 탐색기 · 북마크 · 아웃라인 네 곳이 같은 규칙입니다.
+When a list has focus (you clicked the list, not the filter box), typing letters jumps straight to the item that **starts with** them. The Object Explorer, Project Explorer, Bookmarks and Outline follow the same rules.
 
-| 키 | 동작 |
+| Key | Action |
 |---|---|
-| 글자 | 접두를 이어 붙여 첫 일치 항목으로(잠시 멈추면 접두가 비워짐 · `explorer.typeahead_timeout_ms`) |
-| ↑ / ↓ | 접두를 치는 중이면 **일치하는 것들 사이**를 순환 · 아니면 한 줄씩 |
-| Backspace | 접두 한 글자 지우기 |
-| Esc | 접두 지우기 |
+| Letters | Appended to the prefix; jumps to the first match (the prefix clears after a short pause · `explorer.typeahead_timeout_ms`) |
+| ↑ / ↓ | While typing a prefix, cycles **among the matches** · otherwise one row at a time |
+| Backspace | Deletes one character of the prefix |
+| Esc | Clears the prefix |
 
-- 치는 중인 접두는 패널 모서리 작은 상자에 보입니다(위치 = `explorer.typeahead_pos`).
-- **한글**: 목록에 포커스가 있으면 입력기(IME) 대신 앱이 한글을 조합합니다. Windows는 **한/영 키**로 모드를 바꾸고 자판 글자가 자모로 바뀝니다. 필터 상자를 클릭하면 입력기가 다시 켜집니다.
-- 프로젝트 탐색기는 **OPEN FILES와 트리를 한 목록**으로 봅니다 — ↑/↓가 이어지고, OPEN FILES 항목에서 Enter/Space = 그 탭으로.
-- 설정 `explorer.typeahead*`(켜기 · 시간 · 공백·특수문자 허용 · 표시 위치) 한 벌을 네 곳이 같이 씁니다.
+- The prefix being typed is shown in a small box at a corner of the panel (position = `explorer.typeahead_pos`).
+- **Hangul**: when the list has focus, the app composes Hangul itself instead of the input method (IME). On Windows, the **Han/Eng key** switches the mode and keyboard letters become jamo. Clicking the filter box turns the IME back on.
+- The Project Explorer treats **OPEN FILES and the tree as one list** — ↑/↓ run through both, and Enter/Space on an OPEN FILES item goes to that tab.
+- One set of settings `explorer.typeahead*` (on/off · timeout · allow spaces and symbols · display position) is shared by all four places.
 
-> **객체 툴팁**(10-08): 탐색기의 객체 행에 마우스를 올리면 `종류 · 스키마.이름 · 상태 · 수정일` 한 줄이 뜹니다(이름만 있던 첫 줄은 없앴습니다). 스키마·폴더·DB 행의 툴팁은 그대로입니다.
+> **Object tooltip** (10-08): hovering over an object row in the explorer shows one line, `kind · schema.name · status · modified date` (the first line that showed only the name is gone). Tooltips of schema, folder and DB rows are unchanged.
 
-## 객체 상세 패널
+## Object details panel
 
-![객체 상세 패널](images/object-explorer-details.png)
+![Object details panel](images/object-explorer-details.png)
 
-*객체 상세 패널 — 탐색기에서 고른 테이블의 키 · 인덱스 · 컬럼*
+*Object details panel — keys · indexes · columns of the table selected in the explorer*
 
-객체 탐색기 아래의 한 줄(종류 칩 + 설명)입니다. **▲를 눌러 펼치면** 속성·컬럼·인덱스 같은 상세가 보이고, 글꼴·크기는 객체 탐색기와 같습니다.
+This is the one-line bar (kind chip + description) under the Object Explorer. **Click ▲ to expand** it and see details such as properties, columns and indexes; the font and size are the same as the Object Explorer.
 
-- 접힌 동안은 설명(코멘트)만 씁니다 — 목록을 빠르게 훑어도 서버에 상세를 묻지 않습니다.
-- 펼치는 순간 상세를 채웁니다. 한 번 본 객체는 기억해 둔 것을 **바로** 보이고, 새로 고침(F5 · 우클릭 Refresh)한 범위나 오래된 것만 다시 읽습니다.
+- While collapsed it uses only the description (comment) — skimming through the list quickly does not ask the server for details.
+- Details are filled in the moment you expand it. Objects you have already seen are shown **immediately** from memory; only ranges you refreshed (F5 · right-click Refresh) or stale entries are read again.
 
-## 파일 검색 범위와 결과
+## Find in Files scope and results
 
-![파일 검색(Find in Files)](images/find-in-files.png)
+![Find in Files](images/find-in-files.png)
 
-*파일 검색(Find in Files) — 범위 상자 · 파일별 일치 줄*
+*Find in Files — scope box · matching lines per file*
 
-범위 상자가 비어 있으면 **작업 모드**에 따라 검색합니다: 파일 모드 = 열린 파일만 · 폴더 모드(`nexa-sql <폴더>`) = 열린 파일 + 그 폴더 이하 · 프로젝트 모드 = 열린 파일 + 프로젝트 파일이 있는 폴더 + 프로젝트에 추가한 폴더. `<current file>`(활성 파일의 폴더) · `<open files>` · 경로 · `-*.log`(제외)를 콤마로 적으면 그대로 씁니다.
+When the scope box is empty, the search follows the **work mode**: file mode = open files only · folder mode (`nexa-sql <folder>`) = open files + everything under that folder · project mode = open files + the folder that holds the project file + folders added to the project. If you write `<current file>` (the active file's folder) · `<open files>` · paths · `-*.log` (exclude), separated by commas, those are used as written.
 
-결과 행을 **한 번 클릭하면 미리보기 탭**(흐린 탭 줄 · 편집하면 정식 탭)으로 열어 그 줄을 선택하고 포커스는 패널에 남습니다(↑/↓로 계속 훑기). **더블클릭 · Enter = 정식 탭** + 편집기 포커스. 이미 열린 탭의 결과는 그 탭으로 갑니다. 파일 행의 셰브론은 프로젝트 탐색기와 같습니다.
+**Clicking a result row once opens it in a preview tab** (dimmed tab line · becomes a regular tab when you edit) with that line selected, and focus stays in the panel (keep skimming with ↑/↓). **Double-click · Enter = regular tab** + editor focus. Results in a file that is already open go to that tab. The chevrons on file rows are the same as in the Project Explorer.
 
-## 선택 규칙
+## Selection rules
 
-- 빈 곳을 클릭하면 선택이 풀리고 마지막 행에 **테두리만** 남습니다 → ↑/↓는 그 행에서 시작합니다. 파일 대화상자도 같습니다(폴더 고르기에서 선택을 풀고 [폴더 선택] = 지금 폴더).
-- 셰브론은 글꼴 높이의 `›`/`∨`(펼침·머묾 = 본문색) · 읽어서 빈 폴더는 셰브론 없음.
+- Clicking an empty area clears the selection and leaves **only an outline** on the last row → ↑/↓ start from that row. The file dialog works the same way (when picking a folder, clear the selection and press [Select Folder] = the current folder).
+- Chevrons are `›`/`∨` at font height (expanded · hovered = body text color) · a folder that was read and found empty has no chevron.
 
-## 객체 탐색기 루트 아이콘
+## Object Explorer root icons
 
-서버 머리글과 연결 행에 **그 DBMS의 아이콘**이 붙습니다(173종 · 밝은/어두운 테마별 그림). 서버 머리글은 큰 그림(64 px)을 줄여서, 같은 서버 묶음 아래의 연결 행은 작은 그림(20 px)으로 그립니다. 어느 아이콘을 쓸지는 프로필의 DBMS(방언)와 드라이버 힌트로 고르고, ODBC처럼 방언으로 알 수 없으면 프로필 이름 속 낱말(5자 이상 · 예 `snowflake`)로 찾습니다. 모르면 일반 DB 아이콘. 아이콘의 제품 이름·로고는 각 회사의 상표이며 접속 대상을 표시하는 용도로만 씁니다(출처·라이선스 = `crates/nexa-sql/assets/dbms/NOTICE.md`).
+Server headers and connection rows carry **the icon of that DBMS** (173 kinds · separate images for light and dark themes). Server headers draw the large image (64 px) scaled down, and connection rows under the same server group use the small image (20 px). The icon is chosen from the profile's DBMS (dialect) and driver hint; when the dialect does not tell (as with ODBC), it looks for a word in the profile name (5 or more characters · e.g. `snowflake`). If unknown, a generic DB icon is used. Product names and logos in the icons are trademarks of their respective companies and are used only to show what you are connected to (sources and licenses = `crates/nexa-sql/assets/dbms/NOTICE.md`).
 
-SQLite처럼 **파일 하나가 DB인 연결**은 화면이 좁아지지 않게 짧게 보입니다 — 탭·상태줄은 파일 이름만(`Connected: local.sqlite (sqlite)`), 탐색기 연결 행의 흐린 폴더 글은 `~/…/data`처럼 홈을 `~`로 줄이고 가운데를 생략합니다. 전체 경로는 툴바 연결 칸의 툴팁에서 봅니다.
+Connections where **a single file is the database**, such as SQLite, are shown short so the screen does not get crowded — tabs and the status bar show only the file name (`Connected: local.sqlite (sqlite)`), and the dimmed folder text of the explorer connection row shortens the home folder to `~` and elides the middle, like `~/…/data`. The full path is in the tooltip of the toolbar connection field.
 
-## 편집기 탭 색
+## Editor tab colors
 
-탭 위쪽 줄 색이 탭 구분을 말합니다 — **미저장 탭**(파일이 아닌 스크립트 · 저장 뒤 바뀐 파일) = 경고색 · **저장된 파일 탭** = 강조색 · **미리보기 탭** = 흐린 색. 미저장 탭은 **탭 이름 글자에도** 같은 색이 입혀져, 활성 탭이 아니거나 창에 포커스가 없어도 구분됩니다.
+The color of the line at the top of a tab tells the kind of tab — **unsaved tab** (a script that is not a file · a file changed since it was saved) = warning color · **saved file tab** = accent color · **preview tab** = dimmed color. Unsaved tabs also color **the tab name text** the same way, so you can tell them apart even when the tab is not active or the window has no focus.
 
-| 키 | 기본 | 뜻 |
+| Key | Default | Meaning |
 |---|---|---|
-| `editor.tab_line_unsaved` · `editor.tab_line_file` · `editor.tab_line_preview` | 빈 값 | 구분별 줄 색(`#RRGGBB` · 빈 값 = 위 기본색) |
-| `editor.tab_unsaved_text` | on | 미저장 탭 이름에 색 |
-| `editor.tab_unsaved_color` | 빈 값 | 미저장 탭 이름 색(빈 값 = 미저장 줄 색) |
+| `editor.tab_line_unsaved` · `editor.tab_line_file` · `editor.tab_line_preview` | empty | Line color per kind (`#RRGGBB` · empty = the default colors above) |
+| `editor.tab_unsaved_text` | on | Color the name of unsaved tabs |
+| `editor.tab_unsaved_color` | empty | Unsaved tab name color (empty = the unsaved line color) |
 
-탭 우클릭 메뉴도 구분에 따라 다릅니다(미리보기 = Keep Open · 이름 바꾸기 = 스크립트만 · 파일 위치 열기/프로젝트 탐색기에서 보기 = 파일).
+The tab right-click menu also differs by kind (preview = Keep Open · Rename tab = scripts only · Open file location / Reveal in Project Explorer = files).
 
-## 검색 상자의 최근 검색어
+## Recent terms in search boxes
 
-찾기/바꾸기(Ctrl+F · Ctrl+H) · 파일 검색(검색어 · 범위) · 프로젝트/북마크/확장/아웃라인 필터 · 설정 창 검색 — 상자마다 최근 검색어를 **최대 N개**(설정 Find in Files ▸ 검색 상자별 최근 검색어 수 · 기본 20 · 0 = 끔) 기억합니다.
+Find/Replace (Ctrl+F · Ctrl+H) · Find in Files (search term · scope) · Project/Bookmarks/Extensions/Outline filters · the Preferences search — each box remembers **up to N** recent terms (Preferences ▸ Find in Files ▸ Search history per box · default 20 · 0 = off).
 
-**보기 방식**(설정 Find in Files ▸ 검색어 이력 보기 방식 · 기본 **드롭다운**): 상자를 클릭하면 아래에 최근 검색어가 목록(기본 5행 · 설정 "드롭다운 행 수" · 넘치면 오른쪽 스크롤 표시 + 휠)으로 뜹니다. ↑/↓/PgUp/PgDn/Home/End로 옮기고 Enter 또는 클릭으로 넣습니다 · 글자를 치면 그 글이 든 항목만 남습니다 · Esc = 닫기 · 바깥 클릭 = 닫고 그 클릭 진행. **플랫**으로 바꾸면 목록 없이 상자 안에서 **↑** = 최근 것부터 오래된 쪽 · **↓** = 새로운 쪽 → 끝에서 치던 글로 복귀(Sublime·VS Code 찾기 상자와 같음).
+**View style** (Preferences ▸ Find in Files ▸ Search history view · default **Dropdown**): clicking the box shows the recent terms in a list below it (5 rows by default · setting "Search history: dropdown rows" · when it overflows, a scroll indicator on the right + mouse wheel). Move with ↑/↓/PgUp/PgDn/Home/End and insert with Enter or a click · typing leaves only the items that contain the text · Esc = close · clicking outside = close and that click goes through. If you switch to **Flat**, there is no list: in the box, **↑** = from the most recent toward older ones · **↓** = toward newer ones → at the end it returns to the text you were typing (same as the Sublime and VS Code find boxes).
 
-**목록으로 넘어가기**: 드롭다운의 마지막 항목(플랫이면 치던 글)에서 ↓를 한 번 더 누르거나 **Tab**을 누르면 상자 아래 목록(프로젝트 폴더 · 북마크 · 심볼 · 검색 결과 · 설정 분류 트리)의 첫 행으로 포커스가 옮겨집니다. 기록되는 때 = Enter로 찾기/검색을 실행할 때 · 필터 상자는 글을 넣고 다른 곳을 클릭할 때(포커스를 잃을 때). 같은 글은 앞으로 옮겨지고 중복은 없습니다. 이력은 **프로그램 전역**(프로젝트·폴더와 무관)으로 사용자 설정 폴더의 `search-history.json`에 저장되어 다시 켜도 남습니다.
+**Moving into the list**: pressing ↓ once more on the last dropdown item (with Flat, on the text you were typing) or pressing **Tab** moves focus to the first row of the list below the box (project folders · bookmarks · symbols · search results · the settings category tree). When a term is recorded = when you run find/search with Enter · for filter boxes, when you type text and click elsewhere (when the box loses focus). The same text moves to the front; there are no duplicates. The history is **program-wide** (independent of projects and folders) and is saved in `search-history.json` in the user settings folder, so it survives a restart.
 
-## 파일 검색의 제외 로그
+## Find in Files skip log
 
-파일 검색은 크기 상한(설정 `search.max_file_kb` · 기본 1 MB)을 넘는 파일 · 이진 파일(첫 8 KB에 NUL) · 읽지 못한 파일 · 이름이 UTF-8이 아닌 파일을 **건너뛰고**, 결과 아래 **"Skipped (N)"** 행에 모아 둡니다(클릭 = 경로 — 이유 펼침 · 상태줄 끝 "· N skipped"). 워커 여럿이 병렬로 검색해도 로그는 한 줄로 병합돼 도착 순으로 보입니다. CLI `nsql grep`은 끝에 `skipped N file(s): too_large 2 · binary 3` 요약을 stderr로 내고, `NSQL_GREP_LOG=1`이면 파일 목록까지 냅니다.
+Find in Files **skips** files over the size limit (setting `search.max_file_kb` · default 8 MB), binary files (NUL in the first 8 KB), files that could not be read and files whose names are not UTF-8, and collects them in a **"Skipped (N)"** row below the results (click = path — reason expands · " · N skipped" at the end of the status bar). Even when several workers search in parallel, the log is merged into one stream and shown in arrival order. The CLI `nsql grep` prints a summary `skipped N file(s): too_large 2 · binary 3` to stderr at the end, and with `NSQL_GREP_LOG=1` it also prints the file list.
 
-## 검색 입력란의 × 지우기
+## × clear button in search fields
 
-찾기/바꾸기 · 파일 검색(검색어 · 범위) · 프로젝트/북마크/확장/아웃라인 필터 · 접속 창 필터 · 설정 검색 · 트랜잭션 로그 검색 · 명령 팔레트 — 글을 넣으면 상자 오른쪽 끝에 **×**가 나타나고, 클릭하면 글이 비워지며 목록·찾기가 바로 원래대로 돌아옵니다. 빈 상자에는 보이지 않습니다.
+Find/Replace · Find in Files (search term · scope) · Project/Bookmarks/Extensions/Outline filters · the Database Login window filter · the Preferences search · transaction log search · Command Palette — when you type text, a **×** appears at the right end of the box; clicking it clears the text and the list or find returns to its original state right away. It is not shown in an empty box.
 
-## 파일 검색 범위에 조건 넣기
+## Conditions in the Find in Files scope
 
-범위 상자 한 줄에 조건을 **콤마로** 잇습니다 — 경로(`D:\proj`) · `<open files>` · **포함** `*.sql`(글롭 · `+pat`도 같음) · **제외** `-*.log`. 포함이 하나라도 있으면 그중 하나에 맞는 파일만(OR) 읽고, 제외에 걸리면 뺍니다(AND NOT). 폴더는 늘 내려가므로 폴더를 빼려면 `-폴더/`. 패턴만 적고 경로가 없으면 기본 범위(열린 탭 + 작업 모드 폴더)에 패턴만 얹습니다.
+Join conditions with **commas** on one line of the scope box — a path (`D:\proj`) · `<open files>` · **include** `*.sql` (glob · `+pat` is the same) · **exclude** `-*.log`. If there is at least one include, only files that match one of them are read (OR), and files that match an exclude are dropped (AND NOT). Folders are always descended into, so to drop a folder write `-folder/`. If you write only patterns and no path, the patterns are applied on top of the default scope (open tabs + the work-mode folder).
 
-예: `*.sql, *.txt, -*_test.sql, D:\proj` = D:\proj 아래 `.sql`·`.txt` 중 `_test.sql`이 아닌 파일. 글롭은 `.gitignore`와 같은 문법(`*` `**` `?`). CLI는 `nsql grep SELECT D:\proj -g *.sql -g *.txt --exclude *_test.sql`.
+Example: `*.sql, *.txt, -*_test.sql, D:\proj` = `.sql` and `.txt` files under D:\proj that are not `_test.sql`. Globs use the same syntax as `.gitignore` (`*` `**` `?`). CLI: `nsql grep SELECT D:\proj -g *.sql -g *.txt --exclude *_test.sql`.
 
-## 필터에 조건 쓰기(용량 · 종류 · 논리 조합)
+## Conditions in filters (size · kind · logic)
 
-필터 상자에는 낱말 외에 **조건**을 쓸 수 있습니다(정규식 `(.*)`가 켜져 있으면 정규식이 전부이고 조건은 없습니다).
+Besides words, you can write **conditions** in a filter box (when regular expression `(.*)` is on, the whole text is a regular expression and there are no conditions).
 
-| 쓰기 | 뜻 |
+| Write | Meaning |
 |---|---|
-| `tb order` | 두 낱말 모두 포함(AND · 대소문자 무시 · 한글 자모) |
-| `order \| plan` · `order OR plan` | 둘 중 하나 |
-| `tb !hist` · `tb NOT hist` | `hist`가 없는 것 (`-`는 이름의 글자로 봅니다) |
-| `(order \| plan) !hist` · `"plan hist"` | 괄호 묶음 · 구절 |
-| `size>1G` · `size>=100M` · `size<10K` · `size:1G`(= 이상) · `size:100M..1G` | 용량(단위 B K M G T P · `KB` `MB`도 · 소수 가능) |
-| `type:table` · `type:view` · `type:mv` · `type:idx` · `type!=view` | 종류(별칭: tab · vw · mv · proc · func · pkg · seq · trg · idx · syn) |
-| `name:order` | 이름(낱말과 같음 · 명시용) |
+| `tb order` | Contains both words (AND · case-insensitive · Hangul jamo) |
+| `order \| plan` · `order OR plan` | Either one |
+| `tb !hist` · `tb NOT hist` | Items without `hist` (`-` is treated as a character of the name) |
+| `(order \| plan) !hist` · `"plan hist"` | Parenthesized groups · phrases |
+| `size>1G` · `size>=100M` · `size<10K` · `size:1G` (= at least) · `size:100M..1G` | Size (units B K M G T P · also `KB` `MB` · decimals allowed) |
+| `type:table` · `type:view` · `type:mv` · `type:idx` · `type!=view` | Kind (aliases: tab · vw · mv · proc · func · pkg · seq · trg · idx · syn) |
+| `name:order` | Name (same as a plain word · for being explicit) |
 
-- **객체 탐색기**: `size` `type` `name`. 용량은 **읽힌 객체에만** 있습니다 — 폴더를 펼쳤거나 스키마 우클릭 ▸ **용량 확인**을 눌러 읽은 테이블·MV·인덱스만 `size` 조건에 걸리고, 아직 안 읽은 객체와 검색 인덱스 결과는 용량 미상이라 제외됩니다(`type`은 인덱스 결과에도 듣습니다).
-- **프로젝트 탐색기**: `size`(파일 크기 · 폴더는 미상) · `type:file|folder` · `ext:sql` · `path:folder/name`.
-- 북마크 · 아웃라인 · 확장 · 파일 검색 결과: 낱말·논리 조합·`name:`만(용량·종류 없음).
-- 예: `tb (size>1G \| type:view)` = 이름에 `tb`가 있으면서 1G 넘는 것 또는 뷰인 것.
+- **Object Explorer**: `size` `type` `name`. Sizes exist **only for objects that have been read** — only tables, MVs and indexes read by expanding a folder or by right-clicking a schema ▸ **Load sizes** match a `size` condition; objects not read yet and search-index results have an unknown size and are excluded (`type` also works on index results).
+- **Project Explorer**: `size` (file size · unknown for folders) · `type:file|folder` · `ext:sql` · `path:folder/name`.
+- Bookmarks · Outline · Extensions · Find in Files results: words, logic and `name:` only (no size or kind).
+- Example: `tb (size>1G \| type:view)` = has `tb` in the name and is either over 1G or a view.
 
-### 정규식 모드 `(.*)`일 때
+### In regular expression mode `(.*)`
 
-정규식 버튼 `(.*)`을 켜면 상자의 글 **전체가 하나의 정규식**이 됩니다. 이때는 위의 조건 문법(낱말 AND · `|` · `!` · 괄호 · `size:` `type:`)을 **쓰지 않습니다** — `|`는 정규식의 "또는"이고, `(` `)`는 정규식 묶음입니다. 정규식은 이름(객체 이름 · 파일 이름, 프로젝트 탐색기에서 `Path`가 켜져 있으면 상대 경로)에 대해 "어디든 일치"로 판정합니다(`^` `$`로 처음/끝 고정 · `Aa`가 꺼져 있으면 대소문자 무시 · `ab`(단어)는 `…`를 씌웁니다). 잘못된 정규식이면 상자 테두리가 빨갛고 아무것도 걸리지 않습니다.
+When you turn on the regular expression button `(.*)`, **the whole text of the box becomes one regular expression**. The condition syntax above (word AND · `|` · `!` · parentheses · `size:` `type:`) is then **not used** — `|` is the regex "or" and `(` `)` are regex groups. The regular expression is tested against the name (object name · file name; in the Project Explorer, the relative path when `Path` is on) as "matches anywhere" (anchor the start/end with `^` `$` · case-insensitive when `Aa` is off · `ab` (word) wraps it in `…`). An invalid regular expression turns the box border red and matches nothing.
 
-| 정규식 | 뜻 |
+| Regular expression | Meaning |
 |---|---|
-| `^tb_` | `tb_`로 시작하는 것 |
-| `_hist$` | `_hist`로 끝나는 것 |
-| `^tb_(order\|plan)_` | `tb_order_…` 또는 `tb_plan_…` |
-| `^(?!.*_bak$).*` | `_bak`으로 끝나지 않는 것(부정 전방탐색 = `!` 대신) |
-| `\d{6}` | 숫자 6자리가 들어 있는 것(예 `_202601_`) |
-| `\.sql$`(프로젝트) | `.sql` 파일 |
+| `^tb_` | Starts with `tb_` |
+| `_hist$` | Ends with `_hist` |
+| `^tb_(order\|plan)_` | `tb_order_…` or `tb_plan_…` |
+| `^(?!.*_bak$).*` | Does not end with `_bak` (negative lookahead = instead of `!`) |
+| `\d{6}` | Contains six digits (e.g. `_202601_`) |
+| `\.sql$` (Project) | `.sql` files |
 
-용량·종류로 거르려면 정규식을 끄고 조건 문법을 쓰세요(`^tb_ size>1G`는 정규식이 아니라 낱말 `^tb_`로 취급됩니다 — 낱말은 부분 일치라 `^`가 글자로 비교되어 아무것도 걸리지 않습니다).
+To filter by size or kind, turn the regular expression off and use the condition syntax (`^tb_ size>1G` is treated as the word `^tb_`, not a regular expression — words match as substrings, so `^` is compared as a character and nothing matches).
 
-## SQL Server 탐색기(SSMS 골격)
+## SQL Server explorer (SSMS layout)
 
-SQL Server는 한 접속으로 서버의 모든 데이터베이스를 볼 수 있으므로 탐색기가 SSMS와 같은 골격입니다(설정 `explorer.mssql_tree`, 기본 SSMS · `schema`로 두면 접속한 DB의 스키마 → 종류 폴더).
+SQL Server lets one connection see every database on the server, so the explorer uses the same layout as SSMS (setting `explorer.mssql_tree`, default SSMS · set it to `schema` for schemas of the connected DB → kind folders).
 
-- **서버 헤더** = `호스트:포트` + 흐린 글 "연결 N개"(모든 DBMS 같은 모양 · 10-13부터 DBMS·버전·로그인은 헤더에서 빠지고, 헤더 위에 마우스를 잠시 두면 헤더 **아래**에 뜨는 툴팁에 `DBMS:` · `버전:` · `에디션:` · `로그인:` · `현재 DB:` · `끝점:` · `프로필:`이 줄마다 나옵니다 · 스크롤해 위에 고정된 헤더에서도 같음). 연결 행의 주 글자는 **로그인 계정**(SQL Server는 로그인과 DB가 별개 · 같은 계정은 한 행)이고 흐린 글에 `현재 DB: x`가 붙습니다.
-- **툴바 작업 단위**: 연결정보 옆의 값 하나가 지금 탭 세션의 작업 단위입니다 — Oracle = 현재 스키마(클릭해 목록에서 고르면 `ALTER SESSION SET CURRENT_SCHEMA`) · SQL Server · MySQL = 현재 DB(`USE`) · PostgreSQL = 접속 DB(고정 · 세션 중 DB 전환이 없음) · SQLite = 파일. 편집기에서 같은 문장을 실행해도 똑같이 반영되며, 바꾼 뒤에는 자동 완성의 스키마 없는 이름이 새 스키마/DB 기준으로 해석됩니다. 작업 단위 전환 문장은 운영 접속의 두 번 실행 확인 대상이 아닙니다.
-- 작업 단위는 **탭마다** 기억됩니다. 새 탭은 접속 기본값(로그인의 기본 DB·스키마)으로 시작하고, 탭을 오가면 세션이 그 탭의 값으로 조용히 맞춰집니다(Output에 아무것도 남지 않음).
-- **데이터베이스** ▸ 시스템 데이터베이스(master · model · msdb · tempdb · `explorer.mssql_system_dbs`로 숨김) · 사용자 DB. 현재 DB에는 **(현재)** 가 붙고 접속 직후 자동으로 펼쳐집니다.
-- **DB 노드** ▸ 테이블 · 뷰 · 외부 리소스 ▸ 외부 테이블 · 동의어 · 프로그래밍 기능 ▸ 저장 프로시저 · 함수 · 데이터베이스 트리거 · Data Types · Sequences · 보안 ▸ 사용자 · 역할 · 스키마. 객체는 `스키마.이름`으로 보입니다(인덱스·트리거·키는 테이블 아래).
-- **서버 개체** ▸ 연결된 서버: 선택하면 상세 패널에 제품 · 공급자 · 데이터 원본 · 카탈로그 · 옵션 · **로그인 매핑**이 보입니다. 우클릭 ▸ **소스 열기**는 `sp_addlinkedserver` · `sp_addlinkedsrvlogin` · `sp_serveroption` 재생성 스크립트를 새 탭에 엽니다(그대로 실행하면 "이미 있음"으로 끝나고, 바꾸려면 DROP 줄 주석을 풀고 `********` 자리의 비밀번호를 채웁니다 · 수동 커밋 모드면 `SET AUTOCOMMIT ON` 뒤 실행). 우클릭 ▸ **삭제…**는 로그인 매핑까지 지웁니다(`sp_dropserver … droplogins`). 서버 권한(`ALTER ANY LINKED SERVER`)이 없으면 목록만 보입니다.
-- **보안**(서버 수준 · 데이터베이스와 같은 층) ▸ 로그인 · 서버 역할 · 자격 증명 · 암호화 공급자 · 감사 · 서버 감사 사양 — 선택하면 상세 패널에 그 항목의 속성 전부(로그인 = 서버 역할 소속 · 서버 역할 = 멤버 · 감사 = 파일 · 감사 사양 = 동작)가 보입니다. **서버 개체** ▸ 백업 디바이스 · 엔드포인트 · 연결된 서버 · 트리거(서버 DDL/LOGON 트리거 · 소스 열기 가능). 삭제는 다른 객체와 같은 흐름(우클릭 ▸ 삭제…).
-- **데이터베이스 용량**: DB 노드나 데이터베이스/시스템 데이터베이스 묶음을 우클릭 ▸ **용량 확인**을 누르면 서버의 모든 DB 용량(데이터 + 로그 파일)이 행 오른쪽에 보이고 묶음에는 합이 보입니다. 마우스를 올리면 데이터/로그가 따로 보이고, 필터 `size>1G`가 DB 행에도 듣습니다. 파일 용량은 빈 공간을 포함하며, 한 번 읽히면 그 DB 행의 값으로 **확정**됩니다. 용량 확인을 아직 누르지 않은 DB는 Tables나 Indexes 폴더를 펼쳐 사용 용량이 읽히면 **읽힌 테이블+인덱스의 합**을 `+`와 함께 보이고(시스템 테이블·로그·빈 공간은 빠져 있어 실제보다 작습니다), 나중에 용량 확인을 누르면 파일 용량으로 바뀝니다. 툴팁에는 파일 용량과 사용 용량이 함께 보입니다. `VIEW ANY DEFINITION` 권한이 없으면 접근할 수 있는 DB만 읽힙니다.
-- 편집기에서 `USE 다른DB`를 실행하면 그 세션의 현재 DB가 바뀌고 탐색기의 (현재) 표식이 옮겨 가며 그 DB가 펼쳐집니다. 자동 완성·Ctrl 링크는 현재 DB 기준이고, 다른 DB의 객체는 트리에서 펼쳐 봅니다(열기·DDL·상세 모두 그 DB로).
-- 로그인의 서버 기본 DB(예: master)로 붙었다면 프로필 Database를 지정하거나 서버에서 `ALTER LOGIN … WITH DEFAULT_DATABASE`로 바꿉니다.
+- **Server header** = `host:port` + dimmed text "N connections" (same look for every DBMS · since 10-13, DBMS, version and login are no longer in the header; hover over the header for a moment and a tooltip **below** the header shows `DBMS:` · `Version:` · `Edition:` · `Login:` · `Current DB:` · `Endpoint:` · `Profile:` one per line · the same on a header pinned at the top while scrolling). The main text of a connection row is the **login account** (in SQL Server, the login and the DB are separate · the same account is one row), and the dimmed text adds `current DB: x`.
+- **Toolbar work unit**: the single value next to the connection info is the work unit of the current tab's session — Oracle = current schema (click and pick from the list to run `ALTER SESSION SET CURRENT_SCHEMA`) · SQL Server · MySQL = current DB (`USE`) · PostgreSQL = the connected DB (fixed · no DB switch within a session) · SQLite = the file. Running the same statement in the editor has the same effect, and after a change, names without a schema in code completion are resolved against the new schema/DB. Work-unit switch statements are not subject to the run-twice confirmation of Production connections.
+- The work unit is remembered **per tab**. A new tab starts with the connection defaults (the login's default DB and schema), and when you move between tabs the session is quietly set to that tab's value (nothing is written to Output).
+- **Databases** ▸ System Databases (master · model · msdb · tempdb · hidden with `explorer.mssql_system_dbs`) · user DBs. The current DB carries **(current)** and is expanded automatically right after connecting.
+- **DB node** ▸ Tables · Views · External Resources ▸ External Tables · Synonyms · Programmability ▸ Stored Procedures · Functions · Database Triggers · Data Types · Sequences · Security ▸ Users · Roles · Schemas. Objects are shown as `schema.name` (indexes, triggers and keys are under the table).
+- **Server Objects** ▸ Linked Servers: selecting one shows product · provider · data source · catalog · options · **Login mappings** in the details panel. Right-click ▸ **Open source** opens a re-creation script of `sp_addlinkedserver` · `sp_addlinkedsrvlogin` · `sp_serveroption` in a new tab (run as is, it ends with "already exists"; to change it, uncomment the DROP line and fill in the password at the `********` placeholder · in manual-commit mode run it after `SET AUTOCOMMIT ON`). Right-click ▸ **Delete…** also removes the login mappings (`sp_dropserver … droplogins`). Without the server permission (`ALTER ANY LINKED SERVER`) you only see the list.
+- **Security** (server level · same layer as Databases) ▸ Logins · Server Roles · Credentials · Cryptographic Providers · Audits · Server Audit Specifications — selecting one shows all its properties in the details panel (login = server role membership · server role = members · audit = file · audit specification = actions). **Server Objects** ▸ Backup Devices · Endpoints · Linked Servers · Triggers (server DDL/LOGON triggers · Open source works). Deleting works the same as for other objects (right-click ▸ Delete…).
+- **Database sizes**: right-click a DB node or the Databases/System Databases group ▸ **Load sizes** to show the size of every DB on the server (data + log files) on the right of each row, with the total on the group. Hovering shows data and log separately, and the filter `size>1G` also works on DB rows. File sizes include free space, and once read they become **final** for that DB row. For a DB where you have not pressed Load sizes yet, expanding its Tables or Indexes folder reads used sizes and shows **the sum of the tables + indexes read so far** with a `+` (system tables, log and free space are left out, so it is smaller than the real size); pressing Load sizes later replaces it with the file size. The tooltip shows both the file size and the used size. Without the `VIEW ANY DEFINITION` permission, only the DBs you can access are read.
+- Running `USE OtherDB` in the editor changes that session's current DB, moves the (current) mark in the explorer and expands that DB. Code completion and Ctrl links follow the current DB; objects in other DBs are browsed by expanding them in the tree (open · DDL · details all go to that DB).
+- If you landed in the login's server default DB (for example master), set Database in the profile or change it on the server with `ALTER LOGIN … WITH DEFAULT_DATABASE`.
 
-## 객체 삭제(우클릭 ▸ 삭제…)
+## Deleting objects (right-click ▸ Delete…)
 
-객체를 우클릭하고 **삭제…**를 고르면 확인 창이 뜹니다(열려 있는 동안 다른 창은 쓸 수 없습니다). 창에는 서버 · 접속 유형 · 객체 · 종류 · 상태 · 실행될 `DROP` 문 · 백업 정책이 보입니다.
+Right-click an object and choose **Delete…** to open a confirmation window (other windows cannot be used while it is open). The window shows the server · server type · object · kind · status · the `DROP` statement to be run · the backup policy.
 
-- **삭제** 버튼은 두 번 눌러야 합니다 — 한 번 누르면 몇 초 동안 "다시 누르면 실행" 상태가 되고, 그 안에 다시 누르면 실행됩니다(시간이 지나면 풀립니다).
-- 기본 설정(`explorer.drop_backup` 켬)에서는 먼저 객체의 DDL을 `<설정 폴더>/backups/drop/` 아래 파일(이름에 날짜·시각 포함 · `project.backup_days`일 보관)로 저장하고, **파일이 정상적으로 만들어졌을 때만** 지웁니다. 끄면 백업 없이 바로 지웁니다.
-- 백업에 실패하면: 서버 유형이 **운영**이면 지우지 않습니다. 그 밖에는 "백업 없이 삭제" 버튼을 다시 두 번 눌러야 지웁니다.
-- 결과(완료 · 오류)는 Output 탭에 남고, 탐색기의 그 폴더가 갱신됩니다.
+- The **Delete** button must be pressed twice — the first press puts it into a "press again to run" state for a few seconds, and pressing it again within that time runs it (it resets when the time runs out).
+- With the default setting (`backup.object_drop` on), the object's DDL is first saved to a file under `<settings folder>/backups/objects/` (name includes date and time · kept for `backup.object_days` days, default 30), and the object is dropped **only when the file was created successfully**. When it is off, the object is dropped right away without a backup.
+- If the backup fails: when the server type is **Production**, nothing is dropped. Otherwise you must press the "Delete without backup" button twice again to drop it.
+- The result (done · error) is written to the Output tab, and that folder in the explorer is refreshed.
 
-### 서버 유형
+### Server type
 
-서버 유형은 네 가지입니다. 화면에는 **정식 용어**와 **3자리 약어** 두 가지만 보입니다. 입력할 때는 아래 값을 대소문자 구분 없이 쓸 수 있습니다.
+There are four server types. The screen shows only two forms: the **full term** and the **3-letter abbreviation**. When typing, you can use the values below, case-insensitive.
 
-| 정식 용어 | 3자리 약어 | 입력 값(정식 · 약어) | 함께 받는 별칭 |
+| Full term | 3-letter abbreviation | Input values (full · abbreviation) | Also accepted aliases |
 |---|---|---|---|
-| 없음 (None) | NON | `none` · `non` | `-` · 빈 값 |
-| 개발 (Development) | DEV | `development` · `dev` | `devel` · `local` · `sandbox` |
-| 테스트 (Test) | TST | `test` · `tst` | `stage` · `stg` · `staging` · `qa` · `uat` |
-| 운영 (Production) | PRD | `production` · `prd` | `prod` · `product` · `live` |
+| None | NON | `none` · `non` | `-` · empty |
+| Development | DEV | `development` · `dev` | `devel` · `local` · `sandbox` |
+| Test | TST | `test` · `tst` | `stage` · `stg` · `staging` · `qa` · `uat` |
+| Production | PRD | `production` · `prd` | `prod` · `product` · `live` |
 
-**어디서 바꾸었는가에 따라 저장 여부가 다릅니다.**
+**Whether the change is saved depends on where you made it.**
 
-| 어디서 | 어떻게 | 저장 |
+| Where | How | Saved |
 |---|---|---|
-| 로그인 창 ▸ 프로필 폼 | 마지막 줄의 **서버 유형** 콤보(왼쪽은 Oracle·PostgreSQL = 기본 스키마 · SQL Server·MySQL = Database) → 저장 | **영속**(프로필에 저장) |
-| 로그인 창 ▸ 목록 우클릭 | **서버 유형 — 프로필에 저장** 아래 항목 | **영속** |
-| CLI | `nsql conn env <이름>`(보기) · `nsql conn env <이름> prd`(지정) | **영속** |
-| 탭 표식(플러그) 메뉴 · 명령 팔레트 | **서버 유형 — 이 세션만(임시)** 아래 항목 · **접속 정보 → Output** | 임시(이 세션만) |
-| 편집기 탭(스크립트 명령 · 다른 문장과 섞어 F5 가능) | `CONNTYPE prd`(= `SET CONNTYPE prd`) · 잘못된 값은 오류 줄 | 임시(이 세션만) |
-| 편집기 탭 | `SHOW CONN`(= `SHOW CONNECTION`) → Output에 접속 정보 블록(임시로 바꾼 유형이면 `임시 · 프로필: …` 표시) | — |
+| Database Login window ▸ profile form | The **Server type** combo on the last row (left of it: Oracle · PostgreSQL = default schema · SQL Server · MySQL = Database) → Save | **Persistent** (saved in the profile) |
+| Database Login window ▸ list right-click | Items under **Server type - saved to the profile** | **Persistent** |
+| CLI | `nsql conn env <name>` (show) · `nsql conn env <name> prd` (set) | **Persistent** |
+| Tab marker (plug) menu · Command Palette | Items under **Server type - this session only (temporary)** · **Connection info → Output** | Temporary (this session only) |
+| Editor tab (script command · F5 works mixed with other statements) | `CONNTYPE prd` (= `SET CONNTYPE prd`) · an invalid value gives an error line | Temporary (this session only) |
+| Editor tab | `SHOW CONN` (= `SHOW CONNECTION`) → a connection info block in Output (a temporarily changed type shows `temporary · profile: …`) | — |
 
-- 임시로 바꾼 유형은 그 세션이 새 대상으로 접속하면 풀립니다. 프로필의 유형을 바꿔도 임시로 바꾼 세션은 덮지 않습니다.
-- 편집기에서 `SET `·`CONNTYPE `·`SHOW `를 치면 자동 완성이 그 명령의 값만 보여 줍니다(`CONNTYPE ` 뒤 = NONE/DEV/TEST/PROD · `SHOW ` 뒤 = CONN/VARIABLES/ERRORS). 빈 줄에서도 프로그램 명령(설명 "client: …")이 SQL 키워드 뒤에 나옵니다.
-- 운영(PRD)에서 데이터를 바꾸면 바로 반영되지 않고 **보류**됩니다(상단 Commit을 두 번 눌러야 반영 · 보류 중 `COMMIT;` 문만 실행하면 거부 안내). CLI `nsql`은 보류하지 않습니다 — 시험 방법은 [docs 115](../115-prod-mode-scenario-nsql-guide.md).
-- 지금과 같은 유형을 다시 지정하면(예: 운영에서 `CONNTYPE prd`) 아무것도 실행하지 않고 "변경 없음"만 알립니다. 운영 접속의 두 번 실행 확인은 **서버에 변경을 보내는 문장**에 뜹니다 — `SET` · `SHOW` 같은 클라이언트 명령에는 뜨지 않습니다.
-- **운영에서 다른 유형으로 내릴 때**(예: 운영에서 `CONNTYPE tst` · 팔레트/세션 메뉴에서 개발 선택)는 보호를 푸는 변경이라 두 번 확인합니다 — 안내가 뜨고 3초 안에 다시 실행/선택하면 바뀝니다. 운영으로 올리거나 운영이 아닌 유형끼리 바꾸는 것은 바로 됩니다.
-- 상태줄 칩은 3자리 약어(`PRD` · `TST`)입니다. 프로필 값이면 채운 칩, 임시 값이면 외곽선 칩입니다.
-- 서버 유형이 **운영**이면 변경 문장은 2단 확인, 객체 삭제는 백업 실패 시 중단됩니다.
+- A temporarily changed type is released when that session connects to a new target. Changing the profile's type does not overwrite sessions changed temporarily.
+- Typing `SET ` · `CONNTYPE ` · `SHOW ` in the editor makes code completion show only the values of that command (after `CONNTYPE ` = NONE/DEV/TEST/PROD · after `SHOW ` = CONN/VARIABLES/ERRORS). On an empty line, program commands (description "client: …") also appear after the SQL keywords.
+- On Production, data changes are not applied immediately but **held** (press Commit at the top twice to apply · running only a `COMMIT;` statement while changes are held is refused with a notice). The CLI `nsql` does not hold changes — for how to test, see [docs 115](../115-prod-mode-scenario-nsql-guide.md).
+- Setting the same type again (for example `CONNTYPE prd` on Production) runs nothing and only reports "nothing to change". The run-twice confirmation of Production connections appears for **statements that send changes to the server** — not for client commands such as `SET` · `SHOW`.
+- **Lowering from Production to another type** (for example `CONNTYPE tst` on Production · choosing Development from the palette or session menu) removes protection, so it is confirmed twice — a notice appears, and running/choosing it again within 3 seconds changes it. Raising to Production or changing between non-Production types happens right away.
+- The status bar chip is the 3-letter abbreviation (`PRD` · `TST`). A profile value is a filled chip; a temporary value is an outlined chip.
+- When the server type is **Production**, change statements get the two-step confirmation, and object deletion stops if the backup fails.
 
 
-## 명령 팔레트 — 다른 언어·명령 id로도 찾기(10-13)
+## Command Palette — find by other-language names and command ids (10-13)
 
-명령 팔레트(Ctrl+Shift+P)는 화면 언어의 이름으로 보이지만, 찾을 때는 **명령 id**(`edit.lower_case`)와 **다른 언어의 이름**도 맞춥니다. 한국어 화면에서 `lower`로, 영어 화면에서 `소문자`로 "소문자로 / Lower Case"를 찾을 수 있습니다. 보이기/숨기기처럼 상태에 따라 이름이 바뀌는 항목은 두 이름 모두로 찾힙니다.
+The Command Palette (Ctrl+Shift+P) shows names in the UI language, but searching also matches the **command id** (`edit.lower_case`) and **the name in the other language**. On a Korean UI you can find "소문자로 / Lower Case" with `lower`, and on an English UI with `소문자`. Items whose name changes with state, such as show/hide, are found by both names.
 
-## 파일 검색 — 범위(Where) 칸 쓰는 법과 대소문자(10-13)
+## Find in Files — how to use the scope (Where) field and case (10-13)
 
-범위 칸은 **콤마**로 조건을 나눕니다.
+The scope field separates conditions with **commas**.
 
-| 적는 것 | 뜻 | 예 |
+| What you write | Meaning | Example |
 |---|---|---|
-| 폴더·파일 경로 | 그 아래(하위 폴더 포함)에서 찾기 · 여러 개 가능 | `D:\Projects\acme\<프로젝트>, D:\Projects\sybae76\sql-formatter` |
-| `*`·`?`가 든 패턴 또는 `+패턴` | 이것에 맞는 파일만(여러 개 = 하나라도 맞으면) | `*.sql, *.gwf` |
-| `-패턴` | 이것에 맞는 파일은 빼기 | `-*_test.sql` |
-| `<open files>` · `<current file>` | 열린 탭 · 지금 파일의 폴더 | |
+| Folder or file paths | Search under it (including subfolders) · several allowed | `D:\Projects\acme\<project>, D:\Projects\user01\sql-formatter` |
+| A pattern with `*` or `?`, or `+pattern` | Only files that match it (several = matching any one) | `*.sql, *.gwf` |
+| `-pattern` | Leave out files that match it | `-*_test.sql` |
+| `<open files>` · `<current file>` | Open tabs · the folder of the current file | |
 
-- 경로를 하나라도 적으면 그 경로만 찾습니다(열린 탭도 찾으려면 `<open files>`를 더 넣습니다). 패턴만 적으면 기본 범위(열린 탭 + 작업 폴더)에 패턴을 얹습니다.
-- **대소문자**: 범위의 패턴과 경로는 기본으로 **대소문자를 가리지 않습니다**(Windows·macOS·Linux 같음) — `*.gwf`로 `a.GWF`도 찾습니다. 범위 칸 오른쪽 **Aa**를 켜면 대소문자를 구분합니다(`*.gwf` = `b.gwf`만). 검색어 칸의 Aa와는 따로입니다.
-- 대소문자 접기는 범위 패턴·설정 `search.excludes`·기본 제외 폴더에 적용되고, 프로젝트의 `.gitignore` 규칙은 git과 같게 그대로 둡니다.
-- 조건과 무관하게 늘 빠지는 것: 제외 폴더(`.git`·`node_modules`·`target` 등) · `.gitignore` 무시 대상(설정이 켜져 있을 때) · 크기 상한 `search.max_file_kb`를 넘는 파일 — 결과 위 "제외됨(N)"에서 이유를 봅니다.
+- If you write at least one path, only those paths are searched (add `<open files>` to search the open tabs as well). If you write only patterns, they are applied on top of the default scope (open tabs + work folder).
+- **Case**: patterns and paths in the scope are **case-insensitive** by default (same on Windows · macOS · Linux) — `*.gwf` also finds `a.GWF`. Turn on **Aa** at the right of the scope field to match case (`*.gwf` = only `b.gwf`). It is separate from the Aa of the search-term field.
+- Case folding applies to scope patterns, the setting `search.excludes` and the default excluded folders; the project's `.gitignore` rules are kept as they are, the same as git.
+- Always left out regardless of conditions: excluded folders (`.git` · `node_modules` · `target` etc.) · `.gitignore` ignored entries (when the setting is on) · files over the size limit `search.max_file_kb` — see the reasons in "Skipped (N)" in the results.
 
-## 전용 세션 표시 — P 칩(10-13)
+## Private session mark — P chip (10-13)
 
-편집기에서 `CONNECT <프로필>`로 만든 **전용 세션**이 붙은 연결 행은 공유 행과 똑같이 보이고 맨 뒤에 **P 칩**만 붙습니다(같은 계정의 공유·전용은 한 행). 어느 탭이 전용 세션을 쓰는지는 그 행 위에 마우스를 잠시 두면 툴팁 마지막 줄 `전용 탭: Script_1.sql, Script_2.sql`로 봅니다 — 탭 이름을 바꾸거나 저장·닫으면 바로 반영되고, 전용 탭이 모두 닫히면 P 칩도 사라집니다. 서버 헤더에는 "연결 N개 · 전용 M"이 붙습니다.
+A connection row that has a **private session** created with `CONNECT <profile>` in the editor looks exactly like a shared row, with only a **P chip** added at the end (shared and private sessions of the same account are one row). To see which tabs use a private session, hover over the row for a moment: the last line of the tooltip reads `Private tabs: Script_1.sql, Script_2.sql` — renaming, saving or closing a tab is reflected immediately, and when all private tabs are closed the P chip disappears too. The server header shows "N connections · private M".
 
-## 객체 끌어 놓기 · 이름 복사(10-15)
+## Dragging objects · copying names (10-15)
 
-- **끌어 놓기**: 객체 탐색기의 행(테이블 · 뷰 · 컬럼 · 인덱스 · 프로시저 · 패키지 · 폴더 · 서버 행까지)을 누른 채 조금 움직이면 커서 옆에 **이름 칩**이 따라옵니다. 편집기 위에서는 놓을 자리에 캐럿 선이 보이고, 놓으면 그 자리에 이름이 들어갑니다(식별자 인용 규칙 `editor.quote_idents` 그대로). 결과 그리드의 **조건 바**, 패널의 **필터 상자**, 찾기 상자에도 놓을 수 있습니다. 그 밖의 자리에 놓으면 아무 일도 없습니다. **Esc** = 취소.
-- **Shift를 누르면 전체 이름**: 끌면서 Shift를 누르면 칩과 넣는 글이 전체 이름(`스키마.객체` · SQL Server `DB.스키마.객체` · 컬럼 = `…객체.컬럼`)으로 바뀝니다. 우클릭 메뉴의 **이름 복사**도 Shift를 누르면 **전체 이름 복사**로 바뀝니다.
-- **이름 복사는 모든 행에서**: 서버(연결) 행 · 종류 폴더(Tables …) · 하위 폴더(Columns · Indexes …) · 데이터베이스 묶음까지 우클릭 ▸ 이름 복사가 있습니다. 폴더의 전체 이름은 `스키마.Tables`처럼 주인 + 라벨입니다.
-
+- **Drag and drop**: press and slightly move a row in the Object Explorer (table · view · column · index · procedure · package · folder · even a server row) and a **name chip** follows the cursor. Over the editor, a caret line shows the drop position, and dropping inserts the name there (following the identifier quoting rule `editor.quote_idents`). You can also drop onto the result grid's condition bar, a panel's filter box and the find box. Dropping anywhere else does nothing. **Esc** = cancel.
+- **Hold Shift for the full name**: holding Shift while dragging changes the chip and the inserted text to the full name (`schema.object` · SQL Server `DB.schema.object` · column = `…object.column`). In the right-click menu, **Copy name** also becomes **Copy full name** while Shift is held.
+- **Copy name on every row**: server (connection) rows · kind folders (Tables …) · subfolders (Columns · Indexes …) · even the Databases group have right-click ▸ Copy name. The full name of a folder is owner + label, like `schema.Tables`.

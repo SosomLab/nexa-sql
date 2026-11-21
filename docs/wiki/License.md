@@ -1,61 +1,63 @@
-# 라이선스(License)
+# License
 
-Nexa SQL은 **오프라인 라이선스 파일** 하나로 정품을 확인합니다. 서버에 접속하지 않고, 파일은 서명되어 있어 바꾸면 무효가 됩니다.
+**English** | [한국어](License-ko)
 
-## 무료로 쓸 수 있는 것
+Nexa SQL verifies a genuine copy with a single **offline license file**. It does not contact a server, and the file is signed, so any change makes it invalid.
 
-> **지금(09-28 이후)**: 라이선스가 없어도 **모든 기능이 동작합니다**(개인 사용 = 전 기능). 아래 "Pro가 여는 것" 표는 기능 제한을 **켰을 때**(숨은 설정 `license.gates=on` · 기본 끔)의 규칙이며, 앞으로 일부 기능에 제한이 생길 수 있습니다.
+## What you can use for free
 
-접속(4종 DBMS) · 실행 · 결과 그리드(편집 포함) · 스크립트·변수 · 편집기 전부 · 탐색기 · CLI(`nsql run/export/import`) — **성능 제한은 없습니다**(행 수·속도·메모리를 라이선스로 막지 않습니다). 무료판은 상태줄에 `Free · non-commercial use only`가 보입니다(라이선스 PolyForm NC · 상업적 사용은 유료).
+> **Now (since 09-28)**: **every feature works even without a license** (personal use = all features). The "What Pro unlocks" table below is the rule set that applies when feature gating is **turned on** (hidden setting `license.gates=on` · off by default), and some features may be restricted in the future.
 
-## Pro가 여는 것(무료 대체 경로가 있는 편의 기능)
+Connections (4 DBMS types) · running statements · the result grid (including editing) · scripts and variables · the whole editor · the explorer · the CLI (`nsql run/export/import`) — **there are no performance limits** (row counts, speed and memory are never limited by the license). The free edition shows `Free · non-commercial use only` in the status bar (license PolyForm NC · commercial use requires a paid license).
 
-| 기능 | 무료판 | 대체 |
+## What Pro unlocks (convenience features with a free alternative)
+
+| Feature | Free edition | Alternative |
 |---|---|---|
-| Import 창(파일 → 표) | Pro | `nsql import`(CLI · 무료) |
-| 드라이버 확장 관리자에서 설치 | Pro | 확장 폴더에 손으로 복사 |
-| 작업 환경 자동 복원·미저장 탭 복구 | Pro | 프로젝트를 손으로 저장·열기 |
-| 북마크 그룹 | Pro | 기본 북마크(토글·이동)는 무료 |
-| 절별 코드 완성·상세 카드 | Pro | 키워드·객체 이름 완성은 무료 |
-| 값 창의 이미지 미리보기·파일 넣기 | Pro | 값을 파일로 저장한 뒤 열기 |
-| 서식 있는(HTML) 복사 | Pro | 텍스트 복사 |
-| 로그 파일 내보내기 | Pro | 로그 창에서 선택·복사 |
-| 동시 연결 | 2(공유)/2(전용) | 접속 해제 뒤 다른 서버 · 인스턴스 2개 |
-| 편집 탭 | 5 | 탭 닫기 · 프로젝트로 나누기 |
-| 편집 용량 | 2 MB 이상 = 읽기 전용(실행은 됨) | `nsql run <파일>` · 파일 나누기 |
-| 결과 탭 | 2 | 결과를 파일로 저장 · 다시 실행 |
+| Import Data window (file → table) | Pro | `nsql import` (CLI · free) |
+| Installing from the Driver Manager | Pro | Copy the extension folder by hand |
+| Workspace auto-restore and unsaved-tab recovery | Pro | Save and open the project by hand |
+| Bookmark groups | Pro | Plain bookmarks (toggle / next / previous) are free |
+| Clause-aware completion and detail cards | Pro | Keyword and object-name completion is free |
+| Image preview and file insert in the value window | Pro | Save the value to a file and open it there |
+| Formatted (HTML) copy | Pro | Plain-text copy |
+| Log export to a file | Pro | Select and copy in the log window |
+| Simultaneous connections | 2 (shared) / 2 (dedicated) | Disconnect first, then another server · 2 instances |
+| Editor tabs | 5 | Close a tab · split the work into projects |
+| Editing size | 2 MB or more = read-only (running still works) | `nsql run <file>` · split the file |
+| Result tabs | 2 | Save results to a file · re-run |
 
-잠긴 기능은 메뉴에서 사라지지 않습니다 — 누르면 상태줄과 라이선스 창에 "Pro 기능 · 무료 대체: …"가 나옵니다.
+Locked features do not disappear from the menus. When you choose one, the status bar and the License window show "Pro feature. Free alternative: …".
 
-## 라이선스 받기(3단계)
+## Getting a license (3 steps)
 
-![라이선스 창](images/license-window.png)
+![License window](images/license-window.png)
 
-*라이선스 창 — 상태 · 버전 · 요청 코드 복사(기기 코드와 요청 코드는 그림에서 가림)*
+*License window: state · version · copy request code (the machine code and request code are hidden in the picture)*
 
-1. **요청 코드 만들기** — 앱 Help ▸ License…(또는 상태줄 배지 클릭) → 이름·이메일 입력 → **요청 코드 복사**. 명령줄: `nsql license request "이름" 이메일`. 한 줄이며 이 PC의 기기 ID **해시**만 담깁니다.
-2. **이메일로 보내기** — 요청 코드 한 줄을 **kiros33@sosomlab.com** 으로 보냅니다(창의 안내 줄에도 적혀 있습니다). 발급되면 `nexa-sql.license` 파일이 첨부되어 옵니다.
-3. **설치** — 라이선스 창 ▸ **라이선스 파일 열기…** 또는 `nsql license install <파일>`. 검증을 통과한 파일만 `<설정 폴더>/license/`에 복사됩니다(원본은 그대로). `nsql license status`로 `licensed`를 확인합니다.
+1. **Create a request code**: in the app, Help ▸ License (or click the status bar badge) → enter your name and e-mail → **Copy request code**. Command line: `nsql license request "Name" email`. It is a single line and contains only a **hash** of this PC's machine ID.
+2. **Send it by e-mail**: send the one-line request code to **kiros33@sosomlab.com** (the address is also in the hint line of the window). Once issued, a `nexa-sql.license` file comes back as an attachment.
+3. **Install**: License window ▸ **Open license file…** or `nsql license install <file>`. Only a file that passes verification is copied to `<settings folder>/license/` (the original stays as it is). Check for `licensed` with `nsql license status`.
 
-## PC를 바꾸거나 추가할 때
+## Changing or adding a PC
 
-라이선스는 등록한 PC(개인 = 최대 5대)에서만 유효합니다. 새 PC에서 요청 코드를 만들어 보내면 같은 라이선스 ID로 **재발급**(연 5회)되고, 파일만 교체하면 됩니다. 다른 PC의 파일을 복사해 오면 `invalid(machine)`으로 거부됩니다.
+A license is valid only on the registered PCs (personal = up to 5). Create a request code on the new PC and send it, and the license is **reissued** under the same license ID (5 times a year); you only need to replace the file. A file copied from another PC is rejected as `invalid(machine)`.
 
-## 백업·제거
+## Backup and removal
 
-- 백업: `nsql license export <파일>`(설치 파일 복사) · 복원: `nsql license import <파일>`(= install).
-- 제거: 라이선스 창 ▸ 제거 또는 `nsql license remove`(사용자 폴더 파일만 지웁니다).
-- **유효기간**은 기본 **발급일 + 3년**(파일의 `expires` · 창의 Expires)입니다. 만료 뒤에는 무료 수준이 되며 재발급으로 갱신합니다.
-- **버전 범위**: 라이선스는 발급 당시의 **메이저 버전**(창의 "Valid up to major" · 예 `0.x`)까지 유효하고, 메이저가 바뀐 판에서는 새 라이선스가 필요합니다. 특정 버전부터 새 라이선스가 필요한 경우 "Invalid from version"에 그 버전이 적힙니다. 범위 밖 판에서는 `outdated`(무료 수준)이 되고 **이전 판은 그대로 정식**입니다.
+- Backup: `nsql license export <file>` (copies the installed file) · restore: `nsql license import <file>` (= install).
+- Removal: License window ▸ Remove, or `nsql license remove` (deletes only the file in the user folder).
+- **Validity period**: by default **issue date + 3 years** (`expires` in the file · Expires in the window). After expiry you are back to the free level; renew by reissue.
+- **Version range**: a license is valid up to the **major version** at the time of issue ("Valid up to major" in the window · e.g. `0.x`), and an edition with a different major version needs a new license. If a new license is required from a specific version on, "Invalid from version" shows that version. Editions outside the range become `outdated` (free level), and **earlier editions remain fully licensed**.
 
-## 상태가 이상할 때
+## When the state looks wrong
 
-| 상태줄 | 뜻 | 할 일 |
+| Status bar | Meaning | What to do |
 |---|---|---|
-| `⚠ License invalid (signature)` | 파일이 손상·변조됨 | 받은 파일을 다시 설치 |
-| `⚠ License invalid (machine)` | 다른 PC의 파일 | 이 PC의 요청 코드로 재발급 |
-| `⚠ License invalid (norootkey)` | 앱이 아직 공개키를 모르는 판(내부 빌드) | 정식 배포판 사용 |
-| `⚠ License does not cover this version` | 이 판이 `updates_until` 뒤 · 메이저가 바뀜 · `max_version` 이후 | 재발급 또는 이전 판 |
-| `⚠ License expired` | 체험·구독 만료 | 재발급 |
+| `⚠ License invalid (signature)` | The file is damaged or tampered with | Reinstall the file you received |
+| `⚠ License invalid (machine)` | A file from another PC | Get it reissued with this PC's request code |
+| `⚠ License invalid (norootkey)` | An edition whose app does not know the public key yet (internal build) | Use an official release |
+| `⚠ License does not cover this version` | This edition is after `updates_until` · the major version changed · at or after `max_version` | Reissue, or use an earlier edition |
+| `⚠ License expired` | Trial or subscription expired | Reissue |
 
-개발자용: Debug 빌드는 게이트가 기본 꺼져 있습니다(`license.gates_dev` · `nsql config set license.gates_dev on`으로 켜 시험). Release 빌드는 항상 켜집니다.
+For developers: the gates are off by default in both Debug and Release builds (D-145). To test them, turn on the hidden setting `license.gates` (`nsql config set license.gates on` · the old name `license.gates_dev` is still read).
