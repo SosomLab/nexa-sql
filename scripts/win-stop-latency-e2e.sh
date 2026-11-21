@@ -7,7 +7,7 @@
 #   판정선(권장): 각 ≤ 2000 ms. OOB(TCP urgent)가 막힌 망에서는 Oracle break가 서버의 다음 읽기까지 지연될 수 있다(44 §6).
 # 사용: scripts/win-stop-latency-e2e.sh -o <출력폴더> [-g target/debug/nexa-sql.exe] [-P <실제 설정 폴더>]
 #        [-O APPDB] [-m PLANDB] [-r Repository] [-y <MySQL 프로필|접속 문자열>] [-w 3000(실행 뒤 ■까지 ms)] [-l 2000(판정선 ms)]
-#        (-O/-m/-r/-y 빈 값 = 건너뜀 · -y 기본 = 건너뜀 · 예 -y 'mysql://nexa:nexa@127.0.0.1:3306/nexa' · 10-22 T-387 취소 실측)
+#        (-O/-m/-r/-y 빈 값 = 건너뜀 · -y 기본 = 건너뜀 · 예 -y 'mysql://<user>:<password>@<host>:3306/<db>' · 10-22 T-387 취소 실측)
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/timeout.sh"   # macOS = GNU timeout 없음 → 대역(130차 mac)
