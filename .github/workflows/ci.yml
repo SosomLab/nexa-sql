@@ -1,10 +1,20 @@
 # CI — "main은 항상 green"(docs/16 §3). 3타깃 × fmt/clippy/test.
 # ★ nexa-sql은 형제 저장소 ../nexa-ui를 path 의존한다(DR-4) → 두 저장소를 나란히 체크아웃한다.
 name: ci
+# ★ 속도(사용자 11-21 · 조사 = 정상 6.5분 · 이상치는 macOS 러너 대기 10~16분):
+#   - 문서만 바뀐 push/PR은 돌지 않는다(paths-ignore) — 코드가 한 줄이라도 섞이면 전부 돈다.
+#   - 같은 가지에 새 push가 오면 앞 실행을 취소한다(concurrency · main 포함 — 최신 커밋 판정으로 충분 · 겹친 실행이 러너를 차지하던 것).
+#   - Linux의 xvfb GUI 점검(순차 16 시나리오 ≈ 187초 = 전체 벽시계를 정하던 줄)은 별도 job `gui`로 떼어 나란히 돈다.
 on:
   push:
     branches: [main]
+    paths-ignore: ["docs/**", "**/*.md"]
   pull_request:
+    paths-ignore: ["docs/**", "**/*.md"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -83,13 +93,38 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo test --workspace --target x86_64-unknown-linux-gnu
         working-directory: nexa-sql/extensions/sdk
+
+  # ★ GUI 화면 점검(Linux · Xvfb) — `check`에서 떼어 나란히 돈다(11-21 속도). 자기 캐시로 `nexa-sql`·`nsql`만 빌드한다.
+  gui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: nexa-sql
+      - uses: actions/checkout@v4
+        with:
+          repository: SosomLab/nexa-ui
+          path: nexa-ui
+      - uses: actions/checkout@v4
+        with:
+          repository: SosomLab/nexa-license
+          path: nexa-license
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: nexa-sql
+      - name: DuckDB 런타임 캐시 비우기(rust-cache 뒤 · LNK1181)
+        shell: bash
+        run: rm -rf target/*/build/libduckdb-sys-* target/*/*/build/libduckdb-sys-* nexa-sql/target/*/build/libduckdb-sys-* nexa-sql/target/*/*/build/libduckdb-sys-* target/*/build/libduckdb-sys target/*/*/build/libduckdb-sys nexa-sql/target/*/build/libduckdb-sys nexa-sql/target/*/*/build/libduckdb-sys
+      - name: fonts (linux)
+        run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk fonts-dejavu-core fonts-noto-core unixodbc-dev
+        working-directory: .
       # ★ T-458(11-01 · 사용자 "리눅스는 xvfb로" · D-435): GUI 기능 점검을 Xvfb 가상 디스플레이에서 — scripts/lib/xvfb.sh가 스크립트를
       #   xvfb-run 아래로 다시 띄운다(창은 러너 화면에 뜨지 않음 · 키 주입 0). 1단계 = 기동·창 수·덤프 판정 시나리오 일부(Debug exe ·
       #   FC_WAIT_SCALE 2 = 기동 지연 보정). 2단계(전수)는 시간 실측 뒤 · 맥·윈도우 동일 기법 = T-459 헤드리스 백엔드.
       #   ★ 1차 실행(ci 41214096070) = 앱이 Xvfb 안에서 즉시 종료(5/5 exited · 원인 원문 없음) → winit X11 런타임(libxkbcommon · xcb · xcursor…)을
       #   함께 설치하고, 실패하면 stderr·ldd를 바로 출력한다(산출물 업로드 없이 로그로).
       - name: xvfb func-check (linux · subset)
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get install -y -qq xvfb x11-utils libxkbcommon0 libxkbcommon-x11-0 libx11-xcb1 libxcb-shm0 libxcb-render0 libxcb-xfixes0 libxcb-randr0 libxcursor1 libxi6 libxrandr2
           cargo build -q -p nexa-sql -p nsql-cli
@@ -100,7 +135,7 @@ jobs:
             xvfb-run -a target/debug/nexa-sql & HP=$!; sleep 7; kill $HP 2>/dev/null; wait $HP 2>/dev/null || true
           test -s target/func-check/headless.png && head -c 8 target/func-check/headless.png | od -An -c && ls -l target/func-check/headless.png
       - name: xvfb func-check diagnostics (on failure)
-        if: runner.os == 'Linux' && failure()
+        if: failure()
         run: |
           for f in target/func-check/*.txt; do echo "== $f"; head -n 40 "$f" 2>/dev/null; done
           echo "== ldd"; ldd target/debug/nexa-sql | grep -iE "not found|xkb|xcb|x11" || true

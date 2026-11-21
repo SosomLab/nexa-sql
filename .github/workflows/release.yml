@@ -154,6 +154,9 @@ jobs:
         with:
           workspaces: nexa-sql
           key: release-${{ matrix.slug }}-${{ matrix.variant }}
+          # 태그·수동 실행 때만 도는 빌드 — 캐시를 **저장하지 않는다**(11-21: 저장소 캐시가 한도 10 GB를 넘어 매 push용 ci 캐시가
+          #   밀려날 위험 · 릴리스 빌드는 그만큼 느려져도 된다 · 남아 있는 옛 캐시는 복원에 쓰이다 LRU로 사라진다).
+          save-if: false
 
       # ── Linux: 포장 도구 + 폰트(--smoke가 nexa-font로 한글 폰트를 찾는다 · ci.yml과 같은 세트) ──
       # ★ libduckdb-sys `download-lib`의 OUT_DIR(duckdb.lib/.dll ≈ 60 MB)이 rust-cache **정확 일치** 복원에서 빠져 링크가 LNK1181로 실패했다

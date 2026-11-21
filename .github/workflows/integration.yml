@@ -9,6 +9,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# 같은 가지에 새 push가 오면 앞 실행을 취소한다(11-21 속도 · ci.yml과 같은 규칙).
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   NSQL_ORACLE_URL: oracle://nexa:nexa@localhost:1521/FREEPDB1
