@@ -64,7 +64,8 @@ step() {
   done
   wait "$pid" 2>/dev/null; local rc=$?; local dt=$((SECONDS - t0))
   [ "$to" = 1 ] && rc=124
-  printf '%s\t%s\t%s\t%s\n' "$LEVEL" "$name" "$dt" "$(date +%F)" >> "$HIST"
+  # 이력 = 실제로 끝까지 돈 판(PASS · FAIL)만 — SKIP(1 s)·TIMEOUT을 넣으면 중앙값이 줄어 다음 상한이 120 s로 떨어진다(11-22 it 단계 TIMEOUT).
+  [ $rc -ne 99 ] && [ $rc -ne 124 ] && printf '%s\t%s\t%s\t%s\n' "$LEVEL" "$name" "$dt" "$(date +%F)" >> "$HIST"
   if [ $rc -eq 0 ]; then row "$name" PASS "$dt" "$(grep -m1 -E 'test result|통과|PASS' "$OUT/$name.log" 2>/dev/null | cut -c1-80)"
   elif [ $rc -eq 99 ]; then row "$name" SKIP "$dt" "$(tail -1 "$OUT/$name.log" | cut -c1-120)"
   else

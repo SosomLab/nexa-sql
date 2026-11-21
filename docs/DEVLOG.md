@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-22 새벽 (Windows · 커서 닫기 · 줄바꿈 캐시 묶음 검증)** — verify v2 ✓(679/0/6 · V1 7시나리오) · nexa-ui 696/0/6 · T-93 ⓑ 실서버 Oracle `v$open_cursor` 결과 탭·편집기 탭 닫기 1→0 · 대조군 1→1(새 V1 `cursor-close`) · T-102 #7 Debug 2 MB 켬 224 → 21 ms · `verify.sh` 이력 결함 고침 · Debug 42896 · [journal 11-22](journal/2026-11-22.md)
+
 - **2026-11-21 밤 (Windows · 마감 · 검증 흐름 D-491)** — `scripts/verify.sh` · 작업판 `board.sh`(대리 기록 · 원격 감시 ⑨⑩) · `status.sh` · V1 시나리오 6 · [claude-batch-flow](claude-batch-flow.md)(작성 중) · B-2 = 의존 디버그 끔 실제 편집 증분 13.2 → 7.3 s · PDB −32 % · lld 이득 불명확 → 디버그 끔만 권장 · B-1 quick 실패 0(4분 55초) · v2 첫 실행 test FAIL = env 상속 결함 고침 · 나머지 중단(P0 정리) · T-510 · [journal 11-21 §31](journal/2026-11-21.md)
 
 - **2026-11-21 밤 (Windows · 위키 영어 주판)** — 19쪽 영어판 + `-ko` 병행 · `_Sidebar.md` · 고친 사실 89건 · 예시 익명화 · 16 §2 규칙 11 · 캡처는 이미 영어(갱신 범위 확인 중) · [journal 11-21 §29](journal/2026-11-21.md)
