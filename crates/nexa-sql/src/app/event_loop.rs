@@ -229,6 +229,7 @@ impl ApplicationHandler<Wake> for App {
     }
 
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
+        let _stall = StallGuard::new("about_to_wait");
         if self.exit_requested {
             self.finish_exit(el);
             return;
@@ -823,6 +824,7 @@ impl ApplicationHandler<Wake> for App {
     }
 
     fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        let _stall = StallGuard::new("window_event");
         // 한글 입력 진단(`NSQL_TRACE_IME=1` · T-139 · 평소 비용 = 환경 변수 조회 없음 — 기동 때 한 번 읽어 둔 깃발):
         //   창·키(논리/물리/text)·IME 사건을 온 순서대로 stderr에. 판정 로직은 건드리지 않는다.
         if self.trace_ime {
@@ -2555,6 +2557,32 @@ impl App {
         }
         if self.tool_layout_dirty {
             self.save_tool_layout();
+        }
+    }
+}
+
+/// ★ 주 스레드 멈춤 계측(T-505 · 11-21): 이벤트 루프의 한 회차(`about_to_wait`)나 창 사건 하나의 처리가 1초를 넘으면
+///   stderr에 한 줄(`[stall] <ms> ms in <단계>`) — 11-21에 운영 2단 확인이 "시작하자마자 만료"된 것이 주 스레드가 수 초
+///   멈춘 탓으로 보였으나 다시 재현되지 않아, 다음에 났을 때 멈춘 단계와 길이를 바로 읽으려는 것. 평소 비용 = 시각 두 번.
+struct StallGuard {
+    what: &'static str,
+    at: Instant,
+}
+
+impl StallGuard {
+    fn new(what: &'static str) -> Self {
+        Self {
+            what,
+            at: Instant::now(),
+        }
+    }
+}
+
+impl Drop for StallGuard {
+    fn drop(&mut self) {
+        let ms = self.at.elapsed().as_millis();
+        if ms >= 1000 {
+            eprintln!("[stall] {ms} ms in {}", self.what);
         }
     }
 }
