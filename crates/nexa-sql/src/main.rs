@@ -628,6 +628,11 @@ struct App {
     dmg_rect: std::cell::Cell<Option<Rect>>,
     dmg_prev: std::collections::VecDeque<Vec<Rect>>,
     frame_clip: Option<Rect>,
+    /// ★ 미적용 편집이 있는 결과 탭을 닫으려 할 때 미뤄 둔 동작(종류 0 = 닫기 · 1 = 다른 탭 · 2 = 오른쪽 탭, 기준 탭 자리) —
+    ///   확인 팝업(`rclose.*`)의 답을 기다린다(`app/grid_results.rs` · 사용자 11-21).
+    rclose_pending: Option<(u8, usize)>,
+    /// 확인을 받은 재진입(한 번 쓰고 내린다).
+    rclose_ok: bool,
     /// `NSQL_TRACE_IME=1` — 키·IME 사건을 stderr로(T-139 진단).
     trace_ime: bool,
     /// 지금 한글을 앱이 조합하는가(`sync_hangul_mode` · None = 아직 안 맞춤).
@@ -2190,6 +2195,8 @@ fn main() {
         dmg_rect: std::cell::Cell::new(None),
         dmg_prev: std::collections::VecDeque::new(),
         frame_clip: None,
+        rclose_pending: None,
+        rclose_ok: false,
         trace_ime: std::env::var_os("NSQL_TRACE_IME").is_some(),
         hangul_app: None,
         input_at: None,

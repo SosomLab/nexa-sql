@@ -369,7 +369,9 @@ fn read_source(path: &str) -> String {
 /// 환경 변수 → 터미널 프롬프트로 채우고, **그래도 없으면 서버에 가지 않고 거절한다**(09-21: 터미널이 아닌 실행에서 스크립트의
 /// `CONNECT user@host`가 빈 비밀번호로 로그인을 시도해 서버에 실패 기록을 남겼다 — 되풀이되면 계정이 잠긴다 · GUI와 같은 규칙).
 /// 빈 비밀번호로 붙으려면 `user:@host`로 명시한다.
-fn opener(default_dialect: Dialect) -> Opener {
+/// `no_prompt` = `--no-prompt`: 스크립트 안 `CONNECT user@host`처럼 **나중에 여는 접속**도 터미널에 묻지 않는다
+/// (`--password-stdin` · `NSQL_PASSWORD`는 여전히 쓴다 · 없으면 `ErrPasswordRequiredCli` — 종전에는 이 단계가 늘 물었다 · 11-21).
+fn opener(default_dialect: Dialect, no_prompt: bool) -> Opener {
     // ★ 접속을 여는 모든 명령(run·shell·explain·import·export·cat·conn test)이 같은 드라이버 설정·자동 설치 정책을 탄다 —
     //   🔧 10-23 사용자 실기: explain/import/export/cat은 `apply_load_switches`를 안 거쳐 자동 설치가 꺼진 것처럼 -1350.
     apply_driver_switches();
@@ -380,7 +382,7 @@ fn opener(default_dialect: Dialect) -> Opener {
             }
             let mut filled = spec.clone();
             let label = spec.redacted();
-            term::ensure_password(&mut filled, false, &label);
+            term::ensure_password(&mut filled, no_prompt, &label);
             if password_missing(&filled, default_dialect) {
                 return Err(DbError {
                     code: None,
@@ -1838,7 +1840,7 @@ fn start_live(
     let join = std::thread::Builder::new()
         .name("nsql-live".into())
         .spawn(move || {
-            let mut open = opener(dialect);
+            let mut open = opener(dialect, true);
             let mut sess = match open(&spec_t) {
                 Ok(s) => s,
                 Err(e) => {
@@ -1922,7 +1924,7 @@ fn cmd_run(o: &Opts) -> i32 {
     let src = read_source(path);
     let mut printer = Printer::new(o, o.format.clone(), true);
     // run = 무제한(D-68 · `--max-rows`면 그 값) · 커서 유지 없음(배치는 이어 받을 일이 없다).
-    let mut runner = Runner::new(o.dialect, opener(o.dialect))
+    let mut runner = Runner::new(o.dialect, opener(o.dialect, o.no_prompt))
         .with_max_rows(o.max_rows)
         .with_fetch_size(fetch_settings().0)
         .with_keep_cursor(false)
@@ -2217,7 +2219,7 @@ fn cmd_import(o: &Opts) -> i32 {
         cancel: None,
     };
     let mut printer = Printer::new(o, Format::Grid, false);
-    let mut runner = Runner::new(o.dialect, opener(o.dialect))
+    let mut runner = Runner::new(o.dialect, opener(o.dialect, o.no_prompt))
         .with_define_mode(&define_setting())
         .with_define_in_strings(define_in_strings_setting())
         .with_max_rows(1)
@@ -2345,7 +2347,7 @@ fn cmd_shell(o: &Opts) -> i32 {
     // ★ 셸만 GUI 설정 `session.autocommit`(기본 on)을 따른다(사용자 결정 ⑤ b · 10-29) — `nsql run` 등 나머지 러너는 종전대로
     //   수동 + 종료 때 커밋(`commit_at_exit` · SQL*Plus 관례 · 스크립트의 명시 COMMIT 전제). 셸 안 `SET AUTOCOMMIT`은 여전히 우선.
     let autocommit = st.as_ref().is_none_or(|s| s.flag("session.autocommit"));
-    let mut runner = Runner::new(o.dialect, opener(o.dialect))
+    let mut runner = Runner::new(o.dialect, opener(o.dialect, o.no_prompt))
         .with_autocommit(autocommit)
         .with_max_rows(printer.shell_limit())
         .with_fetch_size(fetch_size)
@@ -2540,7 +2542,7 @@ fn cmd_explain(o: &Opts) -> i32 {
         }
     };
     let mut printer = Printer::new(o, o.format.clone(), false);
-    let mut runner = Runner::new(o.dialect, opener(o.dialect))
+    let mut runner = Runner::new(o.dialect, opener(o.dialect, o.no_prompt))
         .with_define_mode(&define_setting())
         .with_define_in_strings(define_in_strings_setting())
         .with_max_rows(o.max_rows)
@@ -2663,7 +2665,7 @@ fn cmd_export(o: &Opts) -> i32 {
     let format = export_format(&o.format, o.table.as_deref(), &sql);
     let mut printer = Printer::new(o, Format::Grid, false);
     // export = 무제한(D-68) · 커서 유지 없음 · 왕복당 행수는 설정(`db.fetch_size`).
-    let mut runner = Runner::new(o.dialect, opener(o.dialect))
+    let mut runner = Runner::new(o.dialect, opener(o.dialect, o.no_prompt))
         .with_define_mode(&define_setting())
         .with_define_in_strings(define_in_strings_setting())
         .with_max_rows(o.max_rows)

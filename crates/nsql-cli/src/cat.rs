@@ -43,7 +43,7 @@ fn open(o: &Opts) -> Result<Box<dyn Session>, String> {
         return Err(nsql_i18n::t(nsql_i18n::Msg::CliErrNeedTarget).to_string());
     };
     let spec = resolve_target(target, o.dialect)?;
-    let mut op = opener(o.dialect);
+    let mut op = opener(o.dialect, o.no_prompt);
     op(&spec).map_err(|e| e.to_string())
 }
 

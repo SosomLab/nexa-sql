@@ -1660,7 +1660,7 @@ cells={n}
         // (프로젝트 명령 `project.*`는 `menu_action` 앞머리에서 `project_cmd`로 — 메뉴바·팔레트와 같은 길.)
         // 자체 시험: 상태 팝업의 선택(`multi.open`/`multi.cancel` · `tx.*` · `disc.*` · `close.*`)은 팝업 픽 경로로(메뉴 동작이 아니다 ·
         //   09-22 기능 점검 S03 — `multi.open`이 `menu_action`으로 떨어져 아무 일도 안 했다).
-        if ["multi.", "tx.", "disc.", "close."]
+        if ["multi.", "tx.", "disc.", "close.", "rclose."]
             .iter()
             .any(|p| id.starts_with(p))
         {

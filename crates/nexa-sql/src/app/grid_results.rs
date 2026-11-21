@@ -991,8 +991,25 @@ impl App {
         let n = self.panel.tabs.len();
         match a {
             ResultAction::Activate(i) => self.activate_result(i),
-            ResultAction::Close(i) => self.close_result_tab(i),
+            ResultAction::Close(i) => {
+                let ids: Vec<u64> = self.panel.tabs.get(i).map(|t| t.id).into_iter().collect();
+                if self.rclose_ask(&ids, (0, i)) {
+                    return;
+                }
+                self.close_result_tab(i);
+            }
             ResultAction::CloseOthers(i) => {
+                let keep_id = self.panel.tabs.get(i).map(|t| t.id);
+                let ask: Vec<u64> = self
+                    .panel
+                    .tabs
+                    .iter()
+                    .filter(|t| Some(t.id) != keep_id && !t.pinned)
+                    .map(|t| t.id)
+                    .collect();
+                if self.rclose_ask(&ask, (1, i)) {
+                    return;
+                }
                 self.activate_result(i);
                 let keep = self.grid_tab;
                 let ids: Vec<u64> = self
@@ -1009,6 +1026,17 @@ impl App {
                 }
             }
             ResultAction::CloseRight(i) => {
+                let ask: Vec<u64> = self
+                    .panel
+                    .tabs
+                    .iter()
+                    .skip(i + 1)
+                    .filter(|t| !t.pinned)
+                    .map(|t| t.id)
+                    .collect();
+                if self.rclose_ask(&ask, (2, i)) {
+                    return;
+                }
                 let ids: Vec<u64> = self
                     .panel
                     .tabs
@@ -1090,6 +1118,63 @@ impl App {
         let t = self.panel.tabs.remove(from);
         self.panel.tabs.insert(to, t);
         self.panel.active = self.panel.index_of(active_id).unwrap_or(0);
+    }
+
+    /// 그 결과 탭에 미적용 편집이 있는가 — 활성 탭의 그리드는 `self.grid`에 나와 있다(탭 자리에는 빈 그리드).
+    fn result_tab_dirty(&self, id: u64) -> bool {
+        if id == self.grid_tab {
+            return self.grid.edit_dirty();
+        }
+        self.panel
+            .tabs
+            .iter()
+            .find(|t| t.id == id)
+            .is_some_and(|t| t.grid.edit_dirty())
+    }
+
+    /// ★ 닫으려는 결과 탭에 **미적용 편집**이 있으면 묻는다(사용자 11-21 · 종전에는 묻지 않고 닫혀 편집이 사라졌다) → `true` =
+    ///   물었다(동작을 미뤄 두고 호출자는 그만둔다). 확인(`rclose.discard`)이면 같은 동작을 다시 태운다 · 편집기 탭 닫기 확인과
+    ///   같은 부품(상태 팝업). `what` = (종류, 기준 탭 자리).
+    fn rclose_ask(&mut self, ids: &[u64], what: (u8, usize)) -> bool {
+        if std::mem::take(&mut self.rclose_ok) {
+            return false;
+        }
+        let dirty = ids.iter().filter(|&&id| self.result_tab_dirty(id)).count();
+        if dirty == 0 {
+            return false;
+        }
+        use nexa_ctl::controls::ctxmenu::CtxItem;
+        self.sess.status = tf(Msg::StResultCloseDirty, &[&dirty.to_string()]);
+        let items = vec![
+            CtxItem::item("rclose.discard", t(Msg::MnResultCloseDiscard)).with_danger(true),
+            CtxItem::Separator,
+            CtxItem::item("rclose.cancel", t(Msg::MnCloseCancel)),
+        ];
+        let r = self
+            .panel
+            .tab_rect(what.1)
+            .map_or(self.status_tx_rect, |r| Rect::new(r.x, r.bottom(), 0, 0));
+        self.rclose_pending = Some(what);
+        self.open_status_popup(r, items);
+        self.redraw();
+        true
+    }
+
+    /// 확인 팝업의 답(`rclose.*`) — 버리기 = 미뤄 둔 닫기를 그대로 다시 · 그 밖(취소 · 바깥 클릭)은 아무것도 하지 않는다.
+    pub(crate) fn rclose_pick(&mut self, id: &str) {
+        let Some((kind, i)) = self.rclose_pending.take() else {
+            return;
+        };
+        if id != "rclose.discard" {
+            return;
+        }
+        self.rclose_ok = true;
+        self.panel_action(match kind {
+            0 => ResultAction::Close(i),
+            1 => ResultAction::CloseOthers(i),
+            _ => ResultAction::CloseRight(i),
+        });
+        self.rclose_ok = false;
     }
 
     /// 결과 탭 닫기 = rows·커서 즉시 해제(D-72). 활성 탭이면 이웃을 활성으로 · 마지막 하나면 빈 탭으로 교체.

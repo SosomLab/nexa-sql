@@ -592,7 +592,12 @@ impl ConnectSpec {
             .filter(|f| match f {
                 F::Host => empty(&self.host),
                 F::Database => empty(&self.database),
-                F::User => empty(&self.user),
+                // ★ Oracle OS 인증의 접속 문자열 꼴(`/@host:1521/svc` · `:@host` · nopassword 프로필에 사용자 없음): 빈 비밀번호를
+                //   **명시**하고 사용자가 비면 사용자를 빠진 항목으로 세지 않는다(접속 창 `no_pw_exempt`와 같은 뜻 · T-133 · 11-21).
+                F::User => {
+                    empty(&self.user)
+                        && !(dialect == Dialect::Oracle && self.password.as_deref() == Some(""))
+                }
                 F::Password => with_password && empty(&self.password),
                 F::Port | F::Schema => false,
             })
@@ -1098,6 +1103,32 @@ mod tests {
         );
         let p = ConnectSpec::parse("/ as sysdba").unwrap();
         assert!(p.missing_login(Dialect::Oracle, true).is_empty(), "OS 인증");
+        // ★ 호스트를 준 OS 인증(`/@h:1521/svc` = 빈 사용자 + 빈 비밀번호 명시)도 통과 · 다른 방언은 사용자가 여전히 필수.
+        let p = ConnectSpec::parse("/@h:1521/svc").unwrap();
+        assert_eq!(p.password.as_deref(), Some(""));
+        assert!(
+            p.missing_login(Dialect::Oracle, false).is_empty(),
+            "OS 인증(호스트)"
+        );
+        let p = ConnectSpec {
+            host: Some("h".into()),
+            password: Some(String::new()),
+            ..ConnectSpec::default()
+        };
+        assert_eq!(p.missing_login(Dialect::Postgres, false), vec![F::User]);
+        // ★ 호스트를 준 OS 인증(`/@h:1521/svc` = 빈 사용자 + 빈 비밀번호 명시)도 통과 · 다른 방언은 사용자가 여전히 필수.
+        let p = ConnectSpec::parse("/@h:1521/svc").unwrap();
+        assert_eq!(p.password.as_deref(), Some(""));
+        assert!(
+            p.missing_login(Dialect::Oracle, false).is_empty(),
+            "OS 인증(호스트)"
+        );
+        let p = ConnectSpec {
+            host: Some("h".into()),
+            password: Some(String::new()),
+            ..ConnectSpec::default()
+        };
+        assert_eq!(p.missing_login(Dialect::Postgres, false), vec![F::User]);
         let p = ConnectSpec::default();
         assert_eq!(p.missing_login(Dialect::Sqlite, false), vec![F::Database]);
         let p = ConnectSpec::parse("clickhouse://h").unwrap();

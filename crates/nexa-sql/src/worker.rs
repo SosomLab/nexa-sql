@@ -479,9 +479,25 @@ pub(crate) fn stale_password(dialect: Dialect, e: &DbError) -> bool {
                 || matches!(e.code, Some(18456 | 1045))
                 || low.contains("login failed for user")
                 || low.contains("access denied for user")
+                // SQLSTATE 28000(인증 실패 부류)인데 native 코드를 모를 때(없음 · 0)도 틀린 자격으로 본다 — 문구가 번역돼
+                //   영어 서명이 안 걸리는 드라이버 대비(11-21). 잠김·만료로 알려진 문구는 뺀다(다시 물어도 같은 실패).
+                || (matches!(e.code, None | Some(0))
+                    && nsql_core::dberr::odbc_sqlstate(&e.message).as_deref() == Some("28000")
+                    && !low.contains("ora-28000")
+                    && !low.contains("ora-28001")
+                    && !low.contains("locked"))
         }
         _ => false,
     }
+}
+
+/// 한 접속 시도에서 서버에 보내는 **틀린 비밀번호**의 상한(금고에서 꺼낸 값의 거부 포함) — 계정 잠김 방지.
+const ASK_WRONG_MAX: u8 = 2;
+
+/// 입력한 비밀번호가 거부됐을 때 **한 번 더 물을까**(순수 · 사용자 11-21): 인증 실패(`stale`)이고 이번 거부까지 세어도
+/// 상한에 닿지 않았을 때만. `wrong_so_far` = 이번 거부 전까지의 틀린 시도 수.
+pub(crate) fn ask_again(stale: bool, wrong_so_far: u8) -> bool {
+    stale && wrong_so_far + 1 < ASK_WRONG_MAX
 }
 
 /// **자격 자리의 이름** — 비밀번호만 뺀 "같은 서버·계정"(= [`same_server`]가 보는 것과 같은 항목). 접속 문자열의 `?schema=`·`?env=`
@@ -905,37 +921,54 @@ pub(crate) fn spawn(
                         } else {
                             vault_trace("recall(miss) → ask", &vault_id);
                         }
-                        // 밀린 답(앞선 물음의 늦은 답)은 버린다 — `Secret`이라 버려지면서 지워진다.
-                        while pw_rx.try_recv().is_ok() {}
-                        let _ = ask_tx.send(ConnOutcome::PasswordNeeded {
-                            target: spec.redacted(),
-                            rejected,
-                        });
-                        if let Ok(f) = ask_wake.lock() {
-                            f();
-                        }
-                        let secret = match pw_rx.recv() {
-                            Ok(PwReply::Value(s)) => s,
-                            Ok(PwReply::Cancel) | Err(_) => {
-                                return Err(DbError {
-                                    code: None,
-                                    message: t(Msg::ErrPasswordCancelled).into(),
-                                    position: None,
-                                });
+                        // ★ 묻기 — 입력한 값이 **인증 실패**면 한 번 더 묻는다(사용자 11-21 · 종전에는 오류로 끝나 다시 실행해야 했다).
+                        //   계정 잠김 방지: 한 접속 시도에서 서버에 가는 틀린 시도는 금고 값의 거부까지 합쳐 `ASK_WRONG_MAX`회까지.
+                        let mut wrong = u8::from(rejected);
+                        loop {
+                            // 밀린 답(앞선 물음의 늦은 답)은 버린다 — `Secret`이라 버려지면서 지워진다.
+                            while pw_rx.try_recv().is_ok() {}
+                            let _ = ask_tx.send(ConnOutcome::PasswordNeeded {
+                                target: spec.redacted(),
+                                rejected,
+                            });
+                            if let Ok(f) = ask_wake.lock() {
+                                f();
                             }
-                        };
-                        // 이 접속에만 쓰는 스펙 사본 — 드라이버가 돌아오면 비밀번호를 0으로 덮어쓴다(성공·실패 공통).
-                        let mut once = spec.clone();
-                        once.password = Some(secret.expose().to_string());
-                        let r = open_auto(&once);
-                        nsql_core::secret::wipe_opt(&mut once.password);
-                        // 접속에 **성공한** 값만 금고에 든다(봉투 · 평문 아님).
-                        if r.is_ok() && remember {
-                            vault_trace("remember(asked)", &vault_id);
-                            nsql_vault::session::remember(&vault_id, &secret);
+                            let secret = match pw_rx.recv() {
+                                Ok(PwReply::Value(s)) => s,
+                                Ok(PwReply::Cancel) | Err(_) => {
+                                    return Err(DbError {
+                                        code: None,
+                                        message: t(Msg::ErrPasswordCancelled).into(),
+                                        position: None,
+                                    });
+                                }
+                            };
+                            // 이 접속에만 쓰는 스펙 사본 — 드라이버가 돌아오면 비밀번호를 0으로 덮어쓴다(성공·실패 공통).
+                            let mut once = spec.clone();
+                            once.password = Some(secret.expose().to_string());
+                            let r = open_auto(&once);
+                            nsql_core::secret::wipe_opt(&mut once.password);
+                            // 접속에 **성공한** 값만 금고에 든다(봉투 · 평문 아님).
+                            if r.is_ok() && remember {
+                                vault_trace("remember(asked)", &vault_id);
+                                nsql_vault::session::remember(&vault_id, &secret);
+                            }
+                            drop(secret);
+                            let again = matches!(
+                                &r,
+                                Err(e) if ask_again(
+                                    stale_password(spec.dialect.unwrap_or(default_dialect), e),
+                                    wrong
+                                )
+                            );
+                            if !again {
+                                return r;
+                            }
+                            vault_trace("ask again(rejected asked)", &vault_id);
+                            wrong += 1;
+                            rejected = true;
                         }
-                        drop(secret);
-                        r
                     },
                 )
             };
@@ -2650,6 +2683,15 @@ mod tests {
 
     /// 무효 판정 = "사용자/비밀번호가 틀렸다"만. 잠김·만료·DB 없음·네트워크는 다시 묻지 않는다(방언마다 하나씩 뒤집어 본다).
     #[test]
+    fn ask_again_caps_wrong_attempts() {
+        // 금고가 비었을 때: 첫 입력이 틀리면 한 번 더(틀린 시도 0 → 1) · 두 번째도 틀리면 끝(상한 2).
+        assert!(ask_again(true, 0));
+        assert!(!ask_again(true, 1));
+        // 인증 실패가 아니면(네트워크 · 잠김) 다시 묻지 않는다.
+        assert!(!ask_again(false, 0));
+    }
+
+    #[test]
     fn stale_password_is_only_a_rejected_credential() {
         let e = |code: Option<i64>, m: &str| DbError {
             code,
@@ -2736,6 +2778,32 @@ mod tests {
         assert!(!stale_password(
             Dialect::Odbc,
             &e(None, "[08001] could not connect")
+        ));
+        // ★ 실제 ODBC 진단 꼴: SQLSTATE 28000 + native 코드 0 = 틀린 자격 · 잠김 문구/코드는 아니다 · 한국어 문구는 코드로.
+        let odbc0 = |m: &str| {
+            e(
+                Some(0),
+                &format!("State: 28000, Native error: 0, Message: {m}"),
+            )
+        };
+        assert!(stale_password(
+            Dialect::Odbc,
+            &odbc0("[Driver]login refused")
+        ));
+        assert!(!stale_password(
+            Dialect::Odbc,
+            &odbc0("[Oracle][ODBC]ORA-28000: the account is locked")
+        ));
+        assert!(!stale_password(
+            Dialect::Odbc,
+            &e(
+                Some(18486),
+                "State: 28000, Native error: 18486, Message: account locked out"
+            )
+        ));
+        assert!(!stale_password(
+            Dialect::Odbc,
+            &e(Some(0), "State: 08001, Native error: 0, Message: timeout")
         ));
         assert!(!stale_password(
             Dialect::Postgres,

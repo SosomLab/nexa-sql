@@ -244,6 +244,10 @@ impl App {
     }
 
     pub(crate) fn indent_pick(&mut self, id: &str) {
+        if id.starts_with("rclose.") {
+            self.rclose_pick(id);
+            return;
+        }
         if id.starts_with("close.") {
             self.close_pick(id);
             return;

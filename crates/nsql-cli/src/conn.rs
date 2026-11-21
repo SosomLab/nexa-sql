@@ -696,7 +696,7 @@ fn test(o: &Opts, name: Option<&str>) -> i32 {
     term::ensure_password(&mut spec, o.no_prompt, &label);
     // 드라이버 설정·자동 설치 스위치(run과 같은 길 · 🔧 10-23).
     crate::apply_driver_switches();
-    let mut op = opener(o.dialect);
+    let mut op = opener(o.dialect, o.no_prompt);
     match nsql_run::test_connection(&spec, &mut op) {
         Ok(r) => {
             println!(
