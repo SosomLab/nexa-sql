@@ -1384,7 +1384,10 @@ impl SearchPanel {
         dc.select_font(FontSlot::Base, false);
         // 검색어 틀(토글 포함) — 찾기 위젯과 같은 그림.
         let qb = self.query.bounds();
-        let frame = Rect::new(qb.x, qb.y, b.w - px(PAD) * 2, qb.h);
+        // ★ 틀 오른쪽 끝 = 패널 오른쪽 − PAD(`set_bounds`의 틀과 같은 식 · 사용자 11-21): 종전 `b.w − 2·PAD`는 틀 시작이 `›` 접기
+        //   버튼만큼 밀린 뒤(T-81d)에도 그대로여서 세 틀이 늘 그만큼(14px) 패널 밖 — 편집기 위 — 으로 그려졌다.
+        let frame_w = |x: i32| (b.right() - px(PAD) - x).max(px(80.0));
+        let frame = Rect::new(qb.x, qb.y, frame_w(qb.x), qb.h);
         let r = px(6.0);
         paint_box_frame(dc, th, frame, &self.query, r);
         // 진행 표시 링 = 틀 둘레(상자는 `set_busy_host_painted`로 생략 · 필터 틀과 같다).
@@ -1396,7 +1399,7 @@ impl SearchPanel {
         self.fold_btn.paint(dc, th, s);
         if self.replace_open {
             let rb = self.replace.bounds();
-            let rframe = Rect::new(rb.x, rb.y, frame.w, rb.h);
+            let rframe = Rect::new(rb.x, rb.y, frame_w(rb.x), rb.h);
             paint_box_frame(dc, th, rframe, &self.replace, r);
             for btn in &self.repl_btns {
                 btn.paint(dc, th, s);
@@ -1404,7 +1407,7 @@ impl SearchPanel {
         }
         // 위치 상자 = 같은 틀 + Aa 토글(사용자 10-13).
         let wb = self.where_box.bounds();
-        let wframe = Rect::new(wb.x, wb.y, frame.w, wb.h);
+        let wframe = Rect::new(wb.x, wb.y, frame_w(wb.x), wb.h);
         paint_box_frame(dc, th, wframe, &self.where_box, r);
         for btn in &self.where_btns {
             btn.paint(dc, th, s);
