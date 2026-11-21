@@ -4563,7 +4563,7 @@ pub const REGISTRY: &[Entry] = &[
     // ── 외부 파일 변경(docs/58 · T-140).
     Entry {
         key: "file.external_change",
-        cat: Msg::CatFiles,
+        cat: Msg::CatExternalChanges,
         label: Msg::LblExtChange,
         desc: Msg::DescExtChange,
         kind: SettingKind::Choice(EXT_CHANGE_OPTS),
@@ -4571,7 +4571,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "file.external_merge",
-        cat: Msg::CatFiles,
+        cat: Msg::CatExternalChanges,
         label: Msg::LblExtMerge,
         desc: Msg::DescExtMerge,
         kind: SettingKind::Bool,
@@ -4579,7 +4579,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "file.external_check",
-        cat: Msg::CatFiles,
+        cat: Msg::CatExternalChanges,
         label: Msg::LblExtCheck,
         desc: Msg::DescExtCheck,
         kind: SettingKind::Choice(EXT_CHECK_OPTS),
@@ -4587,7 +4587,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "file.external_poll_ms",
-        cat: Msg::CatFiles,
+        cat: Msg::CatExternalChanges,
         label: Msg::LblExtPollMs,
         desc: Msg::DescExtPollMs,
         kind: SettingKind::Int { min: 0, max: 60000 },
@@ -4596,7 +4596,7 @@ pub const REGISTRY: &[Entry] = &[
     // ★ T-300(사용자 10-07): 외부 변경이 본문에 반영될 때 토스트로 알린다(변경 없는 탭 자동 채택 · 다시 읽기 · 자동 병합).
     Entry {
         key: "file.external_notify",
-        cat: Msg::CatFiles,
+        cat: Msg::CatExternalChanges,
         label: Msg::LblExtNotify,
         desc: Msg::DescExtNotify,
         kind: SettingKind::Bool,
@@ -4604,7 +4604,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "file.external_merge_max_kb",
-        cat: Msg::CatFiles,
+        cat: Msg::CatExternalChanges,
         label: Msg::LblExtMergeMaxKb,
         desc: Msg::DescExtMergeMaxKb,
         kind: SettingKind::Int {
@@ -4615,7 +4615,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "file.external_settle_ms",
-        cat: Msg::CatFiles,
+        cat: Msg::CatExternalChanges,
         label: Msg::LblExtSettleMs,
         desc: Msg::DescExtSettleMs,
         kind: SettingKind::Int { min: 0, max: 5000 },
@@ -4623,7 +4623,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "file.external_backup_keep",
-        cat: Msg::CatFiles,
+        cat: Msg::CatExternalChanges,
         label: Msg::LblExtBackupKeep,
         desc: Msg::DescExtBackupKeep,
         kind: SettingKind::Int { min: 0, max: 200 },
@@ -5914,7 +5914,7 @@ pub const REGISTRY: &[Entry] = &[
     // ── 파일 검색(T-81a · docs/36 §2 · D-55)
     Entry {
         key: "search.max_file_kb",
-        cat: Msg::CatFiles,
+        cat: Msg::CatFindInFiles,
         label: Msg::LblSearchMaxFileKb,
         desc: Msg::DescSearchMaxFileKb,
         kind: SettingKind::Int {
@@ -5926,7 +5926,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "search.threads",
-        cat: Msg::CatFiles,
+        cat: Msg::CatFindInFiles,
         label: Msg::LblSearchThreads,
         desc: Msg::DescSearchThreads,
         kind: SettingKind::Int { min: 0, max: 16 },
@@ -5934,7 +5934,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "search.gitignore",
-        cat: Msg::CatFiles,
+        cat: Msg::CatFindInFiles,
         label: Msg::LblSearchGitignore,
         desc: Msg::DescSearchGitignore,
         kind: SettingKind::Bool,
@@ -5942,7 +5942,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "search.excludes",
-        cat: Msg::CatFiles,
+        cat: Msg::CatFindInFiles,
         label: Msg::LblSearchExcludes,
         desc: Msg::DescSearchExcludes,
         kind: SettingKind::Text,
@@ -5951,7 +5951,7 @@ pub const REGISTRY: &[Entry] = &[
     // ── 검색어 이력(사용자 09-23 "검색 상자마다 최대 20개(설정) · 프로그램 전역") — 찾기/바꾸기 · 파일 검색 · 필터 · 설정 검색 공통 상한.
     Entry {
         key: "search.history_max",
-        cat: Msg::CatFiles,
+        cat: Msg::CatFindInFiles,
         label: Msg::LblSearchHistoryMax,
         desc: Msg::DescSearchHistoryMax,
         kind: SettingKind::Int { min: 0, max: 500 },
@@ -5959,7 +5959,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "search.history_view",
-        cat: Msg::CatFiles,
+        cat: Msg::CatFindInFiles,
         label: Msg::LblSearchHistoryView,
         desc: Msg::DescSearchHistoryView,
         kind: SettingKind::Choice(HISTORY_VIEW),
@@ -5967,7 +5967,7 @@ pub const REGISTRY: &[Entry] = &[
     },
     Entry {
         key: "search.history_rows",
-        cat: Msg::CatFiles,
+        cat: Msg::CatFindInFiles,
         label: Msg::LblSearchHistoryRows,
         desc: Msg::DescSearchHistoryRows,
         kind: SettingKind::Int { min: 1, max: 50 },
@@ -8754,6 +8754,9 @@ pub const CATEGORY_TREE: &[(Msg, &[Msg])] = &[
             Msg::CatFiles,
             // 큰 파일 처리(docs/59 · 사용자 09-28 "별도 설정 그룹으로") — 단계 L1/L2 · 열기 선택 · 부분 보기 · 비동기 적재.
             Msg::CatLargeFiles,
+            // 78 §3-3(T-250 · D-488 · 사용자 11-21): '파일'에 섞여 있던 외부 변경 8 · 파일 검색 7을 따로.
+            Msg::CatExternalChanges,
+            Msg::CatFindInFiles,
             Msg::CatFormat,
             Msg::CatObjLink,
             // Ctrl 키(10-20 · D-313): Ctrl+클릭·우클릭·Shift+클릭 동작 + Ctrl 홀드 줄 끝 라벨·설명.
@@ -10586,6 +10589,29 @@ mod tests {
     }
 
     /// 표시 순서(09-28 "세션 관련 설정이 흩어지지 않게"): 같은 카테고리 안에서 키 접두끼리 모이고 · 카테고리는 트리 순 · 모르는 키는 맨 뒤.
+    /// ★ T-250(78 §3-3 · D-488): 외부 변경 8 · 파일 검색 7은 자기 분류에 · 트리에서 큰 파일 바로 뒤 · '파일'에는 남지 않는다.
+    #[test]
+    fn external_changes_and_find_in_files_have_their_own_categories() {
+        let cat = |k: &str| entry(k).map(|e| e.cat);
+        for k in REGISTRY.iter().map(|e| e.key) {
+            if k.starts_with("file.external_") {
+                assert_eq!(cat(k), Some(Msg::CatExternalChanges), "{k}");
+            }
+            if k.starts_with("search.") {
+                assert_eq!(cat(k), Some(Msg::CatFindInFiles), "{k}");
+            }
+        }
+        assert_eq!(cat("file.last_dir"), Some(Msg::CatFiles));
+        let cats: Vec<Msg> = CATEGORY_TREE
+            .iter()
+            .flat_map(|(_, c)| c.iter().copied())
+            .collect();
+        let at = |m: Msg| cats.iter().position(|c| *c == m);
+        let large = at(Msg::CatLargeFiles).expect("large files");
+        assert_eq!(at(Msg::CatExternalChanges), Some(large + 1));
+        assert_eq!(at(Msg::CatFindInFiles), Some(large + 2));
+    }
+
     #[test]
     fn display_order_groups_by_category_then_prefix() {
         let mut keys: Vec<&str> = REGISTRY
