@@ -3,13 +3,15 @@
 #   기동 명령만으로(키 주입 0) ① CONNECT user@host(묻기 → `pw.answer_from_profile`로 저장 프로필 비밀번호 답) ② DISCONNECT/전용 세션 전환
 #   ③ 같은 서버 CONNECT user@host → `[vault] recall(hit)`이어야 한다(종전 = 탐색기 칸 자동 제거가 금고를 지워 miss).
 # 사용: scripts/linux-vault-e2e.sh -P <실제 홈(~/.config/nexa-sql)> -o <출력 폴더> [-e target/debug/nexa-sql]
-#       프로필 PLANDB(mssql · 비밀번호 저장)과 oracle://APPDB:APPDB@172.16.1.58:1521/APPDB(실서버 · 읽기)를 쓴다 — 필요하면 -m/-r 로 바꾼다.
+#       프로필 PLANDB(mssql · 비밀번호 저장)과 Oracle 접속 문자열(읽기)을 쓴다 — 접속 문자열은 저장소에 두지 않는다(익명화 규칙 · 11-21):
+#       -m <mssql-url> / -r <oracle-url> 또는 환경 변수 NSQL_E2E_MSSQL_URL · NSQL_E2E_ORACLE_URL(필수 · 볼트 프로필 이름도 됨) · 프로필은 -p.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 . "$ROOT/scripts/lib/xvfb.sh"   # Linux = Xvfb 가상 디스플레이로 재실행(T-458 · D-435 · NSQL_XVFB=0이면 실제 화면)
-APP="$ROOT/target/debug/nexa-sql"; HOME_SRC=""; OUT=""; MSSQL="mssql://APPDB_MS@172.16.1.58:1433/PLANDB_MS"; MSPROF="PLANDB"; ORA="oracle://APPDB:APPDB@172.16.1.58:1521/APPDB"
+APP="$ROOT/target/debug/nexa-sql"; HOME_SRC=""; OUT=""; MSSQL="${NSQL_E2E_MSSQL_URL:-}"; MSPROF="PLANDB"; ORA="${NSQL_E2E_ORACLE_URL:-}"
 while getopts "P:o:e:m:p:r:" o; do case $o in P) HOME_SRC=$OPTARG;; o) OUT=$OPTARG;; e) APP=$OPTARG;; m) MSSQL=$OPTARG;; p) MSPROF=$OPTARG;; r) ORA=$OPTARG;; esac; done
 [ -n "$HOME_SRC" ] && [ -n "$OUT" ] || { echo "usage: -P <real home> -o <out dir> [-e exe] [-m mssql-url] [-p mssql-profile] [-r oracle-url]"; exit 2; }
+[ -n "$MSSQL" ] && [ -n "$ORA" ] || { echo "접속 문자열 필요: -m/-r 또는 NSQL_E2E_MSSQL_URL · NSQL_E2E_ORACLE_URL(저장소에 기본값을 두지 않는다)"; exit 2; }
 mkdir -p "$OUT"; H="$OUT/home"; rm -rf "${OUT:?}/home"; cp -r "$HOME_SRC" "$H"; rm -f "${H:?}/instance.lock"
 export LD_LIBRARY_PATH="${ORACLE_IC_HOME:-$(ls -d "$HOME"/oracle/instantclient_* 2>/dev/null | sort -V | tail -1)}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 pass=0; fail=0
