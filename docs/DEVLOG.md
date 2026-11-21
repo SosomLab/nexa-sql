@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-21 밤 (Windows · 결정 정리)** — 검증용 Debug 26768 · D-489(미추인 13 확정 · T-172 착수 · D-190 앱 설정 폴더 · D-192 안 만듦 · 위키 영어 주 + 한국어 병행 = T-506 계획 · T-343 닫음) · 결정 대기 없음 · [journal 11-21 §24](journal/2026-11-21.md)
+
 - **2026-11-21 밤 (Windows · 최신화 · push 준비)** — CI 수정 2a71ac6c(교훈 = main 직접 수정도 clippy) · 사용자 결정 D-488(T-93 · T-250 · T-281 LK-n · T-134 ⓐ · D-48 세션 확정 · D-243 임시 유지 · T-305 · T-332 닫음) · tmp-clean `ic-*` 보존 · STATUS 새 시작점(개발 대기 T-505 맨 앞) · [journal 11-21 §23](journal/2026-11-21.md)
 
 - **2026-11-21 밤 (Windows · OCI 로컬 · T-356 3방언)** — push 뒤 ci ✗(conn.rs:577 redundant clone · 개발 수정) · integration ✓ · Instant Client = 실행 설치본 없음(zip만) → `target/ic-1121` + `NSQL_ORACLE_CLIENT_DIR`로 OCI 로컬 판정 = 통합 oci·thin 48/0/1 · 오류 유형 E2E 104/0 · OS 인증 경로 ✓ · 운영 보류 시나리오 Oracle·SQL Server·PG 27/0 · 새 결함 후보 T-505 · D-487 · [journal 11-21 §22](journal/2026-11-21.md)
