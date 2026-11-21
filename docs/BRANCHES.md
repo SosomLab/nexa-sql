@@ -4,6 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| `finish-5` | 2026-11-21(Windows · main 위) | 병합 대기(개발 ff · V2 · V1 ✓) | 2 | 마무리 5건 = CLI Oracle OS 인증 면제 · 모달 틀린 값 재질문(상한 2) · CLI `--no-prompt` 8곳 · ODBC SQLSTATE 28000 판별 · 결과 탭 닫기 미적용 편집 확인(d2cf2bf5) + 기록 |
+| `conn-role-combo` | 2026-11-21(Windows · da4560cc 위) | 2026-11-21 → main ff 병합·삭제(push 안 함) | 5 | Oracle 역할 콤보(a4a0ac9d) · `[stall]` 계측(0eec6621) · T-250 분류 둘(99c4c4e8) + 기록(80199bc6 · 52e18941 · V2 · V1 ✓ · Debug 37064) |
 | `t133-polish` | 2026-11-21(Windows · 038f86b1 위) | 2026-11-21 → main ff 병합·삭제(+ main 직접 4935176f `conn add` 안내 줄 · V1 ✓) | 2 | T-133 다듬기(2d066ff9 · 비밀번호 없음 = 필수 점 뗌 · `conn show` nopassword = `u@host`) + 기록 |
 | `conn-batch-1121` | 2026-11-21(Windows · ccc75069 포함) | 2026-11-21 → main ff 병합·삭제(main = 038f86b1 · push 안 함) | 6 | 접속·연결 표시 묶음 = T-462 ①②(216ddeba) · T-359 · T-504 ①(216ddeba) · ②(e25a27f6) · T-133(a058f5ff) · CLAUDE.md D-485 요지(320c8c2e) + 기록(ccc75069 · 038f86b1 · V2·V1 ✓ · Debug 41460) |
 | `search-frame-width` | 2026-11-21(Windows · 733becc8 위) | 2026-11-21 → main ff 병합·삭제(main = 5cc0abed · push 안 함) | 2 | 검색 패널 틀 14px 넘침 수정(8746d7a3 · 10-31 91686ff7 T-81d부터의 결함) + 기록(5cc0abed · V2·V1 ✓ · Debug 재시작 25884 · 실기 묶음 완료 처리 15 · T-132 정정) |
