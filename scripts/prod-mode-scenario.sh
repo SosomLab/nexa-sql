@@ -47,7 +47,11 @@ pause() { # 단계 끝 — -i면 멈춘다.
   printf '\n  ⏎ Enter = 다음 단계 · q = 종료: ' ; read -r a < /dev/tty || true
   [ "$a" = "q" ] && { say "사용자 종료"; finish; }
 }
-finish() { say ""; say "RESULT PASS $pass FAIL $fail · 보고 = $REPORT · 산출 = $OUT"; exit $([ "$fail" -eq 0 ] && echo 0 || echo 1); }
+stall_note() { # T-505 관찰(11-21): 각 단계 GUI stderr의 `[stall]` 줄(주 스레드 1 s 넘게 멈춤)을 경고로 요약 — 실패로 치지 않는다.
+  local n; n=$(cat "$OUT"/*.stderr 2>/dev/null | grep -c "\[stall\]")
+  if [ "${n:-0}" -gt 0 ]; then say "  ⚠ 경고  [stall] ${n}줄(주 스레드 1 s↑ 멈춤 · T-505 관찰) — 상위 3:"; grep -h "\[stall\]" "$OUT"/*.stderr | sort -t' ' -k2 -rn | head -3 | sed 's/^/        /' | tee -a "$REPORT"; fi
+}
+finish() { stall_note; say ""; say "RESULT PASS $pass FAIL $fail · 보고 = $REPORT · 산출 = $OUT"; exit $([ "$fail" -eq 0 ] && echo 0 || echo 1); }
 
 # ── CLI ───────────────────────────────────────────────────────────────────────────────────────────
 cli() { NSQL_HOME="$H" "$NSQL" run -c "$CONN" --no-prompt -f csv "$(m "$1")" 2>&1; }
@@ -163,8 +167,10 @@ case "$DIALECT" in
 esac
 # 단계 7 탐색기 펼침 경로·선택 라벨(방언별 · 라벨 경로 `A/B` = 보이는 행 기준 · SQL Server 객체 행 = `스키마.이름`).
 # ★ 11-21: 단계 3 Commit 클릭을 14 s 뒤로(종전 6 s) — 다른 세션 CLI 읽기(접속 ≈1.5 s)가 클릭 뒤로 밀려 "미커밋" 판정이 경합하던 것.
-#   ★ 단계 1 첫 실행 · 단계 3 첫 Commit 직전 `ui.move` 1회 = 접속 뒤나 10 s 넘게 입력이 없다가 들어온 첫 실행/Commit은 2단 무장 창이 곧바로 만료되는
-#     앱 결함 후보(개발 세션에 보고 · "within 0 s" · 사건 하나가 있으면 정상 3 s / 5 s) — 이 시나리오는 보류 경로를 보려는 것이라 우회하고 결함은 따로 추적.
+#   ★ 단계 1 첫 실행 · 단계 3 첫 Commit 직전 `ui.move` 1회 = 11-21 첫 실행에서 2단 무장 창이 "within 0 s"로 곧바로 만료된 일(T-505)의 우회.
+#     같은 날 계측 7조건(쉼 14 s · 보류 중 CLI 읽기 · 앞 GUI kill 직후 · 전 코어 CPU 부하 · ui.move 뺀 원 시나리오)에서는 **재현 안 됨 · 관찰** —
+#     당시 동시 빌드(디스크·링크) 부하나 서버 지연으로 주 스레드가 수 초 멈춘 것으로 추정. 재발하면 각 단계 `*.stderr`의 `[stall] <ms> ms in <단계>` 줄
+#     (0eec6621 계측 · 1 s 넘는 회차)을 본다 — 이 스크립트는 끝에 그 줄 수를 경고로 요약한다(실패 처리 안 함).
 OBJ_SEL="$OBJ"; [ "$DIALECT" = "mssql" ] && OBJ_SEL="$(q "SELECT SCHEMA_NAME() AS u" | tail -1 | tr -d '\r"').$OBJ"
 if [ "$DIALECT" = "mssql" ]; then EXP1="$SCHEMA/Programmability"; EXP2="$FOLDER"; else EXP1="$SCHEMA"; EXP2="$FOLDER"; fi
 BK="$H/backups/objects"; say "  · 스키마(SQL Server = 현재 DB) = $SCHEMA · 백업 폴더 = $BK"
