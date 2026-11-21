@@ -869,6 +869,7 @@ impl App {
                 is_output: false,
             },
         );
+        let mut evicted: Option<u64> = None;
         if panel.tabs.len() > max && evict {
             // 방금 만든 탭·부모·활성 탭은 걷지 않는다.
             let active = panel.active;
@@ -876,16 +877,27 @@ impl App {
                 .tabs
                 .iter()
                 .enumerate()
-                .filter(|(i, t)| !t.pinned && *i != active && t.id != id && t.id != parent)
+                // 미적용 편집이 있는 탭은 걷지 않는다(T-507).
+                .filter(|(i, t)| {
+                    !t.pinned
+                        && *i != active
+                        && t.id != id
+                        && t.id != parent
+                        && !t.grid.edit_dirty()
+                })
                 .min_by_key(|(_, t)| t.seq)
                 .map(|(i, _)| i);
             if let Some(v) = victim {
-                panel.remove(v);
+                evicted = panel.remove(v).map(|t| t.id);
             }
         }
         panel.sync_bar();
         if in_active && self.panel.take_bar_changed() {
             self.layout();
+        }
+        // ★ T-93 ⓑ: 걷힌 탭이 서버 커서의 주인이면 닫는다(패널 빌림이 끝난 뒤).
+        if let Some(gone) = evicted {
+            self.result_tabs_closed(&[gone]);
         }
         id
     }
@@ -919,8 +931,8 @@ impl App {
         if gone.is_empty() {
             return;
         }
-        for id in gone {
-            if let Some(i) = panel.index_of(id) {
+        for id in &gone {
+            if let Some(i) = panel.index_of(*id) {
                 panel.remove(i);
             }
         }
@@ -928,6 +940,8 @@ impl App {
         if in_active && self.panel.take_bar_changed() {
             self.layout();
         }
+        // ★ T-93 ⓑ: 걷힌 딸린 탭이 서버 커서의 주인이면 닫는다.
+        self.result_tabs_closed(&gone);
         self.mem_released();
     }
 
