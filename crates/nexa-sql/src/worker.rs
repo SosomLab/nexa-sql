@@ -440,20 +440,45 @@ pub(crate) fn password_required(spec: &ConnectSpec, default_dialect: Dialect) ->
 
 /// **들고 있던 비밀번호가 무효인가** — 서버가 "사용자/비밀번호가 틀렸다"고 답한 경우만(계정 잠김 · 만료 · DB 없음 · 네트워크는 아니다:
 /// 그때 다시 물어 봐야 같은 실패를 한 번 더 할 뿐이고, 잠긴 계정에는 시도를 보태지 않는다). Oracle ORA-01017 · SQL Server 18456 ·
-/// MySQL 1045 · PostgreSQL "password authentication failed"(28P01).
+/// MySQL 1045 · PostgreSQL "password authentication failed"(28P01) · Db2 SQL30082N 사유 24 · ClickHouse 516 · ODBC = 뒤의 서버가
+/// 내는 위 서명들(T-132 보완 · 사용자 11-21: 이 셋은 종전에 늘 `false`여서 바뀐 비밀번호로 계속 재시도했다 = 계정 잠김 위험).
+/// SQLSTATE `28000`만으로는 판정하지 않는다 — 잠긴 계정(ORA-28000 · SQL Server 18486)도 같은 상태 값을 쓴다.
 pub(crate) fn stale_password(dialect: Dialect, e: &DbError) -> bool {
+    let low = e.message.to_ascii_lowercase();
+    // ORA-01005 = 빈 비밀번호를 줬다("null password given") — `user:@host`가 거부된 모양.
+    let oracle = || {
+        matches!(e.code, Some(1017 | 1005))
+            || low.contains("ora-01017")
+            || low.contains("ora-01005")
+    };
+    let pg = || low.contains("password authentication failed") || low.contains("28p01");
+    // Db2: SQL30082N은 보안 처리 실패 전반 — 사유 24(USERNAME AND/OR PASSWORD INVALID)만 "틀린 자격"이다(19 = 계정 정지 · 1 = 만료).
+    let db2 = || {
+        low.contains("sql30082n")
+            && (low.contains("password invalid")
+                || low.contains("reason \"24\"")
+                || low.contains("reason code \"24\""))
+    };
+    // ClickHouse: 516 AUTHENTICATION_FAILED(HTTP 본문 `Code: 516. DB::Exception: … Authentication failed`).
+    let clickhouse = || {
+        e.code == Some(516) || low.contains("code: 516") || low.contains("authentication_failed")
+    };
     match dialect {
-        // ORA-01005 = 빈 비밀번호를 줬다("null password given") — `user:@host`가 거부된 모양.
-        Dialect::Oracle => {
-            matches!(e.code, Some(1017 | 1005))
-                || e.message.contains("ORA-01017")
-                || e.message.contains("ORA-01005")
-        }
+        Dialect::Oracle => oracle(),
         Dialect::Mssql => e.code == Some(18456),
         Dialect::Mysql => e.code == Some(1045),
-        Dialect::Postgres => {
-            let low = e.message.to_ascii_lowercase();
-            low.contains("password authentication failed") || low.contains("28p01")
+        Dialect::Postgres => pg(),
+        Dialect::Db2 => db2(),
+        Dialect::Clickhouse => clickhouse(),
+        // ODBC: 뒤의 서버를 모른다 → 아는 서버들의 서명 가운데 하나(원 코드가 그대로 오면 코드 · 아니면 문구).
+        Dialect::Odbc => {
+            oracle()
+                || pg()
+                || db2()
+                || clickhouse()
+                || matches!(e.code, Some(18456 | 1045))
+                || low.contains("login failed for user")
+                || low.contains("access denied for user")
         }
         _ => false,
     }
@@ -2659,6 +2684,58 @@ mod tests {
         assert!(stale_password(
             Dialect::Postgres,
             &e(None, "FATAL: password authentication failed for user \"u\"")
+        ));
+        // ★ T-132 보완(11-21): MySQL · Db2 · ClickHouse · ODBC — 틀린 자격만 · 잠김/네트워크는 아니다.
+        assert!(stale_password(
+            Dialect::Mysql,
+            &e(Some(1045), "Access denied")
+        ));
+        assert!(!stale_password(
+            Dialect::Mysql,
+            &e(Some(2003), "Can't connect")
+        ));
+        let db2 = "SQL30082N  Security processing failed with reason \"24\" (\"USERNAME AND/OR PASSWORD INVALID\").";
+        assert!(stale_password(Dialect::Db2, &e(Some(-30082), db2)));
+        assert!(!stale_password(
+            Dialect::Db2,
+            &e(Some(-30082), "SQL30082N  Security processing failed with reason \"19\" (\"USERID DISABLED or RESTRICTED\").")
+        ));
+        assert!(!stale_password(
+            Dialect::Db2,
+            &e(Some(-30081), "SQL30081N  A communication error")
+        ));
+        assert!(stale_password(
+            Dialect::Clickhouse,
+            &e(
+                None,
+                "Code: 516. DB::Exception: default: Authentication failed: password is incorrect"
+            )
+        ));
+        assert!(stale_password(Dialect::Clickhouse, &e(Some(516), "")));
+        assert!(!stale_password(
+            Dialect::Clickhouse,
+            &e(Some(210), "Code: 210. Connection refused")
+        ));
+        assert!(stale_password(
+            Dialect::Odbc,
+            &e(Some(18456), "[28000] Login failed for user 'u'.")
+        ));
+        assert!(stale_password(
+            Dialect::Odbc,
+            &e(None, "[HY000] ORA-01017: invalid username/password")
+        ));
+        assert!(stale_password(Dialect::Odbc, &e(None, db2)));
+        assert!(!stale_password(
+            Dialect::Odbc,
+            &e(None, "[28000] ORA-28000: the account is locked")
+        ));
+        assert!(!stale_password(
+            Dialect::Odbc,
+            &e(Some(18486), "[28000] account is currently locked out")
+        ));
+        assert!(!stale_password(
+            Dialect::Odbc,
+            &e(None, "[08001] could not connect")
         ));
         assert!(!stale_password(
             Dialect::Postgres,

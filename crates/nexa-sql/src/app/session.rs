@@ -625,6 +625,14 @@ impl App {
         let private: Vec<(ConnectSpec, String)> =
             rows.into_iter().map(|(_, spec, tab)| (spec, tab)).collect();
         self.explorer.set_private(private);
+        // ★ D-117(T-462 ②): 살아 있는 세션마다 그 세션을 쓰는 탭 수 — 미연결 탭은 기본 공유 세션으로 라우팅되므로 붙어 있는
+        //   세션만 센다(탭 열기/닫기는 제목 세대가 바뀌어 이 함수가 다시 불린다).
+        let counts: Vec<(ConnectSpec, usize)> = self
+            .all_sess()
+            .filter(|s| (s.connected || s.idle_closed) && !s.closing)
+            .filter_map(|s| Some((s.spec.clone()?, self.bound_tabs(s.id))))
+            .collect();
+        self.explorer.set_tab_counts(counts);
     }
 
     /// ★ T-124(216차): 실행 로그 창에 지금 세션의 라벨(접속 설명)을 알린다 — 이후 줄에 세션이 찍힌다.
@@ -1295,6 +1303,9 @@ impl App {
             .item_rect("conn.disconnect")
             .unwrap_or(self.status_tx_rect);
         self.open_status_popup(Rect::new(r.x, r.bottom(), 0, 0), items);
+        // ★ D-118(T-462 ① · 사용자 11-21 "지금 만든다"): Enter = 첫 항목(모두 해제 · 기본 항목 테두리) — 종전에는 hover 없이
+        //   Enter를 누르면 아무것도 고르지 않고 닫혔다.
+        self.status_menu.set_default(0);
         self.redraw();
     }
 

@@ -216,6 +216,8 @@ pub(crate) struct ExplorerSet {
     share_catalog: bool,
     /// ★ 전용 세션(사용자 10-12 · 설계 A): (스펙, 소유 탭 제목) — 같은 서버의 연결 행에 'P' 칩 + "전용 · 탭" · 헤더 "전용 N".
     private: Vec<(ConnectSpec, String)>,
+    /// ★ D-117(T-462 ②): 살아 있는 세션마다 (스펙, 그 세션을 쓰는 탭 수) — 호스트가 세션 동기화마다 넘긴다.
+    tab_counts: Vec<(ConnectSpec, usize)>,
     /// ★ 검색창(docs/28 §7 · 09-25): 패널 맨 위 필터 틀(Aa·ab·(.*) · 이력) — 전 서버 트리를 거른다(범위 설정).
     filter: FilterBar,
     filter_scope: FilterScope,
@@ -268,6 +270,7 @@ impl ExplorerSet {
             filter_expand: false,
             share_catalog: false,
             private: Vec::new(),
+            tab_counts: Vec::new(),
             // 틀 오른쪽 부가 토글 = "Include Description"(설명 포함 검색 · 사용자 10-15 · 프로젝트 탐색기 숨김 토글과 같은 자리 · 기본 끔).
             filter: FilterBar::new(
                 t(Msg::PhExplorerFilter),
@@ -543,6 +546,7 @@ impl ExplorerSet {
                 p.ex.set_users(users);
                 let tabs = Self::private_tabs_for(&self.private, &p.conns);
                 p.ex.set_private_tabs(tabs);
+                p.ex.set_tab_count(Self::tab_count_for(&self.tab_counts, &p.conns));
             }
             let n = alive.len();
             // ★ 메타 세션의 자격이 사라졌는데 다른 연결이 남았으면 그 자격으로 다시 연다(트리 유지 · docs/54 §10).
@@ -582,6 +586,24 @@ impl ExplorerSet {
             let tabs = Self::private_tabs_for(&self.private, &p.conns);
             p.ex.set_private_tabs(tabs);
         }
+    }
+
+    /// ★ D-117: 세션별 탭 수 — 칸마다 그 칸의 연결과 같은 서버인 세션들의 합을 넘긴다(칸은 세션 뒤에 생길 수 있어 매번 돈다 ·
+    ///   칸 쪽이 같으면 아무것도 하지 않는다).
+    pub(crate) fn set_tab_counts(&mut self, v: Vec<(ConnectSpec, usize)>) {
+        self.tab_counts = v;
+        for p in &mut self.panes {
+            p.ex.set_tab_count(Self::tab_count_for(&self.tab_counts, &p.conns));
+        }
+    }
+
+    /// 칸의 연결들과 같은 서버인 세션들의 탭 수 합(순수 · 공유 + 전용).
+    fn tab_count_for(counts: &[(ConnectSpec, usize)], conns: &[ConnectSpec]) -> usize {
+        counts
+            .iter()
+            .filter(|(sp, _)| conns.iter().any(|c| same_server(c, sp)))
+            .map(|(_, n)| *n)
+            .sum()
     }
 
     /// 칸의 연결들과 같은 서버(방언·호스트·포트·DB·계정)인 전용 세션의 탭 제목(순수).

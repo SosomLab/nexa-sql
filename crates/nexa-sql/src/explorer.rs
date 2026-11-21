@@ -110,6 +110,11 @@ fn group_node(db: Option<&str>, group: GroupKind, depth: usize) -> Node {
     }
 }
 
+/// ★ D-117(순수): 연결 행에 보일 탭 수 — 2 이상이고 오프라인이 아닐 때만(하나뿐이면 정보가 없다 · 단수 문구도 없다).
+pub(crate) fn tab_count_shown(n: usize, offline: bool) -> Option<usize> {
+    (n >= 2 && !offline).then_some(n)
+}
+
 /// ★ SSMS 골격의 DB 노드 자식(101 §2 · 순수): 테이블 · 뷰 · 외부 리소스 · 동의어 · 프로그래밍 기능 · 스토리지(T-272 · 11-21) · 보안 —
 /// 다이어그램·Service Broker는 생략(D-247).
 fn ssms_db_children(db: &str, depth: usize) -> Vec<Node> {
@@ -989,6 +994,8 @@ pub(crate) struct Explorer {
     grouped: bool,
     /// ★ 이 칸의 연결과 같은 서버에 붙은 **전용 세션의 탭 제목**(사용자 10-12 · 설계 A) — 연결 행 'P' 칩 + "전용 · 탭".
     private_tabs: Vec<String>,
+    /// ★ D-117(T-462 ② · 사용자 11-21): 이 연결을 쓰는 탭 수(공유 + 전용) — 2 이상이면 연결 행 흐린 글 끝에 `· N tabs`.
+    tab_count: usize,
     /// 연결의 DB(서비스)·계정(묶음 모드 루트 행 라벨).
     conn_db: String,
     conn_user: String,
@@ -2681,6 +2688,7 @@ impl Explorer {
             show_system_dbs: true,
             conn_user: String::new(),
             private_tabs: Vec::new(),
+            tab_count: 0,
             filter_keep: None,
             filter_hits: 0,
             filter_tokens: Vec::new(),
@@ -6849,6 +6857,14 @@ impl Explorer {
         }
     }
 
+    /// ★ D-117: 이 연결을 쓰는 탭 수 — 바뀌면 행 라벨 캐시를 새로.
+    pub(crate) fn set_tab_count(&mut self, n: usize) {
+        if self.tab_count != n {
+            self.tab_count = n;
+            self.rows_cache = self.screen_rows();
+        }
+    }
+
     pub(crate) fn private_count(&self) -> usize {
         self.private_tabs.len()
     }
@@ -9637,6 +9653,10 @@ impl Explorer {
                         dim.push(self.profile_name.clone());
                     }
                 }
+                // ★ D-117(T-462 ②): 참조 탭 수 — 툴바 해제 배지와 같은 문턱(2 이상)에서만 · 오프라인 행에는 없다.
+                if let Some(n) = tab_count_shown(self.tab_count, self.offline) {
+                    dim.push(tf(Msg::ExpPrivateTabs, &[&n.to_string()]));
+                }
                 if self.offline {
                     dim.push(t(Msg::ExpOffline).to_string());
                 }
@@ -11280,6 +11300,16 @@ mod detail_cache_tests {
         );
         assert!(!detail_key_hit(other_schema, Some("APPDB"), Some("EMP")));
         assert!(!detail_key_hit("x", Some("A"), None));
+    }
+
+    /// ★ D-117: 탭 수는 2 이상 · 온라인일 때만 보인다(조건마다 하나씩 뒤집어 본다).
+    #[test]
+    fn tab_count_shown_mcdc() {
+        assert_eq!(super::tab_count_shown(3, false), Some(3));
+        assert_eq!(super::tab_count_shown(2, false), Some(2));
+        assert_eq!(super::tab_count_shown(1, false), None);
+        assert_eq!(super::tab_count_shown(0, false), None);
+        assert_eq!(super::tab_count_shown(3, true), None);
     }
 
     /// ★ 101 §2: SSMS 골격 = DB 노드 자식 6(테이블 · 뷰 · 외부 리소스 · 동의어 · 프로그래밍 기능 · 보안) · 프로그래밍 기능 5 · 보안 3 ·

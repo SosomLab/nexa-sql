@@ -2360,6 +2360,9 @@ fn cmd_shell(o: &Opts) -> i32 {
         .with_into_first(into_first_setting())
         .with_var_limits(var_limits_setting().0, var_limits_setting().1);
     apply_load_switches(&mut runner);
+    // ★ T-359 ①(사용자 11-21): 셸도 `nsql run`과 같은 내장 변수 층(`${config:키}` · `${cwd}` · `${nsqlHome}` …) — 스크립트 파일이
+    //   없으므로 `${file}` 계열은 없다. 종전에는 셸에서 `${config:…}`가 글자 그대로 서버에 갔다(10-16 실기).
+    runner.engine.settings.intrinsic = std::sync::Arc::new(intrinsic_vars("-", o.dialect));
     runner.cursor_idle_secs = idle;
     // T-116 겹침 검사(`grid.overlap_check` · 기본 켬) — GUI 워커와 같은 규칙.
     runner.overlap_check = settings_cached()

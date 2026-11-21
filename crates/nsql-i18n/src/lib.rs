@@ -8342,7 +8342,7 @@ impl Msg {
             Msg::LblOutputDoneLines => ["Statement completion lines", "문장 완료 줄"],
             Msg::DescOutputDoneLines => ["Write a line per statement when it finishes (rows affected · elapsed · rows fetched) - like SSMS Messages", "문장이 끝날 때마다 한 줄(영향 행 · 소요 · 가져온 행) - SSMS Messages와 같음"],
             Msg::LblOutputServerOutput => ["Oracle DBMS_OUTPUT on connect", "접속 때 Oracle DBMS_OUTPUT 켬"],
-            Msg::DescOutputServerOutput => ["Run SET SERVEROUTPUT ON for every new Oracle session so DBMS_OUTPUT.PUT_LINE shows in Output (one GET_LINES call after each execute). Off = only when the script says SET SERVEROUTPUT ON. Applies to new connections", "새 Oracle 세션마다 SET SERVEROUTPUT ON을 해 DBMS_OUTPUT.PUT_LINE이 Output에 보이게(실행마다 GET_LINES 1회). 끄면 스크립트의 SET SERVEROUTPUT ON일 때만. 새 접속부터 적용"],
+            Msg::DescOutputServerOutput => ["Run SET SERVEROUTPUT ON for every new Oracle session so DBMS_OUTPUT.PUT_LINE shows in Output (one GET_LINES call after each execute). Off = only when the script says SET SERVEROUTPUT ON. The buffer is always unlimited: SET SERVEROUTPUT ON SIZE n is accepted but the size is ignored. Applies to new connections", "새 Oracle 세션마다 SET SERVEROUTPUT ON을 해 DBMS_OUTPUT.PUT_LINE이 Output에 보이게(실행마다 GET_LINES 1회). 끄면 스크립트의 SET SERVEROUTPUT ON일 때만. 버퍼는 늘 무제한 — SET SERVEROUTPUT ON SIZE n의 크기는 받기만 하고 무시. 새 접속부터 적용"],
             Msg::OutClear => ["Clear", "지우기"],
             Msg::OutCopyAll => ["Copy all", "전체 복사"],
             Msg::OutCompiledOk => ["{0} {1} compiled · no errors", "{0} {1} 컴파일 완료 · 오류 없음"],
