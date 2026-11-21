@@ -41,19 +41,27 @@ if [[ -n "$NOX" ]]; then
     echo "    → git update-index --chmod=+x <파일>"; FAIL=$((FAIL+1))
 else echo "  ✓"; fi
 
+# ★ 11-21 D-491(검증 흐름 · verify.sh가 이 스크립트를 한 단계로 부른다): 패키지 집합 = env CHECK3OS_PKGS(기본 `--workspace` · verify.sh 로컬 =
+#   `--workspace --exclude nsql-driver-duckdb` — 단위 시험과 같은 집합이라 feature 통합이 바뀌어 다시 컴파일되지 않는다) ·
+#   CHECK3OS_NEWER_ONLY=1 = "더 새 툴체인 clippy"만(verify.sh --level prepush).
+# shellcheck disable=SC2206
+PKGS=(${CHECK3OS_PKGS:---workspace})
+if [[ "${CHECK3OS_NEWER_ONLY:-0}" != 1 ]]; then
 step "fmt --check"
 run cargo fmt --all -- --check
-step "clippy 호스트($HOST)"
-run cargo clippy --workspace --all-targets -- -D warnings
+step "clippy 호스트($HOST · ${PKGS[*]})"
+run cargo clippy "${PKGS[@]}" --all-targets -- -D warnings
+fi
 # ★ 더 새 툴체인의 clippy(nexa-ui 959c090 이식 · 11-21): CI는 `stable`이라 이 PC의 기본 rustc보다 새 버전으로 돈다 — 새 버전에서 생긴
 #   lint는 기본 툴체인 검사로 안 잡힌다. 설치돼 있는 **기본보다 새** 숫자 툴체인마다 호스트 clippy를 한 번 더(산출물 = target/clippy-<버전>).
 #   변수는 중괄호로 감싼다(macOS bash 3.2 = 한글이 바로 붙으면 unbound · nexa-ui 5e21883).
-if command -v rustup >/dev/null 2>&1; then
+#   ★ 11-21 D-491: `--quick`에서는 돌지 않는다(별도 target 폴더 + 전체 빌드 = 중복 비용) — 전체 실행 또는 CHECK3OS_NEWER_ONLY=1(push 전 1회)에서만.
+if command -v rustup >/dev/null 2>&1 && { [[ "${1:-}" != "--quick" ]] || [[ "${CHECK3OS_NEWER_ONLY:-0}" == 1 ]]; }; then
     CUR="$(rustc -V | awk '{print $2}')"
     for TC in $(rustup toolchain list | sed -n 's/^\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)-.*/\1/p' | sort -uV); do
         if [[ "${TC}" != "${CUR}" && "$(printf '%s\n%s\n' "${CUR}" "${TC}" | sort -V | tail -1)" == "${TC}" ]]; then
             step "clippy 호스트 · 툴체인 ${TC}(기본 ${CUR}보다 새 버전)"
-            run env CARGO_TARGET_DIR="target/clippy-${TC}" cargo "+${TC}" clippy --workspace --all-targets -- -D warnings
+            run env CARGO_TARGET_DIR="target/clippy-${TC}" cargo "+${TC}" clippy "${PKGS[@]}" --all-targets -- -D warnings
         fi
     done
 fi

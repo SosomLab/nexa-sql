@@ -140,6 +140,7 @@ release: 0.11.0 승격(컬럼 리사이즈 단독 조절·Ctrl+V 대상 보완) 
 6. **push 뒤 CI** = `gh run list --commit <전체 SHA>`(짧은 해시는 `git rev-parse`로 펼침 · 비인증 API 시간당 60회 한도) · 실패 = `gh run view <id> --log-failed` → 결과를 journal(+ BRANCHES 줄)에.
 7. **문서** = 한 작업 한 트랜잭션(journal → DEVLOG → STATUS → MILESTONES/TODO → BRANCHES) · 끝나면 STATUS 맨 위 "다음 세션 시작점"이 최신인지 본다(CLAUDE.md에는 차수 요약을 쌓지 않는다).
 8. **릴리스·개발 병행** = `main` 전용 워크트리 `../_rel` + 병합 전 rebase · 해시는 병합 뒤 문서에 · 릴리스 규칙 = [claude-release-rules](claude-release-rules.md).
+9. **검증 = 형식화된 흐름 한 번**(사용자 11-21 · D-491) — 위 2·3·5의 점검은 `scripts/verify.sh --level quick`(커밋 전) · `--level prepush`(push 전) · `--level v2`(병합 전)로 한 번에 돌리고 `target/verify/<시각>/summary.txt`만 읽는다. 세 조건(사용자 문장 그대로): ① **출력이 짧고 구조적이어야 한다** — 긴 로그를 통째로 읽으면 절약 효과가 사라진다 · 단계별 통과/실패 · 소요 시간 · 첫 오류 몇 줄만 담은 요약을 만들고 원 로그는 실패한 단계 것만 연다. ② **실패해도 끝까지 간다** — 첫 실패에서 멈추면 고치고 다시 돌리는 왕복이 그대로 남는다 · 싼 단계(형식 검사)를 앞에 두고 전부 돌린 뒤 실패를 한꺼번에 본다. ③ **형식화할 수 없는 일은 대화식이 맞다** — 처음 보는 실패의 원인 추적(11-21 T-505 같은 것) · 아직 절차가 없는 새 종류의 작업 · 되돌릴 수 없는 일의 확인 · 사용자 결정 질문 · 이런 일도 같은 종류를 두 번째 만나면 절차로 올린다. 규격·이식용 뼈대 = [claude-batch-flow](claude-batch-flow.md).
 
 ## 5. 릴리스 (배포가 있는 프로젝트)
 
