@@ -130,6 +130,10 @@ debug = "line-tables-only"
 #   디버거). 첫 빌드만 의존 전부를 다시 컴파일한다.
 [profile.dev.package."*"]
 opt-level = 2
+# ★ 의존 크레이트의 디버그 정보는 끈다(사용자 11-21 "빌드가 느리다" · 실측 = app/ 한 줄 수정 뒤 재빌드 중앙값 13.2 → 7.3 s(−45 %) ·
+#   PDB 180 → 123 MB · exe 같음 · 스모크 ✓). 이 저장소 크레이트의 줄 번호(`line-tables-only`)는 그대로 — 사라지는 것은 의존
+#   프레임 안의 줄 정보뿐. rust-lld는 이득이 불명확해 넣지 않았다(11.6 s · 함께 10.0 s). 설정을 바꾼 첫 빌드는 의존 전체 재빌드.
+debug = false
 
 # ★ tiberius 0.12.3 패치(11-06 · T-471 후속): CLR UDT(geography·geometry·hierarchyid)·sql_variant 열을 SELECT하면 원본이 `todo!`로
 #   프로세스를 끝냈다(panic=abort) → 저장소 안 사본 `third_party/tiberius`(변경 = src/tds/codec/type_info.rs · column_data/var_len.rs ·
