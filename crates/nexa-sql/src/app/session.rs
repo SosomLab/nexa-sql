@@ -1486,6 +1486,8 @@ impl App {
     pub(crate) fn on_conn_disconnected(&mut self) {
         self.sess.live_sid = None;
         self.sess.connected = false;
+        self.sess.cursor_owner = None;
+        self.sess.cursor_close_wait = false;
         self.sess.key_cache.clear();
         self.sess.sql_wait = None;
         // 접속 창·공유 접속 설명은 **접속 창으로 붙은 세션**이 끊겼을 때만 되돌린다(전용 세션의 해제는 그 탭의 일 · docs/52).

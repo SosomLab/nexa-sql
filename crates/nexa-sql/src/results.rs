@@ -512,7 +512,8 @@ impl ResultPanel {
         self.tabs
             .iter()
             .enumerate()
-            .filter(|(i, t)| !t.pinned && *i != self.active)
+            // 미적용 편집이 있는 탭은 걷지 않는다(T-507 · 묻지 않고 사라지면 편집을 잃는다).
+            .filter(|(i, t)| !t.pinned && *i != self.active && !t.grid.edit_dirty())
             .min_by_key(|(_, t)| t.seq)
             .map(|(i, _)| i)
     }

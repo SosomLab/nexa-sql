@@ -80,6 +80,9 @@ pub(crate) enum Cmd {
     /// 수동 커밋 모드의 Commit/Rollback(메뉴 · 단축키 · 사용자 09-15).
     Commit,
     Rollback,
+    /// ★ 열린 서버 커서를 닫는다(T-93 ⓑ · docs/43 ③ "탭 닫기 = 커서 close" · 11-22) — 그 커서의 주인인 결과 탭이 사라졌을 때
+    ///   호스트가 보낸다. DB 왕복(커서 닫기 + 미뤄 둔 자동 커밋/읽기 롤백)이라 통제 명령이 아니다(증표 필요). 답은 없다.
+    CloseCursor,
     /// ★ T-8 GUI 2차(10-31): 결과 → 파일 스트리밍 내보내기 — 원본 질의를 다시 실행해 배치마다 쓴다(`Runner::export_stream` + `StreamWriter`) ·
     ///   진행 `ExportProgress`(200 ms 간격) · 끝 `ExportDone` · 취소 = `cancel` 깃발(배치 경계).
     ExportStream {
@@ -1977,6 +1980,11 @@ pub(crate) fn spawn(
                         }
                         let _ = dtx.send(None);
                         wake_now();
+                        true
+                    }
+                    Cmd::CloseCursor => {
+                        // 커서가 없으면 아무 일도 없다 · 완료 신호·응답을 보내지 않는다(호스트가 busy를 올리지 않았다).
+                        runner.close_cursor();
                         true
                     }
                     Cmd::Autocommit(on) => {

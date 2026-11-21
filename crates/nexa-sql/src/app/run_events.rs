@@ -203,6 +203,10 @@ impl App {
                 g.arm_auto_fetch_all();
             }
         }
+        // ★ T-93 ⓑ: "더 있음" = 서버 커서가 이 결과를 물고 있을 수 있다 → 이 탭이 커서의 주인.
+        if more {
+            self.sess.cursor_owner = Some(k);
+        }
         // 외래 키 열 표시(T-180 ⑥) — 활성 그리드 기준(다른 탭의 결과면 탭 전환 때 drain이 다시 맞춘다).
         self.grid_fk_sync();
         // ★ Output 탭을 보던 중이라도 결과 셋이 오면 **그 결과 탭으로**(사용자 10-01 ㉘ · `output.activate = always`만 예외 ·

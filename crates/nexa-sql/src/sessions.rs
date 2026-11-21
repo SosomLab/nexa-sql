@@ -143,6 +143,11 @@ pub(crate) struct Sess {
     pub prod_held: Option<HeldInfo>,
     /// 상단 Commit 빨간 2단(D-300): 첫 클릭 시각 — `tx.prod_commit_confirm_ms` 안 두 번째 클릭 = 커밋.
     pub commit_armed: Option<Instant>,
+    /// ★ 열린 서버 커서의 주인(결과 탭 id · T-93 ⓑ) — "더 있음"으로 온 마지막 결과가 들어간 탭. 그 탭이 사라지면 커서를 닫는다.
+    ///   러너의 커서는 세션당 하나뿐이라 값도 하나다 · 낡은 값이 남아도 닫기 명령은 커서가 없으면 아무 일도 하지 않는다.
+    pub cursor_owner: Option<u64>,
+    /// 주인 탭이 사라졌는데 세션이 바빠 닫기를 못 보냈다 — 한가해지면 보낸다(`cursor_close_flush`).
+    pub cursor_close_wait: bool,
     /// 이번 실행에서 성공한 DDL의 대상(docs/57 T1) — 실행이 끝나면 폴더별로 한 번 탐색기에 반영한다.
     pub ddl_now: Vec<nsql_core::DdlTarget>,
     /// 트랜잭션 DDL 방언의 수동 커밋에서 **커밋을 기다리는** DDL 대상(커밋 = 반영 · 롤백·세션 소실 = 버림 · D-107).
@@ -260,6 +265,8 @@ impl Sess {
             tx_countdown: None,
             prod_held: None,
             commit_armed: None,
+            cursor_owner: None,
+            cursor_close_wait: false,
             tx_blockers: 0,
             tx_block_next: Instant::now(),
             tx_block_off: false,

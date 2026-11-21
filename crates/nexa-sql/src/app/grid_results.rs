@@ -799,7 +799,11 @@ impl App {
         );
         if self.panel.tabs.len() > max && self.settings.flag("grid.result_tab_evict") {
             if let Some(v) = self.panel.evict_candidate() {
-                let gone = self.panel.remove(v).map(|t| t.title).unwrap_or_default();
+                let removed = self.panel.remove(v);
+                if let Some(id) = removed.as_ref().map(|t| t.id) {
+                    self.result_tabs_closed(&[id]);
+                }
+                let gone = removed.map(|t| t.title).unwrap_or_default();
                 self.sess.status = tf(Msg::StResultTabEvicted, &[&gone]);
                 self.log_win
                     .push(LogEntry::new(LogKind::Info, self.sess.status.clone()));
@@ -1182,6 +1186,7 @@ impl App {
         if i >= self.panel.tabs.len() {
             return;
         }
+        let closed = self.panel.tabs[i].id;
         if i == self.panel.active {
             // 실제 그리드를 자리에 돌려놓은 뒤 제거 → 이웃 탭의 그리드를 꺼낸다.
             std::mem::swap(&mut self.grid, &mut self.panel.tabs[i].grid);
@@ -1214,6 +1219,44 @@ impl App {
             self.panel.active = self.panel.index_of(self.grid_tab).unwrap_or(0);
         }
         self.offset_warned.remove(&self.grid_tab);
+        self.result_tabs_closed(&[closed]);
+    }
+
+    /// ★ T-93 ⓑ(docs/43 ③ · 사용자 11-21 "닫게 고친다"): 결과 탭들이 사라졌다 → 그 가운데 **서버 커서의 주인**이 있으면
+    ///   그 세션에 커서 닫기를 보낸다(종전에는 다음 실행·커밋·해제 때까지 서버에 열려 있었다). 주인이 아닌 탭은 아무 일도
+    ///   없다 — 세션의 커서는 하나뿐이라 다른 탭의 커서를 잘못 닫지 않는다. 세션이 바쁘면 표식만 달고 한가해질 때 보낸다
+    ///   (새 실행이 먼저 오면 러너가 스스로 닫는다). 탭 닫기는 실행이 아니므로 `gate_pass`(상태줄 "실행 중")가 아니라 `pass`.
+    pub(crate) fn result_tabs_closed(&mut self, ids: &[u64]) {
+        for s in std::iter::once(&mut self.sess).chain(self.parked.iter_mut()) {
+            let Some(owner) = s.cursor_owner else {
+                continue;
+            };
+            if !ids.contains(&owner) {
+                continue;
+            }
+            s.cursor_owner = None;
+            if !s.connected {
+                continue;
+            }
+            match s.pass() {
+                Some(p) => s.submit(p, crate::worker::Cmd::CloseCursor),
+                None => s.cursor_close_wait = true,
+            }
+        }
+    }
+
+    /// 미뤄 둔 커서 닫기(활성 세션) — 그사이 새 결과가 커서를 다시 잡았으면(`cursor_owner`) 닫지 않는다.
+    pub(crate) fn cursor_close_flush(&mut self) {
+        if !self.sess.cursor_close_wait {
+            return;
+        }
+        let Some(p) = self.sess.pass() else {
+            return;
+        };
+        self.sess.cursor_close_wait = false;
+        if self.sess.connected && self.sess.cursor_owner.is_none() {
+            self.sess.submit(p, crate::worker::Cmd::CloseCursor);
+        }
     }
 
     /// 재질의 확인 토스트의 [계속](10-12 ④): 같은 요청을 **확인 없이** 다시 보낸다 — 평소 경로(요청 → 펌프 → `send_fetch` = 문지기·
@@ -1664,7 +1707,17 @@ impl App {
             self.layout();
         }
         let alive = self.editors.tab_ids();
+        // ★ T-93 ⓑ: 편집기 탭이 닫혀 결과 패널이 통째로 사라진다 → 그 안의 결과 탭이 물던 커서를 닫는다.
+        let gone: Vec<u64> = self
+            .panels
+            .iter()
+            .filter(|(id, _)| !alive.contains(id))
+            .flat_map(|(_, p)| p.tabs.iter().map(|t| t.id))
+            .collect();
         self.panels.retain(|id, _| alive.contains(id));
+        if !gone.is_empty() {
+            self.result_tabs_closed(&gone);
+        }
         self.tab_vars.retain(|id, _| alive.contains(id));
         self.object_tabs.retain(|id, _| alive.contains(id));
         self.diff_views_sync();

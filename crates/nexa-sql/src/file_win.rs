@@ -131,7 +131,16 @@ pub(crate) fn filters_for(purpose: FilePurpose, log_ext: &str) -> Vec<FileFilter
     let sql = || FileFilter::new(t(Msg::FilterSql), &SQL_EXTS);
     let text = || FileFilter::new(t(Msg::FilterText), &["txt", "md", "json", "csv"]);
     let project = || FileFilter::new(t(Msg::FilterProject), &["nsql-project"]);
-    let data = || FileFilter::new(t(Msg::FilterData), &["csv", "tsv", "txt", "jsonl", "json"]);
+    // ★ 가져오기가 읽는 형식 전부(nsql-io `SourceFormat::resolve` · 종전에는 xlsx·parquet가 빠져 파일 창에서 보이지 않았다 · 11-22).
+    let data = || {
+        FileFilter::new(
+            t(Msg::FilterData),
+            &[
+                "csv", "tsv", "txt", "jsonl", "json", "xlsx", "xlsm", "xls", "xlsb", "ods",
+                "parquet",
+            ],
+        )
+    };
     let all = || FileFilter::new(t(Msg::FilterAll), &[]);
     match purpose {
         FilePurpose::Editor | FilePurpose::RunFile | FilePurpose::SqlPreview => {

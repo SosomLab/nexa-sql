@@ -776,6 +776,10 @@ impl App {
                     ));
                 }
                 let dial = self.sess.dialect; // 이 페치를 돌려준 세션의 방언(결과의 속성 · 09-26)
+                                              // ★ T-93 ⓑ: 이어 읽기도 커서를 새로 열 수 있다 → 더 있으면 이 탭이 주인.
+                if more {
+                    self.sess.cursor_owner = Some(key);
+                }
                 let total = match self.grid_for(key) {
                     Some(g) => {
                         if replace {
@@ -1322,6 +1326,7 @@ impl App {
                 continue;
             }
             self.sess.busy = false;
+            self.cursor_close_flush();
             self.sync_run_stmt_button();
             self.editors.set_running(self.sess.run_editor, false);
             // ★ 증분 표시(사용자 10-09): 첫 세그먼트가 "더 있음"으로 왔고 탭 행 수가 0(전체)이면 실행이 끝난 지금 나머지를 자동으로
