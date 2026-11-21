@@ -572,7 +572,14 @@ fn add(o: &Opts, name: &str, target: Option<&str>) -> i32 {
             nsql_i18n::Msg::CliConnSaved,
             &[
                 name,
-                &spec.redacted(),
+                // 빈 비밀번호 명시(`nopassword=on` · T-133)는 `***` 없이 — 비밀번호가 저장된 것처럼 보이지 않게.
+                &{
+                    let mut shown = spec.clone();
+                    if shown.password.as_deref() == Some("") {
+                        shown.password = None;
+                    }
+                    shown.redacted()
+                },
                 &if spec.password.is_some() {
                     String::new()
                 } else {
