@@ -413,16 +413,18 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 
 ### 6-2. 누수 시나리오 표(G-3 · 각 5주기 · 기준 = 2주기 이후 증가 0)
 
+> ★ 11-21 접두 정정(T-281 · D-488 ③): 누수 점검 시나리오 = **`LK-n`**(종전 `L-n` = 라이선스 결정 L-1~L-8과 겹침 · 옛 journal의 `L-n` 누수 표기는 그대로) · [journal 11-21 §23](journal/2026-11-21.md)
+
 | # | 시나리오 | 조작(자동화) | 본다 |
 |---|---|---|---|
-| L-1 | 파일 대화상자 열기/닫기 | Ctrl+O → Esc | ✅ 09-15(12주기 평평) |
-| L-2 | 접속/해제 | 접속 창 → Connect → Disconnect | 세션·탐색기 메타 스레드·SID · 워커 교체 뒤 옛 스레드 종료 |
-| L-3 | 실행 반복 | F5 × N(200행) | 결과 셋 교체 · 그리드 캐시 · 타임라인 |
-| L-4 | 탐색기 펼침/접기 | 스키마 3개 펼쳤다 접기 | 노드 벡터 · 아이콘 캐시 |
-| L-5 | 탭 열고 닫기 | Ctrl+T → 입력 → Ctrl+W | `EditState` · undo · 강조 캐시 |
-| L-6 | 설정 창·색 창·단축키 창 열고 닫기 | 메뉴 → Esc | 창 객체 · softbuffer · z_order |
-| L-7 | 파일 열기/저장 | Ctrl+O 선택 → Ctrl+S | 인코딩·줄끝 버퍼 |
-| L-8 | 로그 창 장시간 | 실행 100회 뒤 | `log.max_lines` 상한 작동 |
+| LK-1 | 파일 대화상자 열기/닫기 | Ctrl+O → Esc | ✅ 09-15(12주기 평평) |
+| LK-2 | 접속/해제 | 접속 창 → Connect → Disconnect | 세션·탐색기 메타 스레드·SID · 워커 교체 뒤 옛 스레드 종료 |
+| LK-3 | 실행 반복 | F5 × N(200행) | 결과 셋 교체 · 그리드 캐시 · 타임라인 |
+| LK-4 | 탐색기 펼침/접기 | 스키마 3개 펼쳤다 접기 | 노드 벡터 · 아이콘 캐시 |
+| LK-5 | 탭 열고 닫기 | Ctrl+T → 입력 → Ctrl+W | `EditState` · undo · 강조 캐시 |
+| LK-6 | 설정 창·색 창·단축키 창 열고 닫기 | 메뉴 → Esc | 창 객체 · softbuffer · z_order |
+| LK-7 | 파일 열기/저장 | Ctrl+O 선택 → Ctrl+S | 인코딩·줄끝 버퍼 |
+| LK-8 | 로그 창 장시간 | 실행 100회 뒤 | `log.max_lines` 상한 작동 |
 
 ---
 
@@ -434,7 +436,7 @@ pub struct BudgetCell(Arc<RwLock<Arc<Budget>>>);   // 워커·스레드가 쥔�
 | **T-90b** | DB: `db.statement_timeout`(드라이버 cancel 포트 — Oracle `OCIBreak` · MSSQL attention · PG `pg_cancel_backend`/소켓 · SQLite `interrupt`) · `db.fetch_size` · 탐색기 숨김 = 세션 안 엶 · ✅ **11-21 확인 = 전부 배선됨**(협업 코드 조사 · TODO T-90 행) | 중 |
 | **T-90c** | CPU/GFX: ~~`editor.highlight_max_kb`~~(09-22 폐기) · `editor.max_occurrences`(09-22 배선) · `ui.max_fps` · `ui.animations`(OS 동작 줄이기 = nexa-fs::sys) · `editor.caret_blink` · `file.os_icons` · `file.probe_chevrons` · ✅ **11-21 확인 = 전부 배선됨**(협업 코드 조사 · TODO T-90 행) | 중 |
 | **T-90d** | ✅ 09-16 49차: `log.max_lines` · `editor.undo_max` · `ui.glyph_cache` · `file.icon_cache` 세터 + 상한 테스트 + main.rs 배선 | 소 |
-| **T-90e** | 진단·게이트: `--trace-net` · `--trace-frames` · 기동 `--timing` · `memcycle.ps1` 시나리오 인자(L-2~L-8) · `perf.yml` CI 잡 · 로그 창 `perf` 종류 | 중 |
+| **T-90e** | 진단·게이트: `--trace-net` · `--trace-frames` · 기동 `--timing` · `memcycle.ps1` 시나리오 인자(LK-2~LK-8) · `perf.yml` CI 잡 · 로그 창 `perf` 종류 | 중 |
 | **T-90f** | (후보) 더티 영역 다시 그리기 · DNS 캐시 · auto 모드 자동 전환(D-58 뒤) | 대 |
 
 **결정 ✅ 09-16 = DR-31**: D-58 `full` + 1회 안내 · D-59 custom · D-60 `nexa-sys` 크레이트(macOS reduce motion = `CFPreferencesCopyAppValue` · 원격 세션 macOS 없음) · D-61 0.

@@ -215,7 +215,7 @@ nexa-ctl `TreeControl`(파일 대화상자·설정 창 트리)도 ←/→는 같
 | 자체 시험 | 기동 명령 `explorer.pick:drop` · `drop.confirm`(2단 확인 통과) · `drop.confirm_nobackup` · `drop.dump:<파일>` |
 | 결정 | D-240~D-245([journal 10-01 §9](journal/2026-09-30.md)) |
 
-같은 날: 탭 표식 메뉴·팔레트의 **접속 유형 지정**(`session.env:*` · CONNECT 세션 포함 · 저장 프로필이면 함께 저장)과 **접속 정보 → Output**(`session.info`).
+같은 날: 탭 표식 메뉴·팔레트의 **접속 유형 지정**(`session.env:*` · CONNECT 세션 포함 · ~~저장 프로필이면 함께 저장~~ → **임시 적용 · 저장 안 함**(`Sess.env_temp` · 영속 지정 = 로그인 폼 · CLI `conn env` · 11-21 D-243 사용자 확정 · D-488 ⑥))과 **접속 정보 → Output**(`session.info`).
 
 
 ## 10. 서버 헤더 글 · 머무름 툴팁(10-13 · 사용자)

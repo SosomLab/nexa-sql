@@ -45,7 +45,8 @@ T="$ROOT/target"
 if [ -d "$T" ]; then
   for d in "$T"/*/; do
     n="$(basename "$d")"
-    case "$n" in debug|release|lite|it|doc|package|duckdb-download|packaging|v130-bundle|rel0*|x86_64-*|aarch64-*|wasm32-*|i686-*) continue;; esac
+    # ic-* = 로컬 OCI 검증용 Instant Client 압축 풀기(target/ic-1121 · 11-21 · 다시 쓰려고 남김 · docs/61 §3)
+    case "$n" in debug|release|lite|it|ic-*|doc|package|duckdb-download|packaging|v130-bundle|rel0*|x86_64-*|aarch64-*|wasm32-*|i686-*) continue;; esac
     for h in "$d"home "$d"*/home; do [ -d "$h" ] && is_home_copy "$h" && add "$h" "즉시(프로필 사본)"; done
     quiet "$d" && add "$d" "target 산출물"
   done

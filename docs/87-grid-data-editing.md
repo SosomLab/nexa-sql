@@ -111,7 +111,7 @@
 
 - 값 = **클라이언트 로컬 시각 글자**(편집 중 = 상자 글 교체 · 아니면 셀 값 = 검증 경로) · 서버 시계가 필요하면 "서버 시각" = `now` 토큰 · 순수 함수 `now_text`/`type_precision` + 단위 시험 · 셀 편집기 열린 중에도 키가 통함(event_loop 예외).
 - 열 종류 판정 = 편집 명세 형식 → 없으면 **선언 타입 이름 폴백**(`now_kind_at`) · ⚠ SQLite는 편집 명세가 늘 Text라 폴백이 필수인데 1차·2차 빌드는 SQLite 드라이버가 `type_name`을 빈 문자열로 돌려 네 열 모두 일시가 들어갔음 → rusqlite `column_decltype` 기능 + `Column.type_name = 선언 타입`(d=DATE · ts=TIMESTAMP(6))으로 정정(협업 V1 10-13).
-- 남은 것 = 편집기 "지금 ▾" 버튼(T-331) · SQLite 선언 타입으로 열 머리 배지 재검토(T-332).
+- 남은 것 = 편집기 "지금 ▾" 버튼(T-331) · ~~SQLite 선언 타입으로 열 머리 배지 재검토(T-332)~~ → ✅ 11-21 닫음(드라이버 `type_name` = decltype · `type_badge` · `from_type_name`이 이미 선언 타입을 씀 · 위 "SQLite 편집 명세가 늘 Text" 서술은 10-13 전 · D-488 ⑦).
 - V1(협업 10-13 · Debug 02:10): SQLite `t(d DATE, tm TIME, dt DATETIME, ts TIMESTAMP(6))` = `2026-10-13` · `02:10:51` · `2026-10-13 02:10:52.246` · `2026-10-13 02:10:52.641000` ✓ · d `now_time` = `2026-10-13` ✓ · dt 편집 밖 `now_time` = `2020-01-01 02:04:44` ✓ · Oracle 임시 표 `NSQLT_NOW`(D DATE · TS(6) · TS3) = D 일시 · TS `.244000` · TS3 `.841` ✓ · `now:server` = 셀 `now` ✓ · 글 열 메뉴 흐림 ✓ · 값 창 우클릭 메뉴는 별도 창이라 자동 시험 밖(사용자 실기).
 
 ---
