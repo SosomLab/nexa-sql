@@ -77,14 +77,14 @@ D:/other/x.sql                  ← 마지막 수단(저장 때 로그 경고 "�
 ### 4-2. 사용자 정의 변수(JetBrains · Eclipse · DBeaver 방식의 합)
 
 - 프로젝트 파일 `"vars": { "DATA": "${home}/data" }` = **공유 기본값**(팀이 같은 구조면 그대로 됨).
-- 로컬 오버라이드 = `<설정 폴더>/projects/<프로젝트 해시>.local.json` `"vars": { "DATA": "E:/data" }` — 파일에 안 남고 기기마다 다르게. `undofile::name_for` 해시 규약 재사용(70 §2 워크스페이스 id와 같음).
+- 로컬 오버라이드 = 앱 설정 폴더의 PC별 대응표(열쇠 = 프로젝트 고유 번호 · D-494) — 파일에 안 남고 기기마다 다르게. (처음 안 = `<설정 폴더>/projects/<프로젝트 해시>.local.json` → D-190 · D-489 ③ · D-407로 **대체** · 폴더 자리는 `project.pc_paths`로 구현됨 D-495 · 변수는 P3 때 같은 표에.)
 - 설정 창 **Project ▸ Path Variables** 표(이름 · 값 · 출처 = 프로젝트/로컬) · CLI `nsql project vars [set NAME=값]`.
 
 ### 4-3. 못 풀 때 = 보이게 + 고칠 길
 
 - 탭: 파일이 없으면 **자리 탭**(제목 + 띠 "원본을 찾을 수 없음: `${var:DATA}/dump.sql`" · [찾아보기] [변수 정의…] [닫기]) — 조용히 건너뛰지 않는다. 미저장 스냅숏(70 §5)이 있으면 그 본문을 읽기 전용으로 보여 준다.
-- 등록 폴더: 트리에 "(없음)" + 우클릭 **Relocate…**(폴더 고르기 → `folders[i]` 갱신 · 그 폴더 앵커의 탭·펼침도 같이 살아남).
-- 프로젝트를 열 때 **미정의 변수/못 찾은 앵커를 모아 한 번**에 묻는 팝업(JetBrains "Unresolved path variables") — 값을 넣으면 로컬 오버라이드에 저장.
+- 등록 폴더: 트리에 "(없음)" + 우클릭 **폴더 다시 지정…**(Relocate Folder… · 폴더 고르기) — ✅ 11-22 구현(D-495): 프로젝트 파일의 `folders[i]` 정의·앵커 이름은 **고치지 않고** 이 PC 대응표(앱 설정 `project.pc_paths` · 열쇠 = 프로젝트 고유 번호 D-494 + 폴더 정의 글)에만 적는다 → 그 폴더 앵커의 탭이 다시 열리고, 다음에 열 때도 대응표가 적용된다.
+- 프로젝트를 열 때 **미정의 변수/못 찾은 앵커를 모아 한 번**에 묻는 팝업(JetBrains "Unresolved path variables") — 값을 넣으면 **앱 설정 폴더의 PC별 대응표**에 저장(D-190 · D-489 ③ · D-494 — 별도 `.local.json` 파일은 만들지 않음 · D-407).
 
 ### 4-4. 정규화 규칙(§2에서 도출 · `project::norm` 한 함수)
 
@@ -107,7 +107,7 @@ D:/other/x.sql                  ← 마지막 수단(저장 때 로그 경고 "�
 
 - 옛 파일(`version: 1` · 최상위 `tabs`)은 그대로 읽고, 저장은 v2로.
 - `profiles`는 **이름만**(비밀번호·호스트는 볼트/프로필 파일 = 안 따라감 · 21 §7) — 다른 기기에서는 "직접 접속" 안내가 이미 있다(70 §6-1). 프로필 정의까지 같이 옮기려면 별도 `nsql conn export`(비밀번호 제외 · DataGrip "비밀번호 없이 복사"와 같은 선)로 — 이 문서 범위 밖(T-173).
-- 로컬 전용(기기에 종속)인 것만 `.local.json`으로: 변수 오버라이드 · (나중) 창 위치.
+- 로컬 전용(기기에 종속)인 것(등록 폴더의 이 PC 자리 · 변수 오버라이드 · (나중) 창 위치)은 **앱 설정 폴더의 PC별 대응표**에 둔다(D-190 · D-489 ③ · D-494 · 지금 = `settings.conf` 숨은 키 `project.pc_paths` · D-495) — 처음 안의 `.local.json` 연계 파일은 만들지 않는다(D-407).
 
 ### 4-6. 이식 시나리오 검증표(개선 뒤 기대)
 
@@ -144,7 +144,7 @@ D:/other/x.sql                  ← 마지막 수단(저장 때 로그 경고 "�
 | **D-189** | 못 찾은 탭 = 건너뜀 vs 자리 탭 | **자리 탭**(찾아보기/변수 정의/닫기 · 스냅숏 있으면 읽기 전용 본문) |
 | **D-190** | 파일 구조 = 한 파일 v2 절 나누기 vs 두 파일(`.nsql-project` + `.nsql-workspace`) | **한 파일 v2**(사용자 요구 = 복사만으로 환경 복제) + `project.share_workspace=off` 옵션으로 두 파일 효과 |
 
-## 7. 구현 상태(11-22 · T-172 · 브랜치 `t172-p1`)
+## 7. 구현 상태(11-22 · T-172 · P1·P2 = main · (A)(B) = 11-22 오후)
 
 | 단계 | 한 것 | 커밋 |
 |---|---|---|
@@ -152,7 +152,8 @@ D:/other/x.sql                  ← 마지막 수단(저장 때 로그 경고 "�
 | P2 | **경로 앵커**(D-493 = 내장 변수와 같은 표기) — 쓰기: 프로젝트 파일 폴더 아래 = 접두 없는 상대 · 등록 폴더 아래 = `${workspaceFolder:이름}/…`(가장 깊게 맞는 폴더 · 이름 = 폴더 이름 · 겹치면 앵커 안 씀) · 홈 아래 = `${userHome}/…` · 그 밖 = 절대 / 읽기: 위 셋 + `${workspaceFolder}` · 풀 수 없는 앵커는 글자 그대로 두어 못 찾은 탭으로 보존 · **형식 버전 2**(1은 그대로 읽음) · **더 새 판은 열지 않음**(`from_bytes` Err = "project file version N is newer than this app supports (2) - update Nexa SQL to open it" — 열어서 저장하면 모르는 항목을 잃으므로) · 폴더를 먼저 읽는다(키 순서 무관) | 4c37a1c2 |
 
 - **검증(11-22 · [journal 11-22 §6](journal/2026-11-22.md))** = 새 V1 [`scripts/v1/project-paths.sh`](../scripts/v1/project-paths.sh) 22/2 — a 앵커 저장 ✓ · b 못 찾은 탭 보존(본문 · 로그) ✓ · c 버전 99 거부 ✓(상태줄·로그 원문 · 파일 그대로 · 정상 종료) · d 버전 1 열기 ✓ · **FAIL 2 = 결함**(아래). 대조(이전 판 0dc63fe8) = a 버전 1 + 절대 경로 · b 탭 사라짐 · c 99를 그대로 열어 복원.
-- **결함(11-22 발견 · 개발 몫)** = 명시 저장(`project.save` · 새 프로젝트 · 다른 이름으로) 뒤 **두 번째 저장에서 못 찾은 탭이 사라진다** — `project_save_to`(app/project.rs:495) → `project_set(p, false)`가 `self.proj_missing.clear()`(app/project.rs:519)로 비운다 → 그 뒤 담기(`project_capture_state`)에 되돌릴 것이 없어 저장 직후에도 `project_unsaved()`가 참(종료 때 "Save the project before exiting?") · 거기서 저장하면 탭 항목·본문이 파일에서 빠진다. V1 `b2` 두 검사가 감시.
-- **남은 것** = 자리 탭 UI(D-189 · 찾아보기/닫기) · **PC별 대응표 + 프로젝트 고유 번호**(D-494 · 열쇠 = 프로젝트 파일 안 고유 번호 · 대응표 = 앱 설정 폴더 D-190) · 저장 정규화·절대 경로 경고(D-188 `project.warn_absolute` · 미구현) · `folders[].name`(지금은 폴더 이름만) · P3(`${var}`) · P4 · **북마크 경로는 절대 그대로**(앵커로 바꾸지 않음 · 사용자 11-22) · 위키 = Project-Workspace 경로 표기 단락(11-22).
+- **결함 1(11-22 발견) = ✅ 해결 825295de** — 명시 저장 뒤 두 번째 저장에서 못 찾은 탭이 사라지던 것(`project_set`이 `proj_missing`을 비움) → 이 프로젝트 문서에 아직 적힌 것만 남기도록 고침 · V1 `b2` 두 검사 PASS(11-22 · [journal 11-22 §7·§8](journal/2026-11-22.md)).
+- **(A)(B) 고유 번호 + PC별 폴더 대응표 + 폴더 다시 지정 = ✅ 11-22**(D-494 · D-495 · 소스 = 개발 커밋 대기 시점에 검증) — 파일 최상위 `"id"`(16진 16자 · 다시 지정 때 발급 · 다른 이름으로 저장한 사본은 이어받음) · 대응표 = 앱 설정 `settings.conf` 숨은 키 `project.pc_paths`(`고유 번호|폴더 정의 글|이 PC 경로` · 최신 먼저 · 200줄 상한 · 새 파일 없음) · 열 때 **못 찾은 폴더만** · 표의 자리가 실제로 있을 때만 적용 · 저장은 폴더 목록·앵커 이름을 **정의 경로** 쪽으로(이 PC 경로가 파일에 새지 않음) · 입구 = 프로젝트 탐색기 못 찾은 루트 폴더 우클릭 "폴더 다시 지정…" · 명령 `project.relocate_folder:<순번>[:<경로>]` · 형식 버전 2 유지 · 검증 = V1 project-paths e/e2(40/0).
+- **남은 것** = (C) 자리 탭 UI(D-189 · 찾아보기/닫기 · 닫기 = 프로젝트 파일에서도 지움 + 미저장 스냅숏이면 확인 D-496) · 열 때 못 찾은 폴더·앵커를 모아 묻는 팝업 · 저장 정규화·절대 경로 경고(D-188 `project.warn_absolute` · 미구현) · `folders[].name`(지금은 폴더 이름만) · P3(`${var}`) · P4 · **북마크 경로는 절대 그대로**(앵커로 바꾸지 않음 · 사용자 11-22) · 위키 = Project-Workspace 경로 표기 · 폴더 다시 지정 단락(11-22).
 
 **출처**: [Sublime projects](https://www.sublimetext.com/docs/projects.html) · [Sublime build systems 변수](https://www.sublimetext.com/docs/build_systems.html) · [VS Code multi-root workspaces](https://code.visualstudio.com/docs/editing/workspaces/multi-root-workspaces) · [JetBrains path variables](https://www.jetbrains.com/help/idea/absolute-path-variables.html) · [JetBrains VCS 안내](https://intellij-support.jetbrains.com/hc/en-us/articles/206544839-How-to-manage-projects-under-Version-Control-Systems) · [DataGrip 데이터 소스 공유](https://blog.jetbrains.com/datagrip/2018/05/21/copy-and-share-data-sources/) · [Eclipse path variables](https://help.eclipse.org/latest/topic/org.eclipse.platform.doc.user/concepts/cpathvars.htm) · [Eclipse linked resources](https://help.eclipse.org/latest/topic/org.eclipse.platform.doc.user/concepts/concepts-13.htm) · [DBeaver 설정 파일](https://dbeaver.com/docs/dbeaver/Configuration-files-in-DBeaver/) · [DBeaver 연결 관리](https://dbeaver.com/docs/dbeaver/Admin-Manage-Connections/) · [DBeaver 프로젝트](https://dbeaver.com/docs/dbeaver/Projects/).

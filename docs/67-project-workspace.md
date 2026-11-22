@@ -73,7 +73,7 @@
 
 저장·복원 = [70](70-autosave-and-restore.md)(SSOT · 타이밍 §7-1 · 확정 §9) · 본문 = 프로젝트 파일 블록(§7) · 파일 모드 hot exit = `workspaces/hot-exit.nsql-project`(D-181) (11-01 정합)
 
-- 실제 키 = `project.hot_exit`(always/off) · `project.autosave` · `project.autosave_secs` · `project.autosave_change_ms` · `project.unsaved_max_mb`(큰 버퍼 안내) · `project.backup_days` · `project.recent`·`project.last` · `project.restore_last`(REGISTRY 확인 11-01).
+- 실제 키 = `project.hot_exit`(always/off) · `project.autosave` · `project.autosave_secs` · `project.autosave_change_ms` · `project.unsaved_max_mb`(큰 버퍼 안내) · `project.backup_days` · `project.recent`·`project.last` · `project.restore_last`(REGISTRY 확인 11-01) · `project.pc_paths`(HIDDEN · T-172 PC별 폴더 대응표 = `고유 번호|폴더 정의 글|이 PC 경로` 셋씩 `|` 구분 · 최신 먼저 · 200줄 상한 · "폴더 다시 지정"이 씀 · D-495 · 11-22).
 - (이력 · 09-22 원안 표) 변경 뒤 1초 유휴/5초 상한 = 탭 스냅숏 `backups/<id>/<tab>.txt.tmp` → rename · 워크스페이스 JSON 디바운스 2초 · 저장/clean/버림 = 스냅숏 즉시 삭제 · 큰 버퍼 = 저장 프롬프트(Sublime 4151) · 원안 키 `project.backup_debounce_ms` · `project.backup_max_wait_ms` · `project.backup_max_mb` · `project.open_files_max` = **✖ 없는 키**(만들지 않음).
 
 ### 2-4. 복원
