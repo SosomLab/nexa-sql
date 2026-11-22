@@ -20,7 +20,6 @@ pub(crate) fn drop_into_textbox(tb: &mut TextBox, text: &str) {
     let mut inv = Invalidations::default();
     tb.replace_range(a.min(b), a.max(b), text, &mut inv);
 }
-use nsql_i18n::t;
 
 /// 입력 상자 높이(네 패널 공통).
 pub(crate) const INPUT_H: f32 = 25.0;
@@ -855,7 +854,14 @@ impl FilterBar {
         }) {
             // ★ 앵커 = 버튼 사각형 그대로(공용 규칙 `ui.tooltip_above`가 "항목 위"에 놓는다 · nexa-ui 171): 종전 "버튼 아래 +2 · 높이 0"
             //   앵커는 그 점 위에 놓여 **버튼을 덮었다**(사용자 10-13 "파일 검색 빼고 전부 기능 버튼을 가린다").
-            draw_tooltip_in(dc, th, b.rect, self.clamp_x(), t(b.kind.tip()), self.scale);
+            draw_tooltip_in(
+                dc,
+                th,
+                b.rect,
+                self.clamp_x(),
+                &b.kind.tip_text(),
+                self.scale,
+            );
         }
     }
 }

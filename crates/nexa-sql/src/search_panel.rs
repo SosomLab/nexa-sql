@@ -1650,15 +1650,15 @@ impl SearchPanel {
                     .is_some_and(|t0| t0.elapsed().as_millis() >= self.tooltip_ms)
         };
         let (btn, tip) = if let Some(b) = self.btns.iter().find(hot) {
-            (b, b.kind.tip())
+            (b, b.kind.tip_text())
         } else if let Some(b) = self.where_btns.iter().find(hot) {
-            (b, Msg::TipSearchWhereCase)
+            (b, t(Msg::TipSearchWhereCase).to_string())
         } else {
             return;
         };
         // ★ 앵커 = 버튼 사각형 그대로(공용 규칙이 "항목 위"로 올린다 · nexa-ui 171): 종전엔 캡슐 높이만큼 미리 올린 앵커를 넘겨
         //   **두 번** 올라가 툴바에 묻혔다(사용자 10-13 "툴바 상단에 잘려 보임").
-        nexa_ctl::draw::draw_tooltip_in(dc, th, btn.rect, (0, self.clamp_w), t(tip), self.scale);
+        nexa_ctl::draw::draw_tooltip_in(dc, th, btn.rect, (0, self.clamp_w), &tip, self.scale);
     }
 }
 

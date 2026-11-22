@@ -1403,6 +1403,37 @@ pub(crate) fn dynamic_commands() -> Vec<(&'static str, String, String, String)> 
         .clone()
 }
 
+/// ★ 툴팁용 단축키 표시 표(T-508 · 11-22): 키맵을 직접 볼 수 없는 컨트롤(찾기 막대 · 검색 패널 · 필터 막대)의 툴팁이
+/// **지금 키맵의 단축키**를 쓰도록 `(명령 id, 표시 글)`을 공개해 둔다 — 부팅·키맵 변경 때 `Keymap::publish_shown`.
+/// `None` = 아직 공개 전(단위 시험 · 부팅 초기) → 문구에 박힌 글을 그대로 쓴다.
+static SHOWN: std::sync::Mutex<Option<Vec<(&'static str, String)>>> = std::sync::Mutex::new(None);
+
+/// 툴팁 글 = 이름 + 단축키. `shown` = 공개된 표시 글(`None` = 공개 전 → 원문 그대로 · 빈 글 = 단축키 없음 → 이름만).
+pub(crate) fn tip_from(text: &str, shown: Option<&str>) -> String {
+    let Some(sc) = shown else {
+        return text.to_string();
+    };
+    let name = crate::order_win::without_shortcut(text);
+    if sc.is_empty() {
+        name.to_string()
+    } else {
+        format!("{name} ({sc})")
+    }
+}
+
+/// 명령 `id`의 지금 단축키를 붙인 툴팁 글(공개 전이면 `text` 그대로).
+pub(crate) fn tip_with(text: &str, id: &str) -> String {
+    let g = SHOWN
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let shown = g.as_ref().map(|v| {
+        v.iter()
+            .find(|(k, _)| *k == id)
+            .map_or("", |(_, s)| s.as_str())
+    });
+    tip_from(text, shown)
+}
+
 /// 2단 코드 분리 — 쉼표 앞 글자가 `+`이면 그 쉼표는 **키**(`cmd+,` · `ctrl+alt+,`)라 자르지 않는다(사용자 09-17 ⌘, 결함).
 fn split_seq(code: &str) -> Option<(&str, &str)> {
     let b = code.as_bytes();
@@ -1690,6 +1721,18 @@ impl Keymap {
             })
             .collect::<Vec<_>>()
             .join(" / ")
+    }
+
+    /// 툴팁용 표시 표 공개(`tip_with`가 읽는다) — 찾기 계열 명령만(그 밖의 툴팁은 호스트가 `display_of`로 직접 만든다).
+    pub(crate) fn publish_shown(&self) {
+        let v: Vec<(&'static str, String)> = COMMANDS
+            .iter()
+            .filter(|c| c.id.starts_with("find.") || c.id == "edit.replace")
+            .map(|c| (c.id, self.display_of(c.id)))
+            .collect();
+        *SHOWN
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(v);
     }
 
     /// 이 조합을 이미 쓰는 다른 명령(충돌 표시).
@@ -2145,6 +2188,22 @@ mod tests {
             let c = COMMANDS.iter().find(|c| c.id == "file.new").unwrap();
             assert!(preset_default(c, p).ends_with("+t"), "{p:?}");
         }
+    }
+
+    /// T-508: 툴팁 = 이름 + 지금 단축키 — 공개 전 = 원문 · 단축키 없음 = 이름만 · 있으면 박힌 괄호를 떼고 다시 붙인다.
+    #[test]
+    fn tip_from_replaces_baked_shortcut() {
+        assert_eq!(tip_from("Match Case (Alt+C)", None), "Match Case (Alt+C)");
+        assert_eq!(tip_from("Match Case (Alt+C)", Some("")), "Match Case");
+        assert_eq!(
+            tip_from("Match Case (Alt+C)", Some("Ctrl+K, C")),
+            "Match Case (Ctrl+K, C)"
+        );
+        assert_eq!(
+            tip_from("대소문자 구분 (Alt+C)", Some("⌥C")),
+            "대소문자 구분 (⌥C)"
+        );
+        assert_eq!(tip_from("Close", Some("Esc")), "Close (Esc)");
     }
 
     #[test]

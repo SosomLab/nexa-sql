@@ -102,6 +102,28 @@ impl BtnKind {
             BtnKind::ReplaceAll => Msg::TipFindReplaceAll,
         }
     }
+    /// 이 버튼과 같은 일을 하는 키맵 명령(툴팁의 단축키 원천 · T-508) — 없으면 문구 그대로(Enter 계열 · 전용 토글).
+    fn cmd(self) -> Option<&'static str> {
+        Some(match self {
+            BtnKind::Fold => "edit.replace",
+            BtnKind::Case => "find.case",
+            BtnKind::Word => "find.word",
+            BtnKind::Regex => "find.regex",
+            BtnKind::Selection => "find.selection",
+            BtnKind::Preserve => "find.preserve",
+            BtnKind::Replace => "find.replace_one",
+            BtnKind::ReplaceAll => "find.replace_all",
+            _ => return None,
+        })
+    }
+    /// 툴팁 글 — 이름 + **지금 키맵의 단축키**(OS 표기 · 사용자가 바꾼 값 · 문구에 박힌 `(Alt+C)`는 떼고 다시 붙인다).
+    pub(crate) fn tip_text(self) -> String {
+        let text = t(self.tip());
+        match self.cmd() {
+            Some(id) => crate::keymap::tip_with(text, id),
+            None => text.to_string(),
+        }
+    }
     fn is_toggle(self) -> bool {
         matches!(
             self,
@@ -1073,7 +1095,7 @@ impl FindBar {
             return;
         };
         let s = self.scale;
-        let text = t(btn.kind.tip()).to_string();
+        let text = btn.kind.tip_text();
         // 앵커 = 버튼 사각형 그대로(공용 규칙이 "항목 위"로 올린다 · nexa-ui 171 · 파일 검색 10-13과 같은 이중 올림 수정).
         draw_tooltip_in(dc, th, btn.rect, (0, self.clamp_w), &text, s);
     }
