@@ -1425,6 +1425,19 @@ cells={n}
             self.redraw();
             return;
         }
+        // `toast.click:<n>` = n번째 카드 본문 클릭(버튼 없는 동작 카드 · 예: 서버 변경 알림 → 비교 탭).
+        if let Some(n) = id.strip_prefix("toast.click:") {
+            if let Some(a) = n
+                .trim()
+                .parse()
+                .ok()
+                .and_then(|i| self.toasts.test_click_card(i))
+            {
+                self.menu_action(&a);
+            }
+            self.redraw();
+            return;
+        }
         if id == "toast.action" {
             if let Some(a) = self.toasts.test_press_button() {
                 self.menu_action(&a);

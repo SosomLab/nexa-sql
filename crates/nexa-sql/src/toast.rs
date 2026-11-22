@@ -341,6 +341,15 @@ impl Toasts {
         t.button.map(|(_, a)| a)
     }
 
+    /// 자동 시험: `i`번째 카드 **본문 클릭**(버튼 없는 동작 카드 = 그 동작 · `pick`의 카드 클릭 가지와 같다) — 동작 id를 돌려준다.
+    pub(crate) fn test_click_card(&mut self, i: usize) -> Option<String> {
+        if i >= self.items.len() {
+            return None;
+        }
+        let t = self.items.remove(i);
+        t.action.filter(|_| t.button.is_none())
+    }
+
     /// 만료 제거 — 남은 카드가 있으면(페이드 애니메이션) true = 30ms 틱 유지.
     pub(crate) fn tick(&mut self, now: Instant) -> bool {
         let ttl = self.ttl;
