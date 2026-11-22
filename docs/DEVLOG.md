@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-22 오후 2 (Windows · T-172 (C) 자리 탭 검증 · CI 속도 회복)** — 못 찾은 탭 = 탭 줄 그 자리에 읽기 전용 자리 탭 + 띠 [Browse…] [Close Tab] · 저장 = 그 자리 순서로 되적음 · 닫기 = 기록에서도 뺌 · 미저장 본문이면 한 번 더 닫아야(D-496 구현) · verify v2(682/0/6 · 통합 생략 · build 단계 TIMEOUT = 흐름 상한 171 s < 실제 371 s → 이어 실행) · V1 project-paths **67/0**(새 f 21 + panic 5 · e 기대 2건 새 동작으로) · 실기 Debug 44548 · CI 04f3dbdd ci ✓ windows 352 s(직전 1171 s) · integration ✓ 224 s = 회복 · [journal 11-22 §10·§11](journal/2026-11-22.md)
 - **2026-11-22 오후 (Windows · T-172 (A)(B) 검증 · CI 속도 회귀)** — 프로젝트 고유 번호 `"id"` + PC별 폴더 대응표 `project.pc_paths` + 폴더 다시 지정(D-495 = 결과는 이 PC 대응표에만 · D-496 = 자리 탭 닫기 = 파일에서도 지움 · (C) 때) · verify v2 ✓(682/0/6 · 통합 생략 = 접속 경로 변경 없음 · V1 project-paths 40/0 = 새 e/e2 16) · 실기 Debug 41376 · CI 6.5→20분 원인 = 의존 디버그 끔이 rust-cache 키에 빠짐 → 8f50180e 키 추가(효과 = 다음 push) · [journal 11-22 §8·§9](journal/2026-11-22.md)
 
 - **2026-11-22 낮 (Windows · 사용자 실기 확인 기록)** — T-134 ⓐ 끌어 붙이기 "모두 동작"(6항목) · "나머지는 동작 확인함"(T-507 · Oracle 역할 콤보 · T-250 분류 · T-462 ② · T-508 필터·F10) · T-102 #7 = 자동 측정 판정 · T-134 ⓑ 재확인 = 사용자 답 대기 · push nexa-ui e5b9a97 · nexa-sql 825295de(CI 진행 중) · [journal 11-22 §7](journal/2026-11-22.md)

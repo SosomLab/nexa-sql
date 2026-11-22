@@ -82,7 +82,7 @@ D:/other/x.sql                  ← 마지막 수단(저장 때 로그 경고 "�
 
 ### 4-3. 못 풀 때 = 보이게 + 고칠 길
 
-- 탭: 파일이 없으면 **자리 탭**(제목 + 띠 "원본을 찾을 수 없음: `${var:DATA}/dump.sql`" · [찾아보기] [변수 정의…] [닫기]) — 조용히 건너뛰지 않는다. 미저장 스냅숏(70 §5)이 있으면 그 본문을 읽기 전용으로 보여 준다.
+- 탭: 파일이 없으면 **자리 탭**(제목 + 띠 "원본을 찾을 수 없음: `${var:DATA}/dump.sql`" · [찾아보기] [변수 정의…] [닫기]) — 조용히 건너뛰지 않는다. 미저장 스냅숏(70 §5)이 있으면 그 본문을 읽기 전용으로 보여 준다. — ✅ 11-22 구현(T-172 (C) · D-189 · D-496): 탭 줄 **그 자리에** 빈 읽기 전용 뷰 탭(열쇠 `missing:<문서 id>`) + 띠 "Original file not found: <경로>"(본문이 있으면 "… its unsaved content is kept in the project file.") · [Browse…](고른 파일로 되살림 · 캐럿·본문 유지) · [Close Tab](기록에서도 뺌 · 본문이 있으면 한 번 더 닫아야) · 저장 = 그 자리 순서로 되적음. **아직 아님** = 스냅숏 본문 읽기 전용 표시(지금 빈 본문 · 띠로만 알림) · [변수 정의…](P3).
 - 등록 폴더: 트리에 "(없음)" + 우클릭 **폴더 다시 지정…**(Relocate Folder… · 폴더 고르기) — ✅ 11-22 구현(D-495): 프로젝트 파일의 `folders[i]` 정의·앵커 이름은 **고치지 않고** 이 PC 대응표(앱 설정 `project.pc_paths` · 열쇠 = 프로젝트 고유 번호 D-494 + 폴더 정의 글)에만 적는다 → 그 폴더 앵커의 탭이 다시 열리고, 다음에 열 때도 대응표가 적용된다.
 - 프로젝트를 열 때 **미정의 변수/못 찾은 앵커를 모아 한 번**에 묻는 팝업(JetBrains "Unresolved path variables") — 값을 넣으면 **앱 설정 폴더의 PC별 대응표**에 저장(D-190 · D-489 ③ · D-494 — 별도 `.local.json` 파일은 만들지 않음 · D-407).
 
@@ -144,7 +144,7 @@ D:/other/x.sql                  ← 마지막 수단(저장 때 로그 경고 "�
 | **D-189** | 못 찾은 탭 = 건너뜀 vs 자리 탭 | **자리 탭**(찾아보기/변수 정의/닫기 · 스냅숏 있으면 읽기 전용 본문) |
 | **D-190** | 파일 구조 = 한 파일 v2 절 나누기 vs 두 파일(`.nsql-project` + `.nsql-workspace`) | **한 파일 v2**(사용자 요구 = 복사만으로 환경 복제) + `project.share_workspace=off` 옵션으로 두 파일 효과 |
 
-## 7. 구현 상태(11-22 · T-172 · P1·P2 = main · (A)(B) = 11-22 오후)
+## 7. 구현 상태(11-22 · T-172 · P1·P2 = main · (A)(B) = 11-22 오후 · (C) = 11-22 오후 2)
 
 | 단계 | 한 것 | 커밋 |
 |---|---|---|
@@ -154,6 +154,7 @@ D:/other/x.sql                  ← 마지막 수단(저장 때 로그 경고 "�
 - **검증(11-22 · [journal 11-22 §6](journal/2026-11-22.md))** = 새 V1 [`scripts/v1/project-paths.sh`](../scripts/v1/project-paths.sh) 22/2 — a 앵커 저장 ✓ · b 못 찾은 탭 보존(본문 · 로그) ✓ · c 버전 99 거부 ✓(상태줄·로그 원문 · 파일 그대로 · 정상 종료) · d 버전 1 열기 ✓ · **FAIL 2 = 결함**(아래). 대조(이전 판 0dc63fe8) = a 버전 1 + 절대 경로 · b 탭 사라짐 · c 99를 그대로 열어 복원.
 - **결함 1(11-22 발견) = ✅ 해결 825295de** — 명시 저장 뒤 두 번째 저장에서 못 찾은 탭이 사라지던 것(`project_set`이 `proj_missing`을 비움) → 이 프로젝트 문서에 아직 적힌 것만 남기도록 고침 · V1 `b2` 두 검사 PASS(11-22 · [journal 11-22 §7·§8](journal/2026-11-22.md)).
 - **(A)(B) 고유 번호 + PC별 폴더 대응표 + 폴더 다시 지정 = ✅ 11-22**(D-494 · D-495 · 소스 = 개발 커밋 대기 시점에 검증) — 파일 최상위 `"id"`(16진 16자 · 다시 지정 때 발급 · 다른 이름으로 저장한 사본은 이어받음) · 대응표 = 앱 설정 `settings.conf` 숨은 키 `project.pc_paths`(`고유 번호|폴더 정의 글|이 PC 경로` · 최신 먼저 · 200줄 상한 · 새 파일 없음) · 열 때 **못 찾은 폴더만** · 표의 자리가 실제로 있을 때만 적용 · 저장은 폴더 목록·앵커 이름을 **정의 경로** 쪽으로(이 PC 경로가 파일에 새지 않음) · 입구 = 프로젝트 탐색기 못 찾은 루트 폴더 우클릭 "폴더 다시 지정…" · 명령 `project.relocate_folder:<순번>[:<경로>]` · 형식 버전 2 유지 · 검증 = V1 project-paths e/e2(40/0).
-- **남은 것** = (C) 자리 탭 UI(D-189 · 찾아보기/닫기 · 닫기 = 프로젝트 파일에서도 지움 + 미저장 스냅숏이면 확인 D-496) · 열 때 못 찾은 폴더·앵커를 모아 묻는 팝업 · 저장 정규화·절대 경로 경고(D-188 `project.warn_absolute` · 미구현) · `folders[].name`(지금은 폴더 이름만) · P3(`${var}`) · P4 · **북마크 경로는 절대 그대로**(앵커로 바꾸지 않음 · 사용자 11-22) · 위키 = Project-Workspace 경로 표기 · 폴더 다시 지정 단락(11-22).
+- **(C) 자리 탭 = ✅ 11-22**(D-189 · D-496 · 소스 = 개발 커밋 대기 시점에 검증) — 복원 때 못 찾은 파일 탭 = 탭 줄 그 자리에 빈 읽기 전용 뷰 탭(`missing:<문서 id>` · 제목 = 저장된 제목 · 활성이었으면 활성) · 띠 [Browse…] [Close Tab] · 저장 = 자리 탭이 살아 있으면 원래 기록(경로 · 캐럿 · 미저장 본문)을 **탭 순서 그 자리에**(종전 = 끝에 붙임) · 닫혔으면 기록에서 뺌 · 미저장 본문이 든 자리 탭은 첫 닫기를 막고 "close it again to confirm" → 두 번째에 닫힘(`close_tab_guarded` 길) · [Browse…]/`project.missing_found:<경로>` = 그 파일로 되살림 · 폴더 다시 지정으로 찾은 탭은 자리 탭을 닫음 · 검증 = V1 project-paths f/f2/f3/f4(67/0 · [journal 11-22 §10](journal/2026-11-22.md)).
+- **남은 것** = 자리 탭에 미저장 스냅숏 본문을 읽기 전용으로 보여 주기(§4-3 원안 · 지금 빈 본문) · "탭 모두 닫기/다른 탭 닫기" 길의 닫기 확인(미확인) · 못 찾은 경로와 같은 파일을 따로 열면 기록에 경로가 두 번 적힐 수 있음 · 열 때 못 찾은 폴더·앵커를 모아 묻는 팝업 · 저장 정규화·절대 경로 경고(D-188 `project.warn_absolute` · 미구현) · `folders[].name`(지금은 폴더 이름만) · P3(`${var}`) · P4 · **북마크 경로는 절대 그대로**(앵커로 바꾸지 않음 · 사용자 11-22) · 위키 = Project-Workspace 경로 표기 · 폴더 다시 지정 단락(11-22).
 
 **출처**: [Sublime projects](https://www.sublimetext.com/docs/projects.html) · [Sublime build systems 변수](https://www.sublimetext.com/docs/build_systems.html) · [VS Code multi-root workspaces](https://code.visualstudio.com/docs/editing/workspaces/multi-root-workspaces) · [JetBrains path variables](https://www.jetbrains.com/help/idea/absolute-path-variables.html) · [JetBrains VCS 안내](https://intellij-support.jetbrains.com/hc/en-us/articles/206544839-How-to-manage-projects-under-Version-Control-Systems) · [DataGrip 데이터 소스 공유](https://blog.jetbrains.com/datagrip/2018/05/21/copy-and-share-data-sources/) · [Eclipse path variables](https://help.eclipse.org/latest/topic/org.eclipse.platform.doc.user/concepts/cpathvars.htm) · [Eclipse linked resources](https://help.eclipse.org/latest/topic/org.eclipse.platform.doc.user/concepts/concepts-13.htm) · [DBeaver 설정 파일](https://dbeaver.com/docs/dbeaver/Configuration-files-in-DBeaver/) · [DBeaver 연결 관리](https://dbeaver.com/docs/dbeaver/Admin-Manage-Connections/) · [DBeaver 프로젝트](https://dbeaver.com/docs/dbeaver/Projects/).

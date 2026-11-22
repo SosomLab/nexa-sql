@@ -5,9 +5,13 @@
 #   c. `"version": 99` 파일 = 열지 않음 + 상태줄·로그 안내("newer than this app supports") · 앱은 살아서 정상 종료 · 파일은 그대로
 #   d. 버전 1 옛 파일(상대 경로만) = 그대로 열린다(탭 복원)
 #   e. 못 찾은 등록 폴더를 `project.relocate_folder:<순번>:<경로>`로 다시 지정 → 정의·앵커 유지 + `"id"` 발급 + 격리 홈 `project.pc_paths` · e2 = 다시 열면 대응표 적용(T-172 (A)(B))
+#   f. 못 찾은 탭의 자리 탭(T-172 (C) · D-189 · D-496): 탭 줄 그 자리에 빈 읽기 전용 뷰 탭 · 저장 때 순서 그대로 · 닫으면 기록에서 뺀다
+#      (미저장 본문이 있으면 한 번 더 닫아야) · `project.missing_found:<경로>`로 되살림
 #   종료: 프로젝트가 바뀐 채 `file.exit`면 "프로젝트 저장?" 물음이 뜬다 → 답 = `toolbar.pick:project.exit_skip`(물음 답은 indent_pick 길 · 직접 id는 menu_action이라 무시됨)
 #   임시 폴더 = OS 임시 `nsql-v1pp-*`(끝나면 삭제) · 쉼표가 든 경로는 기동 명령 구분자와 겹치므로 쓰지 않는다.
 . "$(dirname "$0")/../lib/v1.sh"
+expect_re() { if grep -qE -- "$3" "$2" 2>/dev/null; then v1_pass "$1"; else v1_failmsg "$1" "/$3/ 없음 · $(head -c 200 "$2" 2>/dev/null | tr '\n' ' ')"; fi; }
+expect_not_re() { if grep -qE -- "$3" "$2" 2>/dev/null; then v1_failmsg "$1" "/$3/ 있음"; else v1_pass "$1"; fi; }
 v1_home en
 v1_set "project.autosave=off"
 WK=$(mktemp -d "${TEMP:-/tmp}/nsql-v1pp-XXXX")
@@ -72,7 +76,8 @@ printf '{"version": 2, "folders": [{"path": "."}, {"path": "%s"}], "active": 1, 
 v1_gui pe "project.load:$PM/e.nsql-project,@after:1500:tabs.dump:$O/pe-tabs0.txt,@after:2000:project.relocate_folder:1:$M2M,@after:2400:status.dump:$O/pe-status.txt,@after:2700:tabs.dump:$O/pe-tabs.txt,@after:3200:project.save,@after:3600:log.dump:$O/pe-log.txt,@after:4200:file.exit,@after:4800:toolbar.pick:project.exit_skip" 25
 cp "$P/e.nsql-project" "$V1_OUT/pe.nsql-project" 2>/dev/null
 cp "$V1_HOME/settings.conf" "$V1_OUT/pe-settings.conf" 2>/dev/null
-expect_not "e-tab-missing-before" "$V1_OUT/pe-tabs0.txt" "b.sql"
+# T-172 (C) 뒤: 못 찾은 탭은 탭 줄에 **자리 탭**(뷰 · 읽기 전용)으로 보인다(종전 기대 = "b.sql 탭 없음") · 다시 지정하면 진짜 탭이 열리고 자리 탭은 닫힌다.
+expect_re "e-placeholder-before" "$V1_OUT/pe-tabs0.txt" '^\*?b\.sql\|.*view=true'
 expect "e-status-relocated" "$V1_OUT/pe-status.txt" "Folder relocated on this PC"
 EID=$(grep -oE '"id": "[0-9a-f]{16}"' "$V1_OUT/pe.nsql-project" 2>/dev/null | head -1 | sed 's/.*: "\(.*\)"/\1/')
 if [ -n "$EID" ]; then v1_pass "e-id-issued"; else v1_failmsg "e-id-issued" "'\"id\": \"<16진 16자>\"' 없음 · $(head -c 200 "$V1_OUT/pe.nsql-project" 2>/dev/null | tr '\n' ' ')"; fi
@@ -83,7 +88,8 @@ expect "e-anchor-kept" "$V1_OUT/pe.nsql-project" '"${workspaceFolder:lib}/b.sql"
 PCL=$(grep '^project.pc_paths=' "$V1_OUT/pe-settings.conf" 2>/dev/null)
 if [ -n "$PCL" ] && [ -n "$EID" ] && printf '%s' "$PCL" | grep -qF "$EID" && printf '%s' "$PCL" | grep -qF "lib2"; then v1_pass "e-pc-table"
 else v1_failmsg "e-pc-table" "id='$EID' · 줄='$(printf '%s' "$PCL" | head -c 200)'"; fi
-expect "e-tab-opened" "$V1_OUT/pe-tabs.txt" "b.sql"
+expect_re "e-tab-opened" "$V1_OUT/pe-tabs.txt" '^\*?b\.sql\|.*view=false'
+expect_not_re "e-placeholder-closed" "$V1_OUT/pe-tabs.txt" '^\*?b\.sql\|.*view=true'
 # e2. 다시 열기만(다시 지정 명령 없음) → 대응표 적용
 v1_gui pe2 "project.load:$PM/e.nsql-project,@after:1500:tabs.dump:$O/pe2-tabs.txt,@after:1800:log.dump:$O/pe2-log.txt,@after:2500:project.save,@after:3100:file.exit,@after:3700:toolbar.pick:project.exit_skip" 25
 cp "$P/e.nsql-project" "$V1_OUT/pe2.nsql-project" 2>/dev/null
@@ -93,7 +99,56 @@ expect "e2-def-still-kept" "$V1_OUT/pe2.nsql-project" "gone/lib"
 expect_not "e2-def-no-moved" "$V1_OUT/pe2.nsql-project" "moved"
 expect_not "e2-def-no-lib2" "$V1_OUT/pe2.nsql-project" "lib2"
 
+# ── f. 자리 탭(T-172 (C) · D-189 · D-496) ───────────────────────────────────────
+#   탭 순서 = a.sql(있음) · gone1.sql(없음 · 본문 없음) · gone2.sql(없음 · 미저장 본문) · c.sql(있음) — 못 찾은 탭이 가운데.
+#   `"active"` = 탭 순번(자리 탭 포함)으로 자리 탭을 활성으로 연다.
+printf 'SELECT 4 AS c FROM dual;\n' > "$P/sql/c.sql"
+mkdir -p "$P/sql/sub"; printf 'SELECT 5 AS f FROM dual;\n' > "$P/sql/sub/gone1.sql"
+mkf() { printf '{"version": 2, "folders": [{"path": "."}], "active": %s, "tabs": [{"path": "sql/a.sql", "title": "a.sql", "id": 11}, {"path": "sql/gone1.sql", "title": "gone1.sql", "id": 12}, {"path": "sql/gone2.sql", "title": "gone2.sql", "id": 13, "text": "-- v1pp f unsaved keep"}, {"path": "sql/c.sql", "title": "c.sql", "id": 14}]}\n' "$1" > "$P/$2"; }
+porder() { grep -oE '"path": "sql/[a-z0-9/]+\.sql"' "$1" 2>/dev/null | sed 's/"path": "//; s/"$//' | tr '\n' ' ' | sed 's/ $//'; }
+torder() { sed 's/^\*//; s/|.*//' "$1" 2>/dev/null | grep '\.sql$' | tr '\n' ' ' | sed 's/ $//'; }
+# f1. 열기 → 저장: 자리 탭이 그 자리에 · 저장 순서 그대로 · 미저장 본문 그대로
+mkf 0 f1.nsql-project
+v1_gui pf1 "project.load:$PM/f1.nsql-project,@after:1500:tabs.dump:$O/pf1-tabs.txt,@after:2300:project.save,@after:2900:file.exit,@after:3500:toolbar.pick:project.exit_skip" 25
+cp "$P/f1.nsql-project" "$V1_OUT/pf1.nsql-project" 2>/dev/null
+expect_re "f-placeholder-shown" "$V1_OUT/pf1-tabs.txt" '^\*?gone2\.sql\|.*view=true'
+expect_eq "f-placeholder-order" "$(torder "$V1_OUT/pf1-tabs.txt")" "a.sql gone1.sql gone2.sql c.sql"
+expect_eq "f-order-kept" "$(porder "$V1_OUT/pf1.nsql-project")" "sql/a.sql sql/gone1.sql sql/gone2.sql sql/c.sql"
+expect "f-body-kept" "$V1_OUT/pf1.nsql-project" "-- v1pp f unsaved keep"
+# f2. 본문 없는 자리 탭(gone1) 닫기 = 바로 닫힘 → 기록에서도 빠진다
+mkf 1 f2.nsql-project
+v1_gui pf2 "project.load:$PM/f2.nsql-project,@after:1500:tabs.dump:$O/pf2-tabs0.txt,@after:1900:project.missing_close,@after:2300:tabs.dump:$O/pf2-tabs.txt,@after:2700:project.save,@after:3300:file.exit,@after:3900:toolbar.pick:project.exit_skip" 25
+cp "$P/f2.nsql-project" "$V1_OUT/pf2.nsql-project" 2>/dev/null
+expect_re "f2-active-placeholder" "$V1_OUT/pf2-tabs0.txt" '^\*gone1\.sql\|.*view=true'
+expect_not "f2-tab-gone" "$V1_OUT/pf2-tabs.txt" "gone1.sql"
+expect_not "f2-closed-removed" "$V1_OUT/pf2.nsql-project" "sql/gone1.sql"
+expect "f2-other-kept" "$V1_OUT/pf2.nsql-project" '"path": "sql/gone2.sql"'
+expect "f2-other-body-kept" "$V1_OUT/pf2.nsql-project" "-- v1pp f unsaved keep"
+# f3. 미저장 본문 든 자리 탭(gone2) — 첫 닫기는 막힘(안내) · 두 번째에 닫힘
+mkf 2 f3.nsql-project
+v1_gui pf3a "project.load:$PM/f3.nsql-project,@after:1500:project.missing_close,@after:1800:status.dump:$O/pf3a-status.txt,@after:2000:tabs.dump:$O/pf3a-tabs.txt,@after:2500:project.save,@after:3100:file.exit,@after:3700:toolbar.pick:project.exit_skip" 25
+cp "$P/f3.nsql-project" "$V1_OUT/pf3a.nsql-project" 2>/dev/null
+expect "f3-first-close-blocked" "$V1_OUT/pf3a.nsql-project" '"path": "sql/gone2.sql"'
+expect "f3-first-body-kept" "$V1_OUT/pf3a.nsql-project" "-- v1pp f unsaved keep"
+expect "f3-first-close-notice" "$V1_OUT/pf3a-status.txt" "close it again to confirm"
+expect_re "f3-first-tab-still" "$V1_OUT/pf3a-tabs.txt" '^\*gone2\.sql\|.*view=true'
+mkf 2 f3.nsql-project
+v1_gui pf3b "project.load:$PM/f3.nsql-project,@after:1500:project.missing_close,@after:1900:project.missing_close,@after:2300:tabs.dump:$O/pf3b-tabs.txt,@after:2700:project.save,@after:3300:file.exit,@after:3900:toolbar.pick:project.exit_skip" 25
+cp "$P/f3.nsql-project" "$V1_OUT/pf3b.nsql-project" 2>/dev/null
+expect_not "f3-second-tab-gone" "$V1_OUT/pf3b-tabs.txt" "gone2.sql"
+expect_not "f3-second-close-removed" "$V1_OUT/pf3b.nsql-project" "sql/gone2.sql"
+expect_not "f3-second-body-gone" "$V1_OUT/pf3b.nsql-project" "-- v1pp f unsaved keep"
+# f4. 찾아보기 = `project.missing_found:<경로>`(활성 자리 탭 gone1 → sql/sub/gone1.sql) → 진짜 탭 · 자리 탭 없음 · 기록 경로 갱신
+mkf 1 f4.nsql-project
+v1_gui pf4 "project.load:$PM/f4.nsql-project,@after:1500:project.missing_found:$PM/sql/sub/gone1.sql,@after:2100:tabs.dump:$O/pf4-tabs.txt,@after:2600:project.save,@after:3200:file.exit,@after:3800:toolbar.pick:project.exit_skip" 25
+cp "$P/f4.nsql-project" "$V1_OUT/pf4.nsql-project" 2>/dev/null
+expect_re "f4-found-reopened" "$V1_OUT/pf4-tabs.txt" '^\*?gone1\.sql\|.*view=false'
+expect_not_re "f4-no-placeholder" "$V1_OUT/pf4-tabs.txt" '^\*?gone1\.sql\|.*view=true'
+expect "f4-path-updated" "$V1_OUT/pf4.nsql-project" '"path": "sql/sub/gone1.sql"'
+expect_not "f4-old-path-gone" "$V1_OUT/pf4.nsql-project" '"path": "sql/gone1.sql"'
+expect "f4-other-kept" "$V1_OUT/pf4.nsql-project" "-- v1pp f unsaved keep"
+
 # 공통 — 모든 기동 panic 없음
-for t in pa pb pb2 pc pd pe pe2; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
+for t in pa pb pb2 pc pd pe pe2 pf1 pf2 pf3a pf3b pf4; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done
