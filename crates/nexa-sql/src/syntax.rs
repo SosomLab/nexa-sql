@@ -88,6 +88,16 @@ impl SyntaxRegistry {
                 b.name.to_string()
             });
         }
+        // ★ T-78 ⓐ(11-22): 방언 내장 자료형(nsql-script `builtins::types` · 방언 + 공통) → 자료형 색(`TokenKind` 자료형). 기본 "SQL"
+        //   스펙의 공통 표에 **더하기만** 한다(다른 방언의 자료형을 빼지는 않는다) · 여러 낱말 이름(`TIMESTAMP WITH TIME ZONE`)은
+        //   첫 낱말만(`WITH`·`TO` 같은 낱말이 자료형 색이 되면 안 된다).
+        for name in datatype_words(dialect) {
+            spec.datatypes.insert(if spec.case_insensitive {
+                name.to_uppercase()
+            } else {
+                name
+            });
+        }
         let rc = Rc::new(spec);
         self.sql_dialect.borrow_mut().push((dialect, rc.clone()));
         rc
@@ -356,5 +366,68 @@ mod dialect_tests {
         );
         assert!(Rc::ptr_eq(&ms, &r.sql_for(Dialect::Mssql)), "캐시");
         assert!(!Rc::ptr_eq(&ms, &r.sql_for(Dialect::Postgres)));
+    }
+}
+
+/// 방언의 내장 자료형 이름을 강조기 낱말로(순수): 이름의 **첫 낱말**(영숫자·`_`만) · 중복 없음 · 표 순서.
+fn datatype_words(dialect: Dialect) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for b in nsql_script::builtins::types(Some(dialect)) {
+        let Some(w) = b.name.split_whitespace().next() else {
+            continue;
+        };
+        if w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && !out.iter().any(|o| o.eq_ignore_ascii_case(w))
+        {
+            out.push(w.to_string());
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod datatype_tests {
+    use super::*;
+
+    /// ★ T-78 ⓐ: 방언 고유 자료형이 그 방언의 강조 스펙에만 더해진다 · 여러 낱말 이름은 첫 낱말만 · 공통 표는 그대로.
+    #[test]
+    fn dialect_datatypes_reach_the_highlighter() {
+        let words = |d| datatype_words(d);
+        let has = |v: &[String], w: &str| v.iter().any(|x| x.eq_ignore_ascii_case(w));
+        let (ora, ms, pg) = (
+            words(Dialect::Oracle),
+            words(Dialect::Mssql),
+            words(Dialect::Postgres),
+        );
+        assert!(has(&ora, "VARCHAR2") && has(&ora, "NUMBER") && has(&ora, "INTEGER"));
+        assert!(!has(&ms, "VARCHAR2") && !has(&pg, "VARCHAR2"));
+        for v in [&ora, &ms, &pg] {
+            assert!(
+                !has(v, "WITH") && !has(v, "TO") && !has(v, "PRECISION"),
+                "{v:?}"
+            );
+            assert!(
+                v.iter().all(|w| !w.contains(' ') && !w.contains('(')),
+                "{v:?}"
+            );
+        }
+        let reg = SyntaxRegistry::builtin();
+        let base = reg.get("SQL").expect("SQL spec");
+        let (so, sm) = (reg.sql_for(Dialect::Oracle), reg.sql_for(Dialect::Mssql));
+        assert!(so.datatypes.len() >= base.datatypes.len());
+        assert!(
+            base.datatypes.iter().all(|w| sm.datatypes.contains(w)),
+            "공통 표는 빼지 않는다"
+        );
+        // 방언에만 있는 자료형 하나씩(표에 있는 이름으로 판정 — 표가 바뀌어도 "그 방언 표의 첫 고유 이름").
+        let only = |mine: &[String], other: &[String]| {
+            mine.iter()
+                .find(|w| !has(other, w) && !base.datatypes.contains(&w.to_uppercase()))
+                .cloned()
+        };
+        if let Some(w) = only(&ms, &ora) {
+            assert!(sm.datatypes.contains(&w.to_uppercase()), "{w}");
+            assert!(!so.datatypes.contains(&w.to_uppercase()), "{w}");
+        }
     }
 }

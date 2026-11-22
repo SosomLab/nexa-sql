@@ -650,6 +650,18 @@ fn parse_variable(rest: &str) -> Result<Command, String> {
         })?
     };
     let init = init_text.map(parse_literal).transpose()?;
+    // ★ T-304 ②(11-22): 숫자 타입에 숫자로 읽히지 않는 문자열 리터럴 = 오류(`VAR n NUMBER = 'abc'`). 숫자로 읽히는 문자열
+    //   (`'10'`)·NULL·날짜 타입의 문자열은 종전대로 받는다(가장 명백한 실수만 잡는다 — 지금 도는 스크립트를 깨지 않게).
+    if let (VarType::Number | VarType::BinaryFloat | VarType::BinaryDouble, Some(Value::Str(s))) =
+        (&ty, &init)
+    {
+        if s.trim().parse::<f64>().is_err() {
+            return Err(tr!(
+                "VARIABLE: '{s}' is not a number (type {ty_text})",
+                "VARIABLE: '{s}'은(는) 숫자가 아닙니다(타입 {ty_text})"
+            ));
+        }
+    }
     if let Some(layer) = layer_in {
         return Ok(Command::VarDeclareIn {
             name: bare,
@@ -1257,6 +1269,20 @@ mod tests {
                 init: Some(Value::Str("a -- b".into()))
             })
         );
+        // ★ T-304 ②: 숫자 타입 + 숫자가 아닌 문자열 = 오류 · 숫자로 읽히는 문자열·NULL·문자 타입·타입 생략(Auto)은 그대로.
+        assert!(parse_command("VAR n NUMBER = 'abc'").is_err());
+        assert!(parse_command("VAR f BINARY_DOUBLE = 'x1'").is_err());
+        for ok in [
+            "VAR n NUMBER = '10'",
+            "VAR n NUMBER = ' 1.5 '",
+            "VAR n NUMBER = NULL",
+            "VAR n NUMBER = 10",
+            "VAR s VARCHAR2(10) = 'abc'",
+            "VAR d DATE = '2026-01-01'",
+            "VAR a = 'abc'",
+        ] {
+            assert!(parse_command(ok).is_ok(), "{ok}");
+        }
         assert_eq!(strip_tail_comment("x = 'a--b'"), "x = 'a--b'");
         assert_eq!(strip_tail_comment("x - 1"), "x - 1");
         assert_eq!(strip_tail_comment("한글 = '가' -- 주석"), "한글 = '가' ");

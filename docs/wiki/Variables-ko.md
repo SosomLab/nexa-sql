@@ -54,6 +54,8 @@ SELECT &v2 FROM dual;    -- 대입 시: 2 + 5 · 사용 시: 5 + 5
 
 > **변수 명령 줄 끝의 주석**(11-22): `VAR`/`VARIABLE` 줄 끝의 `--` 주석은 무시됩니다. 예 `VAR n NUMBER = 10 -- 건수`는 `VAR n NUMBER = 10`과 같습니다. 작은따옴표 안의 `--`는 값의 일부로 남습니다(`VAR s VARCHAR2(20) = 'a--b'`).
 
+> **리터럴 값의 타입 검사**(11-22): 숫자 타입(`NUMBER` · `BINARY_FLOAT` · `BINARY_DOUBLE`)에 숫자로 읽히지 않는 문자열 리터럴을 주면 오류입니다. 예 `VAR n NUMBER = 'abc'` → `VARIABLE: 'abc' is not a number (type NUMBER)`. 숫자로 읽히는 문자열(`'10'`) · `NULL` · 문자·날짜 타입 · 타입을 생략한 선언은 종전과 같습니다.
+
 ## 변수 지우기(10-07)
 
 | 명령 | 지우는 것 |

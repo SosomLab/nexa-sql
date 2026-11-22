@@ -54,6 +54,8 @@ Bind variables (tab layer · connection-shared layer) and substitution variables
 
 > **Trailing comments on variable commands** (11-22): a `--` comment at the end of a `VAR`/`VARIABLE` line is ignored, for example `VAR n NUMBER = 10 -- row count` is the same as `VAR n NUMBER = 10`. A `--` inside single quotes stays part of the value (`VAR s VARCHAR2(20) = 'a--b'`).
 
+> **Type check on literal values** (11-22): a numeric type (`NUMBER` · `BINARY_FLOAT` · `BINARY_DOUBLE`) given a string literal that does not read as a number is an error, for example `VAR n NUMBER = 'abc'` → `VARIABLE: 'abc' is not a number (type NUMBER)`. A string that reads as a number (`'10'`), `NULL`, character and date types, and a declaration without a type work as before.
+
 ## Removing variables (10-07)
 
 | Command | What it removes |
