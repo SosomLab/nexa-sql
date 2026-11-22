@@ -1608,6 +1608,21 @@ cells={n}
             return;
         }
         // ★ 자체 시험(10-01 ㉗-j): 활성 탭에 파일 내용을 붙여 넣는다(사용자 재현 순서 "새 편집창 → 쿼리 붙여넣기" · 키 주입 0).
+        // ★ 자체 시험(T-115 판정용 · 11-23): `editor.key:Enter` = 활성 편집기에 Enter 키 사건(자동 들여쓰기 길 — 붙여넣기는 그 길을
+        //   타지 않는다). 주입이 아니라 컨트롤에 사건을 직접 준다(OS 입력 0).
+        if id == "editor.key:Enter" {
+            let mut inv = nexa_ctl::Invalidations::default();
+            self.editors.cur_mut().on_event(
+                &nexa_ctl::InputEvent::Key {
+                    key: nexa_ctl::Key::Enter,
+                    shift: false,
+                    primary: false,
+                },
+                &mut inv,
+            );
+            self.redraw();
+            return;
+        }
         if let Some(path) = id.strip_prefix("editor.paste:") {
             if let Ok(text) = std::fs::read_to_string(path) {
                 let mut inv = nexa_ctl::Invalidations::default();
