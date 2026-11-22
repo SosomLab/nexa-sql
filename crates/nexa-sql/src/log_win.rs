@@ -69,6 +69,10 @@ pub(crate) struct LogWin {
     /// ★ T-124 세션 필터(11-03 · D-446): 이 라벨의 줄만 보인다(`None` = 전부 · 설정 `log.session_filter` · 우클릭 메뉴 ▸ 세션 ·
     ///   세션 없는 줄(접속 전 메시지)은 필터가 켜지면 숨는다).
     session_filter: Option<String>,
+    /// ★ T-54 검색(11-22 · 필터형): 메시지 글이 이 판정기에 맞는 줄만 보인다(`None` = 끔 · 공용 `filterbar::Matcher` = 다른 패널
+    ///   필터와 같은 규칙 · 낱말 전부 포함 · 대소문자 무시). 판정 대상은 **메시지 글**(`LogEntry::message`) — 형식 문자열을 만들지
+    ///   않으므로 링이 찬 뒤 새 줄마다 도는 `rebuild_vis`에서도 싸다.
+    search: Option<crate::filterbar::Matcher>,
     /// 보이는 종류(설정 `log.kinds` · 비면 전부).
     kinds: Vec<LogKind>,
     /// 필터를 통과한 버퍼 index(표시 순서의 원천).
@@ -161,6 +165,7 @@ impl LogWin {
             cur_session: None,
             sessions_seen: Vec::new(),
             session_filter: None,
+            search: None,
             kinds: Vec::new(),
             vis: Vec::new(),
             menu: ContextMenu::new(),
@@ -280,6 +285,19 @@ impl LogWin {
         self.redraw();
     }
 
+    /// ★ T-54 검색어(빈 글 = 끔) — 표시 순서를 다시 만들고 선택은 비운다(세션 필터와 같은 길).
+    pub(crate) fn set_search(&mut self, text: &str) {
+        let t = text.trim();
+        if t == self.search.as_ref().map_or("", |m| m.text()) {
+            return;
+        }
+        self.search = (!t.is_empty()).then(|| crate::filterbar::Matcher::plain(t));
+        self.rebuild_vis();
+        self.row_start.clear();
+        self.jump = self.autoscroll;
+        self.redraw();
+    }
+
     /// 창 제목 = 기본 + 필터가 켜져 있으면 ` [라벨]`(어느 세션만 보는지 창 자체로 알 수 있게).
     fn title(&self) -> String {
         match &self.session_filter {
@@ -319,6 +337,7 @@ impl LogWin {
                 .session_filter
                 .as_deref()
                 .is_none_or(|f| e.session.as_deref() == Some(f))
+            && self.search.as_ref().is_none_or(|m| m.matches(&e.message))
     }
 
     fn rebuild_vis(&mut self) {
@@ -888,11 +907,12 @@ impl LogWin {
     /// 자체 시험 상태(142차 · `log.stat:<파일>`): 본 세션 라벨 수 · 세션 열이 실제로 켜졌는지(설정 또는 라벨 둘 이상 = 자동).
     pub(crate) fn stat(&self) -> String {
         format!(
-            "sessions_seen={} session_col={} entries={} session_filter={} visible={} sessions=[{}]\n",
+            "sessions_seen={} session_col={} entries={} session_filter={} search={} visible={} sessions=[{}]\n",
             self.sessions_seen.len(),
             self.eff_cols().session,
             self.buf.len(),
             self.session_filter.as_deref().unwrap_or("-"),
+            self.search.as_ref().map_or("-", |m| m.text()),
             self.vis.len(),
             self.sessions_seen.join("|")
         )
@@ -1639,6 +1659,32 @@ mod tests {
         w.sel_anchor = Some((0, 3));
         w.push(LogEntry::new(LogKind::Info, "new2"));
         assert_eq!(w.sel_anchor, Some((0, 0)));
+    }
+
+    /// ★ T-54: 검색어 = 메시지 글이 맞는 줄만(낱말 전부 · 대소문자 무시) · 새 줄도 같은 판정 · 빈 글 = 끔 · 버퍼는 그대로.
+    #[test]
+    fn search_filters_visible_lines_by_message() {
+        let mut w = LogWin::new("raw");
+        for m in [
+            "Connected to APPDB",
+            "select 1 from dual",
+            "ORA-00942: table missing",
+            "Select 2",
+        ] {
+            w.push(LogEntry::new(LogKind::Info, m));
+        }
+        w.set_search("select");
+        assert_eq!(w.visible_len(), 2);
+        assert!(w.stat().contains("search=select visible=2"));
+        w.push(LogEntry::new(LogKind::Info, "SELECT 3"));
+        w.push(LogEntry::new(LogKind::Info, "commit"));
+        assert_eq!(w.visible_len(), 3, "새 줄도 검색어로 거른다");
+        w.set_search("select dual");
+        assert_eq!(w.visible_len(), 1, "낱말 전부 포함");
+        w.set_search("  ");
+        assert_eq!(w.visible_len(), 6);
+        assert!(w.stat().contains("search=- visible=6"));
+        assert_eq!(w.buf.len(), 6);
     }
 
     #[test]

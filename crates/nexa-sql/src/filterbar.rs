@@ -95,8 +95,7 @@ impl Matcher {
             .collect()
     }
 
-    /// 옵션 없는 글 필터(공백으로 나눈 낱말 전부 포함 · 대소문자 무시) — 시험·기동 명령용.
-    #[cfg(test)]
+    /// 옵션 없는 글 필터(공백으로 나눈 낱말 전부 포함 · 대소문자 무시) — 시험·기동 명령 · 부품 없이 거르는 자리(로그 창 검색 T-54).
     pub(crate) fn plain(text: &str) -> Self {
         Matcher {
             rx: None,

@@ -1369,6 +1369,11 @@ cells={n}
             let _ = std::fs::write(path, self.log_win.stat());
             return;
         }
+        // 자체 시험(11-22 · T-54): `log.search:<글>` = 로그 창 검색어(빈 글 = 끔) → `log.stat`의 `search=`·`visible=`로 판정.
+        if let Some(q) = id.strip_prefix("log.search:") {
+            self.log_win.set_search(q);
+            return;
+        }
         if let Some(path) = id.strip_prefix("log.dump:") {
             let _ = std::fs::write(path, self.log_win.dump_text());
             return;
