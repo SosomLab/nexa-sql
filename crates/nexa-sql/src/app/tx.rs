@@ -470,13 +470,16 @@ impl App {
                 })
         };
         format!(
-            "pending={}|held={}|armed={}|autocommit={}|tool_arm={}|run_arm={}\n",
+            "pending={}|held={}|armed={}|autocommit={}|tool_arm={}|run_arm={}|txlog_updates={}\n",
             self.sess.tx_pending.len(),
             held,
             self.sess.commit_armed.is_some(),
             self.settings.flag("session.autocommit"),
             arm("run.commit"),
             arm("run.all"),
+            // ★ T-107b 준비(11-22): 끝 칸 `txlog_updates` = TxLog의 열린 구간이 센 변경 문장 수 — 원천을 `tx_pending`에서 TxLog로
+            //   옮기기 전에 두 수가 같은지 덤프로 대조한다(앞 칸은 그대로 = 기존 스크립트의 접두 판정 유지).
+            self.txlog.open_record().map_or(0, |r| r.updates),
         )
     }
 
