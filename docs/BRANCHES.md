@@ -4,6 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| `feat/var-tail-comment` | 2026-11-22(Windows · 599ea7fb 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-304 ① 변수 선언 꼬리 주석(`strip_tail_comment`) + 비교 탭 상태줄 문구(객체 비교 아닌 탭 = "between the two sides") · 3f57d991 · golden 양 방언 diff 0 · 문서(journal 11-22 §17) |
+| `feat/small-bundle-1122` | 2026-11-22(Windows · 622aa198 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | 잔여 순차 첫 묶음 = T-98 단축키 2단 코드 캡처(`ui.key_capture_chord_ms`) · T-140 외부 변경 [차이 보기] → 비교 탭 · T-276 tab_unit 정리 · T-148 SQLite 열기 실패 분류 · T-510 verify 이력 = 통과 단계만 · 599ea7fb · 새 V1 `ext-diff` 7/0 · 문서 7(journal 11-22 §17) |
 | `feat/log-search` | 2026-11-22(Windows · 8a7b9905 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-54 로그 창 검색 1차(필터형 · `log.search:` · `log.stat` `search=` · 9adada40) · 새 V1 `log-search` 12/0 · 문서 3(journal 11-22 §15) |
 | `feat/git-ahead-behind-cli-lic` | 2026-11-22(Windows · f44d0279 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | C-1 상태줄 ahead/behind(로컬 추적 ref만 · fetch 0) + T-37 `license remove` 문구 Msg 이관 + 판정용 `statusbar.dump` · 554268f5 · 새 V1 `git-ahead` 11/0 · 문서 6(journal 11-22 §15) |
 | `feat/git-revert-hunk` | 2026-11-22(Windows · 537e7691 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | C-1 덩어리 되돌리기 `git.revert_hunk`(캐럿 줄 명령 · 되돌리기 한 단계 · 디스크 불변 · 466e3a01) · 새 V1 `git-revert` 19/0 · 문서 4(journal 11-22 §15) |
