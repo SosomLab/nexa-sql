@@ -199,8 +199,10 @@ mod tests {
         let mut w = GitWatch::new();
         w.set_file(Some(PathBuf::from("a.sql")));
         w.info = Some(GitInfo {
+            branch: "main".into(),
+            changed: 2,
+            ab: None,
             head: Some("x\n".into()),
-            ..probe_like("main", 2)
         });
         w.set_file(Some(PathBuf::from("a.sql")));
         assert_eq!(w.info().and_then(|g| g.head.as_deref()), Some("x\n"));
