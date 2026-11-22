@@ -40,7 +40,9 @@ HIST="$ROOT/target/verify/history.tsv"; touch "$HIST"
 BID="verify-$STAMP"; SES="${BOARD_SESSION:-협업}"
 declare -A DEF=([fmt-ui]=120 [check3os]=1800 [todo]=60 [test]=1800 [clippy-newer]=3600 [it]=1200 [build]=1800 [v1]=900 [restart]=60)
 median() { awk -F'\t' -v l="$LEVEL" -v s="$1" '$1==l && $2==s {a[++n]=$3} END { if (!n) { print ""; exit } m=0; k=0; for (i=n; i>=1 && k<3; i--) b[++k]=a[i]; asort(b); print b[int((k+1)/2)] }' "$HIST"; }
-limit() { local m; m=$(median "$1"); if [ -z "$m" ]; then echo "${DEF[$1]:-1800}"; else m=$((m * 3)); [ $m -lt 120 ] && m=120; [ $m -gt 3600 ] && m=3600; echo $m; fi; }
+# 단계별 하한(11-22 · v1은 시나리오가 늘면 지난 이력 × 3이 모자라 TIMEOUT — 9개 시나리오 판이 120 s에 잘림 · 하한 600 s).
+declare -A MINS=([v1]=600)
+limit() { local m lo=${MINS[$1]:-120}; m=$(median "$1"); if [ -z "$m" ]; then echo "${DEF[$1]:-1800}"; else m=$((m * 3)); [ $m -lt $lo ] && m=$lo; [ $m -gt 3600 ] && m=3600; echo $m; fi; }
 PLAN=(); STEPN=0
 remaining() { local s t=0 i m; for ((i=STEPN; i<${#PLAN[@]}; i++)); do s=${PLAN[$i]}; m=$(median "$s"); t=$((t + ${m:-0})); done; echo $t; }
 row() { printf '| %s | %s | %s | %s |\n' "$1" "$2" "$3" "$4" >> "$SUM"; echo "[$2] $1 ($3 s) $4"; }
