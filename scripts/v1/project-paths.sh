@@ -10,6 +10,7 @@
 #   g. 자리 탭이 보관된 본문을 읽기 전용으로 보여 줌(이중 저장 없음) · 못 찾은 등록 폴더 알림(로그·토스트) · `file.close_tab`(Ctrl+W) 길도 재확인(11-22 묶음 4)
 #   h. 절대 경로 알림(T-172 · D-188 · `project.warn_absolute`): 프로젝트 밖 탭이 절대 경로로 남으면 명시 저장마다 로그 한 줄 · 상대뿐이면 0 · 끄면 0
 #   i. 등록 폴더 이름(T-172 P2 `folders[].name`): leaf가 같은 두 폴더도 이름을 적으면 `${workspaceFolder:<이름>}` 앵커 · 다시 열면 복원 · 안 적으면 절대(종전)
+#   j. 경로 변수(T-172 P3 1단계): `"vars"` + `${var:이름}/…` 탭 = 열림 · 정의 없는 변수 = 자리 탭 · 저장 뒤 vars·version 3·글 그대로
 #   종료: 프로젝트가 바뀐 채 `file.exit`면 "프로젝트 저장?" 물음이 뜬다 → 답 = `toolbar.pick:project.exit_skip`(물음 답은 indent_pick 길 · 직접 id는 menu_action이라 무시됨)
 #   임시 폴더 = OS 임시 `nsql-v1pp-*`(끝나면 삭제) · 쉼표가 든 경로는 기동 명령 구분자와 겹치므로 쓰지 않는다.
 . "$(dirname "$0")/../lib/v1.sh"
@@ -213,6 +214,23 @@ expect_not "i0-no-name-key-y" "$V1_OUT/pi0.nsql-project" "\"path\": \"$LYM\", \"
 expect "i0-folder-x-written" "$V1_OUT/pi0.nsql-project" "\"path\": \"$LXM\""
 expect_not "i0-no-folder-anchor" "$V1_OUT/pi0.nsql-project" '${workspaceFolder:lib'
 
+# ── j. 경로 변수(T-172 P3 1단계 · `"vars"` + `${var:이름}/…` 앵커 · c9355995 · 협업 11-22) ───────────────────────────
+#   프로젝트 파일에 직접 적은 `"version": 3` · `"vars": {"DATA": <임시 폴더>}` · 탭 `${var:DATA}/v.sql`(있음) · `${var:NOPE}/x.sql`(정의 없음)
+#   → 열면 v.sql = 진짜 탭 · x.sql = 자리 탭 → 저장 뒤 vars 보존 · version 3 · 두 탭 글 그대로(미정의 변수 = 글자 그대로 보존).
+#   h·i 절과 같은 이유로 HOME을 WK 안 빈 폴더로(홈 앵커와 겹치지 않게).
+DD="$WK/data"; mkdir -p "$DD"; printf 'SELECT 9 AS v FROM dual;\n' > "$DD/v.sql"; DDM=$(v1_m "$DD")
+rm -f "$V1_OUT"/pj-tabs.txt
+printf '{"version": 3, "vars": {"DATA": "%s"}, "folders": [{"path": "."}], "active": 0, "tabs": [{"path": "${var:DATA}/v.sql", "title": "v.sql", "id": 41}, {"path": "${var:NOPE}/x.sql", "title": "x.sql", "id": 42}]}\n' "$DDM" > "$P/j.nsql-project"
+HOME="$IHM" v1_gui pj "project.load:$PM/j.nsql-project,@after:1800:tabs.dump:$O/pj-tabs.txt,@after:2300:project.save,@after:2900:file.exit,@after:3500:toolbar.pick:project.exit_skip" 25
+cp "$P/j.nsql-project" "$V1_OUT/pj.nsql-project" 2>/dev/null
+expect_re "j-var-tab-opened" "$V1_OUT/pj-tabs.txt" '^\*?v\.sql\|.*view=false'
+expect_re "j-undefined-var-placeholder" "$V1_OUT/pj-tabs.txt" '^\*?x\.sql\|.*view=true'
+expect "j-version3" "$V1_OUT/pj.nsql-project" '"version": 3'
+expect "j-vars-kept" "$V1_OUT/pj.nsql-project" "\"DATA\": \"$DDM\""
+expect "j-var-anchor-kept" "$V1_OUT/pj.nsql-project" '"${var:DATA}/v.sql"'
+expect "j-undefined-var-kept" "$V1_OUT/pj.nsql-project" '"${var:NOPE}/x.sql"'
+expect_not "j-no-abs-tab" "$V1_OUT/pj.nsql-project" "\"path\": \"$DDM/v.sql\""
+
 # ── h. 절대 경로 알림(T-172 · D-188 · project.warn_absolute · 협업 초안 11-22) ───────────
 #   OS 임시 폴더가 홈 아래(Windows %TEMP% = 사용자 폴더 · 맥 /var/folders는 홈 밖)라 그대로면 탭이 `${userHome}/…`으로 적혀 세지 않는다
 #   → 이 절의 기동만 HOME을 WK 안 빈 폴더로 바꿔 홈 앵커를 피한다(home_dir_str = HOME → USERPROFILE).
@@ -245,6 +263,6 @@ expect_eq "h2-dump-ran" "$([ -f "$V1_OUT/ph2-log.txt" ] && echo y)" "y"
 expect_not "h2-off-no-warn" "$V1_OUT/ph2-log.txt" "$ABSW"
 
 # 공통 — 모든 기동 panic 없음
-for t in pa pb pb2 pc pd pe pe2 pf1 pf2 pf3a pf3b pf4 pg1 pg2 pg3 pi1 pi2 pi0 ph1 ph0 ph2; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
+for t in pa pb pb2 pc pd pe pe2 pf1 pf2 pf3a pf3b pf4 pg1 pg2 pg3 pi1 pi2 pi0 pj ph1 ph0 ph2; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done
