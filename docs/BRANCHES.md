@@ -4,6 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| `test/ext-effects-dump` | 2026-11-22(Windows · 41152906 위) | 2026-11-22 → main ff 병합·삭제(push = 사용자 지시 · nexa-ui 먼저) | 1 | 무지개 괄호 색 미표시 조사용 판정 덤프 `ext.effects:<파일>`(확장 효과 · 편집기 괄호 옵션 · 동작 변화 없음) + V1 `color-list` d 절 되살림(괄호 마젠타 픽셀 · 끔·확장 없음 대조) · bcde0e14 · V1 color-list 25/0(`on=377 rainbow_off=0 no_ext=0`) · 문서(journal 11-22 §17·§18 · TODO T-511) |
+| (nexa-ui) `fix/pair-marks-merge` | 2026-11-22(Windows · nexa-ui e5b9a97 위) | 2026-11-22 → nexa-ui main ff 병합·삭제 · **654a620** | 2 | **nexa-ui 저장소** · T-511 PairTable marks 병합 수정(`Option::min` None < Some → 한 열이 비면 끝 · 도입 5169a3f 11-03) · 4178c4b(시험 `marks_cover_every_bracket_without_unmatched`) + 654a620(CONSUMER-CHANGES 268) · nexa-ctl 486/0 · 무관 실패 2(nexa-font gdi_cleartype = e5b9a97에서도 같음 · dirwatch 단독 통과) · [journal 11-22 §17](journal/2026-11-22.md) |
 | `feat/txdump-txlog-count` | 2026-11-22(Windows · 8ef4cf71 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-107b 준비 조각 1 = `tx.dump`에 `txlog_updates=`(원천 교체 전 대조 · 8장면 중 그리드 셀 편집만 다름) · 6adf1e60 · 문서(journal 11-22 §16 #15 · §17) |
 | `feat/color-list-editor` | 2026-11-22(Windows · d241ee26 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-119 색 목록 편집(색 창 목록 모드 · `ColorList` · 설정 창 [선택…] · `colors.open/op/dump`) + `DescSyntaxColor` 문구(#RRGGBBAA) + syntax-colors sc8 로그 · 312d4e26 · 새 V1 `color-list` 19/0(괄호 색 d 절 제외) · 문서(journal 11-22 §17 · 51 · 94) |
 | `fix/syntax-color-rgba` | 2026-11-22(Windows · c35f3d20 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-78 ⓑ 결함 = 색 창 [고르기]의 `#RRGGBBAA`(8자리) 값이 적용되지 않던 것 → `rgba_from_hex`(알파 무시) · 23333d77 · V1 syntax-colors 9/0(sc8) · 문서(journal 11-22 §17) |
