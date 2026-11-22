@@ -399,6 +399,8 @@ impl App {
     fn apply_setting_ui(&mut self, key: &str) -> bool {
         match key {
             "ui.theme" | "editor.color_preset" => self.apply_theme(),
+            // ★ T-78 ⓑ(11-22): 구문 색 개별 덮어쓰기 → 테마를 다시 만든다(프리셋 위에 덮음).
+            k if theme::is_syntax_color_key(k) => self.apply_theme(),
             // ★ T-78(11-05 · D-54): 선택 불투명도 → 모든 탭.
             "editor.selection_opacity" => self.editors.set_selection_alpha(
                 self.settings.int("editor.selection_opacity").clamp(10, 100) as f32 / 100.0,
@@ -1346,6 +1348,7 @@ impl App {
             self.settings.theme_mode(),
             wt,
             self.settings.get("editor.color_preset"),
+            &|k| self.settings.get(k).map(str::to_string),
         );
         self.apply_tab_line_colors();
         self.log_win.redraw();

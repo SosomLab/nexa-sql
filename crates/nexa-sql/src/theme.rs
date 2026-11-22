@@ -139,14 +139,58 @@ pub(crate) fn apply_preset(th: &mut Theme, preset: &str) {
     }
 }
 
-/// 설정에서 프리셋 이름을 읽어 적용(호출처 = 기동 · 창 생성 · `ui.theme`/`editor.color_preset` 변경).
+/// ★ T-78 ⓑ(11-22): 구문 색 개별 덮어쓰기 키(`editor.syntax_<종류>_color` · `#RRGGBB` · 빈 값 = 프리셋 값) — 이름이 `_color`로 끝나
+/// 설정 창 [고르기]·색 창이 그대로 붙는다(94 §5). 라이트·다크 공용 한 벌.
+pub(crate) const SYNTAX_COLOR_KEYS: [&str; 9] = [
+    "editor.syntax_keyword_color",
+    "editor.syntax_string_color",
+    "editor.syntax_comment_color",
+    "editor.syntax_number_color",
+    "editor.syntax_datatype_color",
+    "editor.syntax_function_color",
+    "editor.syntax_bind_color",
+    "editor.syntax_delimiter_color",
+    "editor.syntax_command_color",
+];
+
+/// 구문 색 덮어쓰기 키인가(설정 변경 → 테마 다시 적용).
+pub(crate) fn is_syntax_color_key(key: &str) -> bool {
+    SYNTAX_COLOR_KEYS.contains(&key)
+}
+
+/// 프리셋 위에 개별 색을 덮는다 — `get(키)`가 올바른 `#RRGGBB`를 줄 때만(빈 값·형식 오류 = 프리셋 값 그대로).
+pub(crate) fn apply_syntax_overrides(th: &mut Theme, get: &dyn Fn(&str) -> Option<String>) {
+    let slots: [&mut Color; 9] = [
+        &mut th.syn_keyword,
+        &mut th.syn_string,
+        &mut th.syn_comment,
+        &mut th.syn_number,
+        &mut th.syn_datatype,
+        &mut th.syn_function,
+        &mut th.syn_bind,
+        &mut th.syn_delimiter,
+        &mut th.syn_command,
+    ];
+    for (key, slot) in SYNTAX_COLOR_KEYS.iter().zip(slots) {
+        if let Some(c) = get(key)
+            .as_deref()
+            .and_then(nexa_ctl::theme::color_from_hex)
+        {
+            *slot = c;
+        }
+    }
+}
+
+/// 설정에서 프리셋 이름과 개별 덮어쓰기를 읽어 적용(호출처 = 기동 · 창 생성 · `ui.theme`/`editor.color_preset`/구문 색 키 변경).
 pub(crate) fn resolve_with_preset(
     mode: ThemeMode,
     window_theme: Option<winit::window::Theme>,
     preset: Option<&str>,
+    get: &dyn Fn(&str) -> Option<String>,
 ) -> Theme {
     let mut th = resolve(mode, window_theme);
     apply_preset(&mut th, preset.unwrap_or("nexa"));
+    apply_syntax_overrides(&mut th, get);
     th
 }
 
@@ -364,6 +408,33 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ T-78 ⓑ: 개별 색은 프리셋 위에 덮인다 · 빈 값·형식 오류는 프리셋 값 그대로 · 다른 구문 색은 건드리지 않는다.
+    #[test]
+    fn syntax_color_overrides_win_over_preset() {
+        let base = {
+            let mut th = Theme::light();
+            apply_preset(&mut th, "dbeaver");
+            th
+        };
+        let mut th = base;
+        apply_syntax_overrides(&mut th, &|k| match k {
+            "editor.syntax_keyword_color" => Some("#112233".into()),
+            "editor.syntax_string_color" => Some("".into()),
+            "editor.syntax_comment_color" => Some("nope".into()),
+            "editor.syntax_command_color" => Some("AABBCC".into()),
+            _ => None,
+        });
+        assert_eq!(th.syn_keyword, Color(0x0011_2233));
+        assert_eq!(th.syn_command, Color(0x00AA_BBCC));
+        assert_eq!(th.syn_string, base.syn_string);
+        assert_eq!(th.syn_comment, base.syn_comment);
+        assert_eq!(th.syn_datatype, base.syn_datatype);
+        assert!(SYNTAX_COLOR_KEYS
+            .iter()
+            .all(|k| k.ends_with("_color") && is_syntax_color_key(k)));
+        assert!(!is_syntax_color_key("editor.whitespace_color"));
+    }
 
     /// Linux gsettings 캐시 판정(10-12 ② · MC/DC): TTL · 캐시 유무 · 나이 각각이 독립으로 결과를 뒤집는다.
     #[test]

@@ -380,6 +380,22 @@
 |---|---|---|---|---|
 | `ui.key_capture_chord_ms` | Int 0~5000 | 1200 | 모양(Appearance) | 단축키 창에서 첫 조합을 받은 뒤 둘째 조합(2단 코드 `ctrl+k, ctrl+u`)을 기다리는 시간 · 지나면 첫 조합 하나로 지정 · 0 = 기다리지 않음(종전 = 한 조합만) · 10초 이하라 `_ms`(94 §6-5) |
 
+### 6-41. 11-22 새 키 9(구문 색 개별 덮어쓰기 · T-78 ⓑ · [journal 11-22 §17](journal/2026-11-22.md) · 브랜치 `feat/syntax-color-overrides` · V2 ✓ · 커밋 대기)
+
+> 이름 = §5 "색 = `*_color`" 규칙 · 라이트·다크 공용 한 벌 · 프리셋을 바꿔도 덮어쓴 값은 유지(빈 값으로 지워야 프리셋 색) — 셋 다 개발 판단(사용자 결정 후보).
+
+| 키 | 종류 | 기본 | 분류 | 뜻 |
+|---|---|---|---|---|
+| `editor.syntax_keyword_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — keyword · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
+| `editor.syntax_string_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — string · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
+| `editor.syntax_comment_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — comment · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
+| `editor.syntax_number_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — number · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
+| `editor.syntax_datatype_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — datatype · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
+| `editor.syntax_function_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — function · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
+| `editor.syntax_bind_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — bind · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
+| `editor.syntax_delimiter_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — delimiter · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
+| `editor.syntax_command_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — command · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).

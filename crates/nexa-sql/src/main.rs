@@ -1842,6 +1842,7 @@ fn main() {
         settings.theme_mode(),
         None,
         settings.get("editor.color_preset"),
+        &|k| settings.get(k).map(str::to_string),
     );
     let log_format = settings.get("log.format").unwrap_or("raw").to_string();
     let ed_line_numbers = settings.flag("editor.line_numbers");

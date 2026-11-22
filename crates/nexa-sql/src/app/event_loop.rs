@@ -98,6 +98,7 @@ impl ApplicationHandler<Wake> for App {
             self.settings.theme_mode(),
             win.theme(),
             self.settings.get("editor.color_preset"),
+            &|k| self.settings.get(k).map(str::to_string),
         );
         self.apply_tab_line_colors();
         self.apply_tab_history_cfg();

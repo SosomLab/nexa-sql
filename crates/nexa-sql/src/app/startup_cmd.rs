@@ -880,6 +880,36 @@ cells={n}
             self.find_action(crate::findbar::FindAction::Close);
             return;
         }
+        // 자체 시험(11-22 · T-78 ⓐ 판정): `editor.tokens:<파일>` = 활성 편집기 본문의 구문 토큰을 `글<탭>종류` 한 줄씩(Plain·공백뿐인
+        //   스팬 제외 · 종류 = nexa-ctl `TokenKind` 이름) — 그 탭의 강조 스펙(접속 방언이 있으면 방언 스펙)이 낸 그대로.
+        if let Some(path) = id.strip_prefix("editor.tokens:") {
+            let tb = self.editors.cur();
+            let mut out = String::new();
+            if let Some(h) = tb.highlighter() {
+                let (mut state, mut spans) = (0u32, Vec::new());
+                for line in tb.text().lines() {
+                    spans.clear();
+                    h.line_spans(line, &mut state, &mut spans);
+                    let cs: Vec<char> = line.chars().collect();
+                    let mut i = 0usize;
+                    for (n, kind) in &spans {
+                        let end = (i + n).min(cs.len());
+                        let word: String = cs[i.min(end)..end].iter().collect();
+                        i = end;
+                        if *kind != nexa_ctl::highlight::TokenKind::Plain && !word.trim().is_empty()
+                        {
+                            out.push_str(&format!(
+                                "{}	{kind:?}
+",
+                                word.trim()
+                            ));
+                        }
+                    }
+                }
+            }
+            let _ = std::fs::write(path, out);
+            return;
+        }
         if let Some(path) = id.strip_prefix("tabs.dump:") {
             // 한 줄 = 제목|종류|미저장|삭제됨|뷰 탭|읽기 전용 · 활성 탭은 머리에 `*`.
             let mut out = String::new();

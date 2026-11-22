@@ -82,20 +82,19 @@ pub(crate) fn hunk_rows_at(
     //   삭제가 한 덩어리로 묶인 경우 둘 다 · 3차).
     let h = hunk_at(hunks, line)?;
     let eq = |i: usize| rows[i].kind == diff::RowKind::Equal;
+    // ★ 4차(11-22 · 협업 원인 분석): 문맥 안에서 **이웃 덩어리**(Equal 행을 사이에 둔 다른 변경)를 만나면 문맥 예산을 다시 센다 —
+    //   git이 문맥이 겹치는 덩어리를 하나로 합쳐 보이는 것과 같다. 종전 = 이웃 덩어리를 포함만 하고 예산은 그대로 써서, 그 뒤
+    //   문맥이 한 줄씩 모자랐다(변경 4행 · 삭제 6행: 뒤 문맥 3 = 5·7·8행에서 끝나 9행이 빠짐 · 쐐기 팝업은 삭제 덩어리라 7·8·9 ✅).
     let mut start = h.rows.start.min(rows.len());
     let mut n = 0;
     while start > 0 && n < ctx {
         start -= 1;
-        if eq(start) {
-            n += 1;
-        }
+        n = if eq(start) { n + 1 } else { 0 };
     }
     let mut end = h.rows.end.min(rows.len());
     n = 0;
     while end < rows.len() && n < ctx {
-        if eq(end) {
-            n += 1;
-        }
+        n = if eq(end) { n + 1 } else { 0 };
         end += 1;
     }
     Some(start..end)
@@ -244,6 +243,44 @@ mod tests {
 
     fn lines(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// ★ 4차: 문맥 안의 이웃 덩어리는 합쳐 보이고 그 뒤로 문맥을 다시 센다(앞·뒤 대칭) · 문맥 밖의 덩어리는 끌어오지 않는다.
+    #[test]
+    fn hunk_rows_merge_neighbor_hunks_within_context() {
+        let a: Vec<String> = (1..=12).map(|i| format!("l{i}")).collect();
+        // 4행 변경 · 6행 삭제(사이에 5행 = Equal 하나).
+        let mut b = a.clone();
+        b[3] = "L4".into();
+        b.remove(5);
+        let rows = diff::align(&a, &b);
+        let hs = diff::hunks(&rows);
+        assert_eq!(hs.len(), 2, "Equal이 끼면 덩어리는 둘");
+        let kinds = |w: &Range<usize>| -> Vec<diff::RowKind> {
+            rows[w.start..w.end].iter().map(|r| r.kind).collect()
+        };
+        let has_delete = |w: &Range<usize>| kinds(w).contains(&diff::RowKind::Delete);
+        // 변경 띠(작업본 3행): 앞 3 + 사이 1 + 삭제 뒤 3 = Equal 7 · 삭제 행 포함 · 끝 = 9행(l9)까지.
+        let w = hunk_rows_at(&rows, &hs, 3, 3).expect("hunk");
+        let k = kinds(&w);
+        assert_eq!(w.start, 0);
+        assert_eq!(
+            k.iter().filter(|x| **x == diff::RowKind::Equal).count(),
+            7,
+            "{k:?}"
+        );
+        assert!(has_delete(&w));
+        let last = &rows[w.end - 1];
+        assert_eq!(
+            last.a.map(|i| a[i].as_str()),
+            Some("l9"),
+            "삭제 뒤 문맥 셋째 줄까지"
+        );
+        // 쐐기(삭제 덩어리 · 작업본 5행 = l7 자리): 앞으로는 변경 덩어리를 합치고 그 앞 문맥 3까지 = 같은 창.
+        assert_eq!(hunk_rows_at(&rows, &hs, 5, 3).as_ref(), Some(&w));
+        // 문맥 1: 사이 Equal 하나로 이웃에 닿지 않는다(예산 1을 l5가 쓴다) → 변경 덩어리만 + 앞뒤 1.
+        let w1 = hunk_rows_at(&rows, &hs, 3, 1).expect("hunk");
+        assert!(!has_delete(&w1), "{:?}", kinds(&w1));
     }
 
     /// 문맥 = Equal 행 기준(3차): 변경 줄 뒤에 지운 줄이 이어져도 그 뒤 문맥 2줄이 보인다 · 삭제만인 덩어리는 아래 줄 · 끝에서 잘린다.
