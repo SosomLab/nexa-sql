@@ -103,6 +103,13 @@ expect "r5-unchanged-after-failed-compile" "$V1_OUT/hr-5.txt" "main.v1: server s
 expect_eq "r5-no-external" "$(ext)" "0"
 # r6(F) = 미판정 — 툴바 `conn.disconnect`는 편집기 탭 세션만 끊고 오브젝트 소스를 읽는 탐색기 연결은 남아(11-23 첫 판 = 끊은 뒤에도 "unchanged") 오프라인
 #   조건을 기동 명령으로 만들 수 없다 · 단위 시험(`source_ready_for`)이 덮는다.
-for t in hr5; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
+# r7(넷째 독립 검토 후속 · 11-23 묶음 21): 확인 직후 그 탭을 닫고 같은 객체를 탐색기에서 다시 열면 탭이 열린다
+#    (대기가 일반 "소스 열기" 응답을 삼키지 않음 · 대기 칸 하나로 가로채는 방식의 약점 = 재설계 TODO · 이 판정은 지금 고친 범위만)
+fresh
+v1_gui hr7 "$OPEN,${C}@after:6000:edit.history_check,${C}@after:6100:file.close_tab,${C}@after:6400:tabs.dump:$O/hr-7a.txt,${C}@after:6600:explorer.select:v1,${C}@after:6800:explorer.pick:source,${C}@after:10000:tabs.dump:$O/hr-7b.txt,${C}@after:10300:file.exit,${C}@after:10800:toolbar.pick:project.exit_skip" 25 lite
+expect_not "r7-tab-closed-first" "$V1_OUT/hr-7a.txt" "v1.sql"
+expect "r7-reopened-tab" "$V1_OUT/hr-7b.txt" "v1.sql"
+expect_eq "r7-one-v1-tab" "$(grep -c 'v1\.sql' "$V1_OUT/hr-7b.txt" 2>/dev/null)" "1"
+for t in hr5 hr7; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done
