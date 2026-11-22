@@ -62,6 +62,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: nexa-sql
+          # 루트 Cargo.toml(프로필 · workspace 의존)을 캐시 키에 넣는다 - rust-cache는 가상 workspace의 루트 Cargo.toml을 키에 넣지 않아
+          #   11-21 dev 프로필 변경(debug=false) 뒤 옛 캐시가 정확 일치로 복원돼 의존 전부를 매번 다시 컴파일하고 저장도 안 했다(ci 6분 -> 20분 · 11-22).
+          key: ${{ hashFiles('nexa-sql/Cargo.toml') }}
       - name: driver unit tests (DRDA 코덱 · FD:OCA · SQLCA)
         run: cargo test -p nsql-driver-db2
       - name: wait for Db2 (Setup has completed · 최대 10분)
