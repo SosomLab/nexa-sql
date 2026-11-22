@@ -10,7 +10,8 @@ use nsql_settings::json::{dump as json_dump, parse, Json};
 use std::path::{Path, PathBuf};
 
 pub(crate) const EXT: &str = "nsql-project";
-const VERSION: i64 = 1;
+/// 2 = 등록 폴더·홈 기준 경로 앵커(`${workspaceFolder:이름}/…` · `${userHome}/…` · T-172 P2 · 11-22) — 1은 그대로 읽는다.
+const VERSION: i64 = 2;
 
 /// 열린 프로젝트 — `path` = 프로젝트 파일(없으면 "프로젝트 없음" = 기본 워크스페이스 · D-148).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -113,6 +114,50 @@ impl Project {
         let Json::Obj(fields) = json else {
             return Err("project file is not a JSON object".into());
         };
+        // ★ 더 새 형식의 파일은 열지 않는다(T-172) — 이 판이 모르는 항목은 저장할 때 버려지므로, 열어서 저장하면 내용을 잃는다.
+        if let Some(n) = fields.iter().find_map(|(k, v)| match (k.as_str(), v) {
+            ("version", Json::Num(n)) => Some(*n as i64),
+            _ => None,
+        }) {
+            if n > VERSION {
+                return Err(format!(
+                    "project file version {n} is newer than this app supports ({VERSION}) - update Nexa SQL to open it"
+                ));
+            }
+        }
+        // ★ 폴더를 **먼저** 읽는다(T-172 P2) — 탭·선택 경로의 `${workspaceFolder:이름}` 앵커가 폴더 목록을 가리킨다(키 순서와 무관하게).
+        let home = home_dir();
+        for (k, v) in &fields {
+            if k != "folders" {
+                continue;
+            }
+            if let Json::Arr(items) = v {
+                for it in items {
+                    let rel = match it {
+                        Json::Str(s) => Some(s.clone()),
+                        Json::Obj(f) => f.iter().find_map(|(k, v)| match (k.as_str(), v) {
+                            ("path", Json::Str(s)) => Some(s.clone()),
+                            _ => None,
+                        }),
+                        _ => None,
+                    };
+                    if let Some(rel) = rel.filter(|s| !s.trim().is_empty()) {
+                        let cx = PathCtx {
+                            base: base.as_deref(),
+                            folders: &[],
+                            home: home.as_deref(),
+                        };
+                        p.folders.push(resolve(&rel, &cx));
+                    }
+                }
+            }
+        }
+        let folders = p.folders.clone();
+        let cx = PathCtx {
+            base: base.as_deref(),
+            folders: &folders,
+            home: home.as_deref(),
+        };
         for (k, v) in &fields {
             if k == "active" {
                 if let Json::Num(n) = v {
@@ -134,7 +179,7 @@ impl Project {
                         for (fk, fv) in f {
                             match (fk.as_str(), fv) {
                                 ("path", Json::Str(s)) if !s.trim().is_empty() => {
-                                    t.path = Some(resolve(s, base.as_deref()))
+                                    t.path = Some(resolve(s, &cx))
                                 }
                                 ("title", Json::Str(s)) => t.title = s.clone(),
                                 ("text", Json::Str(s)) => t.text = Some(s.clone()),
@@ -174,7 +219,7 @@ impl Project {
                     for it in items {
                         if let Json::Str(s) = it {
                             if !s.trim().is_empty() {
-                                p.expanded.push(resolve(s, base.as_deref()));
+                                p.expanded.push(resolve(s, &cx));
                             }
                         }
                     }
@@ -245,27 +290,10 @@ impl Project {
             if k == "selected" {
                 if let Json::Str(s) = v {
                     if !s.trim().is_empty() {
-                        p.last_selected = Some(resolve(s, base.as_deref()));
+                        p.last_selected = Some(resolve(s, &cx));
                     }
                 }
                 continue;
-            }
-            if k == "folders" {
-                if let Json::Arr(items) = v {
-                    for it in items {
-                        let rel = match it {
-                            Json::Str(s) => Some(s.clone()),
-                            Json::Obj(f) => f.iter().find_map(|(k, v)| match (k.as_str(), v) {
-                                ("path", Json::Str(s)) => Some(s.clone()),
-                                _ => None,
-                            }),
-                            _ => None,
-                        };
-                        if let Some(rel) = rel.filter(|s| !s.trim().is_empty()) {
-                            p.folders.push(resolve(&rel, base.as_deref()));
-                        }
-                    }
-                }
             }
         }
         // 탭 payload 블록 → 같은 `id`의 탭 본문(블록이 있으면 헤더의 옛 `text`보다 우선).
@@ -283,6 +311,18 @@ impl Project {
     /// JSON 본문(폴더 = 파일 위치 기준 상대 · 아니면 절대 · 구분자 `/`).
     pub(crate) fn to_json(&self) -> String {
         let base = self.base();
+        let home = home_dir();
+        // 폴더 자신은 폴더 앵커를 쓰지 않는다(프로젝트 기준 상대 · 홈 기준 · 절대) · 그 밖의 경로는 등록 폴더 앵커까지.
+        let fcx = PathCtx {
+            base: base.as_deref(),
+            folders: &[],
+            home: home.as_deref(),
+        };
+        let cx = PathCtx {
+            base: base.as_deref(),
+            folders: &self.folders,
+            home: home.as_deref(),
+        };
         let mut out = String::new();
         out.push_str("{\n  \"version\": ");
         out.push_str(&VERSION.to_string());
@@ -292,7 +332,7 @@ impl Project {
                 out.push(',');
             }
             out.push_str("\n    { \"path\": \"");
-            out.push_str(&escape(&relativize(f, base.as_deref())));
+            out.push_str(&escape(&relativize(f, &fcx)));
             out.push_str("\" }");
         }
         if !self.folders.is_empty() {
@@ -301,7 +341,7 @@ impl Project {
         out.push_str("  ]");
         if let Some(sel) = &self.last_selected {
             out.push_str(",\n  \"selected\": \"");
-            out.push_str(&escape(&relativize(sel, base.as_deref())));
+            out.push_str(&escape(&relativize(sel, &cx)));
             out.push('"');
         }
         // 작업 환경(사용자 09-23): 탭 순서대로 · 파일은 경로만(원본 본문은 쓰지 않는다 · docs/70) · 스크립트는 본문 · 캐럿 앵커.
@@ -314,10 +354,7 @@ impl Project {
                 }
                 out.push_str("\n    { ");
                 if let Some(p) = &t.path {
-                    out.push_str(&format!(
-                        "\"path\": \"{}\", ",
-                        escape(&relativize(p, base.as_deref()))
-                    ));
+                    out.push_str(&format!("\"path\": \"{}\", ", escape(&relativize(p, &cx))));
                 }
                 out.push_str(&format!(
                     "\"title\": \"{}\", \"line\": {}, \"col\": {}",
@@ -378,7 +415,7 @@ impl Project {
                 if i > 0 {
                     out.push_str(", ");
                 }
-                out.push_str(&format!("\"{}\"", escape(&relativize(d, base.as_deref()))));
+                out.push_str(&format!("\"{}\"", escape(&relativize(d, &cx))));
             }
             out.push(']');
         }
@@ -575,25 +612,97 @@ fn setting_json(key: &str, raw: &str) -> String {
     }
 }
 
-fn resolve(rel: &str, base: Option<&Path>) -> PathBuf {
+/// 경로를 풀고 적을 때의 기준(T-172 P2): 프로젝트 파일 폴더 · 등록 폴더들 · 홈.
+struct PathCtx<'a> {
+    base: Option<&'a Path>,
+    folders: &'a [PathBuf],
+    home: Option<&'a Path>,
+}
+
+const ANCHOR_HOME: &str = "${userHome}";
+const ANCHOR_PROJECT: &str = "${workspaceFolder}";
+const ANCHOR_FOLDER: &str = "${workspaceFolder:";
+
+fn home_dir() -> Option<PathBuf> {
+    crate::sessions::home_dir_str().map(PathBuf::from)
+}
+
+/// 등록 폴더 `i`의 앵커 이름 = 폴더 이름(leaf) — **다른 등록 폴더와 겹치지 않고** `}`가 없을 때만(겹치면 앵커를 쓰지 않는다).
+fn folder_anchor_name(folders: &[PathBuf], i: usize) -> Option<String> {
+    let name = folders.get(i)?.file_name()?.to_string_lossy().into_owned();
+    if name.is_empty() || name.contains('}') {
+        return None;
+    }
+    let dup = folders.iter().enumerate().any(|(j, f)| {
+        j != i
+            && f.file_name()
+                .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(&name))
+    });
+    (!dup).then_some(name)
+}
+
+/// 저장된 글 → 경로. 접두 없는 상대 = 프로젝트 파일 폴더 기준(옛 파일 그대로) · 앵커 = 스크립트 내장 변수와 같은 이름
+/// (`${workspaceFolder}` · `${workspaceFolder:이름}` · `${userHome}` · 사용자 11-22). 풀 수 없는 앵커(이 PC에 그 폴더가 없다)는
+/// 글자 그대로 프로젝트 폴더 아래 경로로 두어, 못 찾은 탭으로 보존되고 저장하면 같은 글로 되돌아간다.
+fn resolve(rel: &str, cx: &PathCtx<'_>) -> PathBuf {
+    let tail = |rest: &str| rest.trim_start_matches(['/', '\\']).to_string();
+    if let (Some(rest), Some(h)) = (rel.strip_prefix(ANCHOR_HOME), cx.home) {
+        return h.join(tail(rest));
+    }
+    if let (Some(rest), Some(b)) = (rel.strip_prefix(ANCHOR_PROJECT), cx.base) {
+        return b.join(tail(rest));
+    }
+    if let Some(after) = rel.strip_prefix(ANCHOR_FOLDER) {
+        if let Some((name, rest)) = after.split_once('}') {
+            let hit = (0..cx.folders.len())
+                .find(|&i| folder_anchor_name(cx.folders, i).as_deref() == Some(name));
+            if let Some(i) = hit {
+                return cx.folders[i].join(tail(rest));
+            }
+        }
+    }
     let p = PathBuf::from(rel);
     if p.is_absolute() {
         return p;
     }
-    match base {
+    match cx.base {
         Some(b) => b.join(p),
         None => p,
     }
 }
 
-/// 절대 → `base` 아래면 상대(`/` 구분) · 아니면 절대(`/` 구분).
-fn relativize(p: &Path, base: Option<&Path>) -> String {
-    let s = match base.and_then(|b| p.strip_prefix(b).ok()) {
-        Some(r) if !r.as_os_str().is_empty() => r.to_string_lossy().into_owned(),
-        Some(_) => ".".into(),
-        None => p.to_string_lossy().into_owned(),
+/// 경로 → 저장할 글(`/` 구분): 프로젝트 파일 폴더 아래 = 상대 · 등록 폴더 아래 = `${workspaceFolder:이름}/…`(가장 깊게 맞는
+/// 폴더) · 홈 아래 = `${userHome}/…` · 그 밖 = 절대. 프로젝트를 폴더째 옮기거나 다른 PC에서 열어도 경로가 따라온다.
+fn relativize(p: &Path, cx: &PathCtx<'_>) -> String {
+    let slash = |r: &Path| r.to_string_lossy().replace('\\', "/");
+    if let Some(r) = cx.base.and_then(|b| p.strip_prefix(b).ok()) {
+        return if r.as_os_str().is_empty() {
+            ".".into()
+        } else {
+            slash(r)
+        };
+    }
+    let best = (0..cx.folders.len())
+        .filter_map(|i| {
+            let r = p.strip_prefix(&cx.folders[i]).ok()?;
+            let name = folder_anchor_name(cx.folders, i)?;
+            Some((cx.folders[i].components().count(), name, r))
+        })
+        .max_by_key(|(depth, _, _)| *depth);
+    let join = |anchor: String, r: &Path| {
+        if r.as_os_str().is_empty() {
+            anchor
+        } else {
+            format!("{anchor}/{}", slash(r))
+        }
     };
-    s.replace('\\', "/")
+    if let Some((_, name, r)) = best {
+        return join(format!("{ANCHOR_FOLDER}{name}}}"), r);
+    }
+    if let Some(r) = cx.home.and_then(|h| p.strip_prefix(h).ok()) {
+        return join(ANCHOR_HOME.to_string(), r);
+    }
+    slash(p)
 }
 
 fn escape(s: &str) -> String {
@@ -696,6 +805,69 @@ mod tests {
         );
         assert_eq!(WorkMode::Project(pj.to_path_buf()).local_dir(), None);
         assert_eq!(WorkMode::File.local_dir(), nsql_settings::config_dir());
+    }
+
+    #[test]
+    fn folder_and_home_anchors_round_trip() {
+        let root = PathBuf::from(if cfg!(windows) { "Q:\\w" } else { "/w" });
+        let (proj, lib, lib2, home) = (
+            root.join("proj"),
+            root.join("ext").join("lib"),
+            root.join("other").join("lib"),
+            root.join("home"),
+        );
+        let folders = vec![proj.join("sql"), lib.clone()];
+        let cx = PathCtx {
+            base: Some(&proj),
+            folders: &folders,
+            home: Some(&home),
+        };
+        let cases = [
+            (proj.join("sql").join("a.sql"), "sql/a.sql"),
+            (
+                lib.join("x").join("b.sql"),
+                "${workspaceFolder:lib}/x/b.sql",
+            ),
+            (lib.clone(), "${workspaceFolder:lib}"),
+            (home.join("n.sql"), "${userHome}/n.sql"),
+        ];
+        for (p, want) in &cases {
+            assert_eq!(relativize(p, &cx), *want);
+            assert_eq!(resolve(want, &cx), *p, "{want}");
+        }
+        assert_eq!(resolve("${workspaceFolder}/sql/a.sql", &cx), cases[0].0);
+        // 이름이 겹치는 등록 폴더에는 앵커를 쓰지 않는다(어느 쪽인지 알 수 없다) → 절대.
+        let dup = vec![lib.clone(), lib2];
+        let cx2 = PathCtx {
+            base: Some(&proj),
+            folders: &dup,
+            home: None,
+        };
+        assert!(!relativize(&lib.join("b.sql"), &cx2).starts_with("${"));
+        // 이 PC에 없는 폴더 앵커 = 글자 그대로 프로젝트 폴더 아래로 → 저장하면 같은 글로 되돌아간다(잃지 않는다).
+        let raw = "${workspaceFolder:gone}/c.sql";
+        assert_eq!(relativize(&resolve(raw, &cx), &cx), raw);
+    }
+
+    /// ★ T-172: 더 새 형식의 프로젝트 파일은 열지 않는다 · 폴더는 키 순서와 무관하게 먼저 읽힌다.
+    #[test]
+    fn newer_version_is_refused_and_folders_resolve_first() {
+        let file = PathBuf::from(if cfg!(windows) {
+            "Q:\\w\\p\\my.nsql-project"
+        } else {
+            "/w/p/my.nsql-project"
+        });
+        assert!(Project::from_bytes(&file, br#"{"version":99,"folders":[]}"#).is_err());
+        let ext = if cfg!(windows) {
+            "Q:/w/ext/lib"
+        } else {
+            "/w/ext/lib"
+        };
+        let doc = format!(
+            r#"{{"version":2,"tabs":[{{"path":"${{workspaceFolder:lib}}/b.sql","title":"b"}}],"folders":[{{"path":"{ext}"}}]}}"#
+        );
+        let p = Project::from_bytes(&file, doc.as_bytes()).unwrap();
+        assert_eq!(p.tabs[0].path, Some(PathBuf::from(ext).join("b.sql")));
     }
 
     #[test]
