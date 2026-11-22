@@ -186,7 +186,10 @@ fn remove() -> i32 {
     let mut l = Licensing::open_default();
     match l.remove() {
         Ok(true) => {
-            println!("removed · state {}", state_label(l.state()));
+            println!(
+                "{}",
+                nsql_i18n::tf(nsql_i18n::Msg::CliLicRemoved, &[&state_label(l.state())])
+            );
             0
         }
         Ok(false) => {

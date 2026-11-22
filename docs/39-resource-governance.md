@@ -266,7 +266,7 @@
 | **확장 패널**(79차) | `ext-index` 1(사용자 동작 때만) + `curl` 자식 | 없음 | 목록 JSON 1벌 | `extensions/` · `index.json` | 패널 닫힘 | `extensions.enabled` | — |
 | **탐색기 갱신**(80차) | 메타 스레드(서버별 `nsql-explorer`) | 없음 | 폴더별 디프 갱신(트리 전체 재구축 0) | — | — | `meta.refresh_*` | `meta.refresh_secs=0` · `meta.refresh_highlight_ms=0` |
 | **수동 커밋 잠금 방지**(79차) | 없음(메타 세션 1문장) | 없음 | — | — | — | `tx.block_poll_secs` | ✅ `0` |
-| **상태줄 git**(33차) | `nsql-git` + `git` 자식 2 | 없음 | — | 폴더 바뀜·저장·15 s | — | `statusbar.git` | ✅ `off` |
+| **상태줄 git**(33차 · 11-22 C-1 ahead/behind) | `nsql-git` + `git` 자식 3(+ `editor.minimap_git`·거터일 때 `show` 1 = 최대 4) | 없음 | — | 폴더 바뀜·저장·15 s | — | `statusbar.git` | ✅ `off` |
 | **북마크**(09-22 · 69) | 스레드 0 · 틱마다 활성 탭의 줄 변경 기록만 소비(O(변경 수)) · 열 때 재탐색 O(줄 수 · `bookmark.relocate_max_lines` 상한) · 저장 = 디바운스 1초/최대 5초 임시 파일 → rename | `bookmark.enabled`(전부 끔) · `bookmark.persist`(저장 끔) · `bookmark.search_lines`/`relocate_max_lines` — 읽는 곳 `bookmarks.rs apply_settings` · 표시 셋 `bookmark.gutter`/`minimap`/`inline_label`(끄면 그 표시 계산 0 · `bm_refresh_tab`) | `bookmarks.rs` `sync_tab`/`tick_save` |
 | **그리드 데이터 편집**(09-26 · 87) | 스레드 0(워커 세션에서 적용·재조회) · 변경 집합 = 바뀐 셀만(`ChangeSet`) · 제자리 갱신 = `Arc::make_mut` 세그먼트 1개 복사(공유 시) · 재조회 = 바뀐 행 수만큼 단문 | `grid.edit`(전부 끔) · `grid.edit_refresh`(rows/requery/local) · `grid.edit_hidden_keys`/`grid.edit_rowid`/`grid.edit_all_cols` · `grid.paste_max_rows` | 없음 | 적용 뒤 변경 집합 비움 | (편집 중) | 26 §8 두 행 |
 | **대량 적재 `nsql import`**(09-26 · 89) | 스레드 0(CLI 주 스레드) · 원료 스트리밍(`DelimReader` 64 KB 버퍼 · 파일 전체 안 듦) · 배치 버퍼 = `bulk.batch_rows` 행 · Oracle 배열 버퍼 2× 배치 | `bulk.batch_rows` · `bulk.commit_every` · `bulk.mode`(single = 최소 메모리) | 없음 | 끝나면 전부 | (CLI) | 26 §8 |
@@ -283,6 +283,7 @@
 > **부하원 추가(09-16 33차)**: 상태줄 git 조회 스레드 `nsql-git`(git CLI 2회 · 폴더 바뀜/저장/15초 · 동시 1) — 끄는 키 `statusbar.git`.
 > **부하원 상한 추가(10-30 182차 · T-121 ②)**: 오프라인 서버 탐색기 메타(서버당 `MetaStore` 64 MB 상한 · 종전 = 전역 상한 없음) — 합계 상한 `meta.cache_mb`(기본 256 · 0 = 없음) · 넘으면 오래 안 쓴 칸부터 컬럼 층 → 전체 비움 · 점검 = 세션 유휴 틱(`session.idle_secs` 0이면 안 돎).
 > **부하원 보강(10-30 181차 · T-110 2-3)**: 같은 `nsql-git` 스레드가 `editor.minimap_git` 켬 + 활성 탭이 파일이면 **`git show HEAD:./<파일>` 1회를 더 호출**(같은 주기 · 동시 1 · 본문 = 활성 파일 1개만 메모리) — 끄는 키 `editor.minimap_git` 또는 `statusbar.git`.
+> **부하원 보강(11-22 · C-1 ahead/behind)**: 같은 `nsql-git` 조회 한 바퀴에 **`git rev-list --left-right --count HEAD...@{u}` 1회를 더 호출**(같은 주기 · 동시 1 · 추적 브랜치 없음 = 실패 코드 → 표시 생략) — git CLI 2회 → 3회(+ show 1) · 네트워크 0(로컬 추적 ref만 · fetch 없음 · 26 §8 점검) · 끄는 키 = `statusbar.git`(감시는 거터·미니맵 git이 켜져 있으면 계속 · 11-22 git 감시 수정). 대안 = `status --porcelain=v2 --branch` 한 번으로 HEAD·변경 수·ab를 함께(호출 2회로 줄지만 커밋 없는 저장소·detached 표시가 바뀜 → 사용자 결정 후보).
 > **부하원 추가(09-16 29차)**: 텍스트 보기 변환 스레드 `nsql-textview`(변환 중에만 · 500행 블록 · 취소 깃발 · **결과 복제 0 — 09-17 DR-33: `ResultData` Arc 세그먼트 공유 + 인덱스 뷰** · 파생 `text_lines`는 예산에 포함) — 끄는 키 없음(보기를 그리드로 두면 0) · 자세히 [journal 29차](journal/2026-09-16.md).
 
 ## 4. 거버너 — 설정 체계 설계(포트 + 레지스트리 + 설정 선택)

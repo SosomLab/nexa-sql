@@ -1191,6 +1191,13 @@ cells={n}
             let _ = std::fs::write(path, &self.sess.status);
             return;
         }
+        // 자체 시험(11-22 · C-1 ahead/behind 판정): 상태줄 **오른쪽 세그먼트** 덤프(`statusbar.dump:<파일>` · `id<탭>글` 한 줄씩 · 없는
+        //   세그먼트는 줄도 없다) — 세그먼트는 그릴 때 만들어지므로 다음 프레임이 쓴다(`status.dump`는 왼쪽 안내 글만).
+        if let Some(path) = id.strip_prefix("statusbar.dump:") {
+            self.status_segs_dump = Some(PathBuf::from(path));
+            self.redraw();
+            return;
+        }
         if let Some(path) = id.strip_prefix("tx.dump:") {
             let _ = std::fs::write(path, self.tx_dump());
             return;

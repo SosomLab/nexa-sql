@@ -1,5 +1,7 @@
 //! 상태줄 git 세그먼트(Sublime `main ⑥` · 사용자 09-16) — 활성 탭 파일의 폴더가 git 작업 트리면 **브랜치 · 변경 파일 수**.
 //!
+//! - ★ 11-22(C-1 · 19 §2): 추적 브랜치 대비 **앞/뒤 커밋 수**(`rev-list --left-right --count HEAD...@{u}`) — 로컬에 이미 있는 추적
+//!   ref만 본다(**fetch 없음 · 네트워크 0** · 사용자가 fetch하기 전까지 "뒤"는 낡을 수 있다) · 추적 브랜치가 없으면 표시 없음.
 //! - 구현 = `git` CLI 호출(`rev-parse --abbrev-ref HEAD` · `status --porcelain`) · **배경 스레드** · 결과는 채널로 · UI는 폴링.
 //!   libgit2 같은 의존 없이(DR-3) · git이 없으면 세그먼트 없음.
 //! - 부하([39 §3](../../../docs/39-resource-governance.md)): 폴더가 바뀌거나 저장한 직후, 그리고 `statusbar.git_secs`(15초)마다 1회 ·
@@ -14,6 +16,8 @@ pub(crate) struct GitInfo {
     pub branch: String,
     /// `git status --porcelain` 줄 수(수정·추가·삭제·미추적).
     pub changed: usize,
+    /// ★ 11-22: 추적 브랜치 대비 (앞선 커밋 수, 뒤진 커밋 수) — 추적 브랜치 없음·detached = None(표시하지 않는다).
+    pub ab: Option<(usize, usize)>,
     /// ★ T-110 2-3(10-30): 감시 파일의 **HEAD 본문**(`git show HEAD:./<파일>` · 추적되지 않은 파일 = None) — 미니맵 git 변경 줄의 둘째 기준선.
     pub head: Option<String>,
 }
@@ -141,9 +145,71 @@ pub(crate) fn probe(dir: &Path, file: Option<&Path>) -> Option<GitInfo> {
         .and_then(|f| f.file_name())
         .and_then(|n| n.to_str())
         .and_then(|n| git(dir, &["show", &format!("HEAD:./{n}")]));
+    // 추적 브랜치 대비 앞/뒤(로컬 ref만 · 추적 브랜치가 없으면 git이 실패 코드 → None).
+    let ab = git(dir, &["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+        .and_then(|out| parse_ab(&out));
     Some(GitInfo {
         branch,
         changed,
+        ab,
         head,
     })
+}
+
+/// `rev-list --left-right --count A...B` 출력(`<왼쪽> <오른쪽>` · 탭 구분) → (앞, 뒤). 꼴이 다르면 None.
+pub(crate) fn parse_ab(out: &str) -> Option<(usize, usize)> {
+    let mut it = out.split_whitespace();
+    let ahead = it.next()?.parse().ok()?;
+    let behind = it.next()?.parse().ok()?;
+    it.next().is_none().then_some((ahead, behind))
+}
+
+/// 상태줄 git 세그먼트 글: `브랜치 (변경 수)` · 앞/뒤가 있으면 `브랜치 ↑앞 ↓뒤 (변경 수)`(0인 쪽은 생략 — 둘 다 0이면 종전 글 그대로).
+pub(crate) fn segment_text(info: &GitInfo) -> String {
+    let mut s = info.branch.clone();
+    if let Some((ahead, behind)) = info.ab {
+        if ahead > 0 {
+            s.push_str(&format!(" ↑{ahead}"));
+        }
+        if behind > 0 {
+            s.push_str(&format!(" ↓{behind}"));
+        }
+    }
+    format!("{s} ({})", info.changed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_ab_reads_two_counts_only() {
+        assert_eq!(
+            parse_ab(
+                "2	1
+"
+            ),
+            Some((2, 1))
+        );
+        assert_eq!(parse_ab("0	0"), Some((0, 0)));
+        assert_eq!(parse_ab("  12   3  "), Some((12, 3)));
+        for bad in ["", "2", "a	b", "1	2	3", "-1	0"] {
+            assert_eq!(parse_ab(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn segment_text_omits_zero_sides() {
+        let info = |ab| GitInfo {
+            branch: "main".into(),
+            changed: 3,
+            ab,
+            head: None,
+        };
+        assert_eq!(segment_text(&info(None)), "main (3)");
+        assert_eq!(segment_text(&info(Some((0, 0)))), "main (3)");
+        assert_eq!(segment_text(&info(Some((2, 0)))), "main ↑2 (3)");
+        assert_eq!(segment_text(&info(Some((0, 5)))), "main ↓5 (3)");
+        assert_eq!(segment_text(&info(Some((2, 1)))), "main ↑2 ↓1 (3)");
+    }
 }

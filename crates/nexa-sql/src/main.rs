@@ -506,6 +506,8 @@ struct App {
     project_ours_mark: u64,
     /// ★ T-172 (D-188): 마지막으로 알린 "절대로 남는 경로" 수 — 자동 저장·닫기 길은 수가 달라졌을 때만 다시 알린다(반복 방지).
     project_abs_warned: usize,
+    /// 자체 시험 `statusbar.dump:<파일>` 요청(다음 프레임이 상태줄 세그먼트를 그 파일에 쓰고 비운다).
+    status_segs_dump: Option<PathBuf>,
     /// 탭 id(이 인스턴스 안에서만 유일) → **문서 id**(프로젝트 파일에 적는 탭 `id` · 인스턴스가 달라도 같은 탭이면 같은 값 · 병합 열쇠).
     tab_doc_ids: std::collections::HashMap<u64, u64>,
     /// 다른 인스턴스가 고친 탭 본문 중 우리 편집과 겹쳐 확인을 기다리는 것(탭 id → 저쪽 본문 · 겹친 곳 수) — 탭 띠로 묻는다.
@@ -2131,6 +2133,7 @@ fn main() {
         project_sig: None,
         project_ours_mark: 0,
         project_abs_warned: 0,
+        status_segs_dump: None,
         tab_doc_ids: std::collections::HashMap::new(),
         project_pending: std::collections::HashMap::new(),
         capture_cache: std::collections::HashMap::new(),

@@ -249,6 +249,19 @@ impl App {
         self.paint_chrome_frame(gfx, env);
         let left_text = self.status_left_text();
         let segs = self.status_segments(env);
+        // 자체 시험 `statusbar.dump:<파일>`(11-22): 이번 프레임의 오른쪽 세그먼트를 `id<탭>글` 한 줄씩(요청이 있을 때만 · 평소 비용 0).
+        if let Some(path) = self.status_segs_dump.take() {
+            let body: String = segs
+                .iter()
+                .map(|(id, (text, _))| {
+                    format!(
+                        "{id}	{text}
+"
+                    )
+                })
+                .collect();
+            let _ = std::fs::write(path, body);
+        }
         self.paint_statusbar(gfx, env, &left_text, segs);
     }
 
@@ -529,9 +542,7 @@ impl App {
         if !seg {
             return None;
         }
-        self.git
-            .info()
-            .map(|info| format!("{} ({})", info.branch, info.changed))
+        self.git.info().map(crate::gitstat::segment_text)
     }
 
     /// 서버 유형 칩(약어 · 색) — 접속 중이고 `statusbar.env_badge`가 켜져 있을 때만.
