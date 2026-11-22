@@ -4409,7 +4409,8 @@ pub fn read_only_session_sql(dialect: Dialect) -> Option<&'static str> {
 
 pub fn goes_to_server(item: &Item) -> bool {
     match &item.kind {
-        ItemKind::Sql(_) => true,
+        // ★ T-304 ③: FROM 없는 `SELECT 리터럴 INTO :V` = 클라이언트 로컬 대입(`nsql_script::local_select_into`) — 서버행이 아니다.
+        ItemKind::Sql(_) => nsql_script::local_select_into(&item.text).is_none(),
         ItemKind::Invalid(_) => false,
         ItemKind::Command(c) => match c {
             // ★ `EXEC :V := 리터럴`은 클라이언트 로컬 대입(DB 왕복 0 · `nsql_script::local_assign` · 139차 win) — 전송 로그 ·

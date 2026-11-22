@@ -318,6 +318,10 @@ impl Engine {
                 if let Some(hint) = crate::command::print_text_hint(self.caps.tsql_print, &text) {
                     return vec![Action::Error(hint)];
                 }
+                // ★ T-304 ③(D-501 · 사용자 11-23): FROM 없는 `SELECT 리터럴 INTO :V` = 로컬 대입(전 방언 · 서버 왕복 0).
+                if let Some((raw, v)) = local_select_into(&text) {
+                    return self.local_assign_actions(raw, v);
+                }
                 // 저장 코드를 만드는 DDL은 바인드 대상이 아니다(본문의 `:NEW`·`:OLD`·`:x`는 서버가 해석한다).
                 if matches!(kind, SqlKind::Block) && is_stored_code_ddl(&text) {
                     return vec![Action::Execute {
@@ -719,6 +723,21 @@ impl Engine {
         }
     }
 
+    /// 리터럴 로컬 대입의 실행(변수 저장 + 행동) — `EXEC :V := 리터럴` · `[EXEC] SELECT 리터럴 INTO :V` 공용.
+    fn local_assign_actions(&mut self, raw: &str, v: Value) -> Vec<Action> {
+        let name = raw.to_ascii_uppercase();
+        // 표기·열쇠 = 대문자(저장소가 맞춘다 · 11-13).
+        self.vars.assign(raw, v.clone());
+        let mut acts = vec![Action::LocalAssign {
+            name: name.clone(),
+            value: v.clone(),
+        }];
+        if self.settings.autoprint {
+            acts.push(Action::Print(vec![(name, v)]));
+        }
+        acts
+    }
+
     /// `EXEC 본문`: 리터럴 대입이면 로컬, 아니면 방언별 래핑 후 InOut 실행.
     fn plan_exec(&mut self, text: &str) -> Vec<Action> {
         // text = "EXEC <body>" (치환 후). 본문만 떼어낸다.
@@ -730,17 +749,7 @@ impl Engine {
             .trim();
         let body = body.trim_end_matches(';').trim();
         if let Some((raw, v)) = local_assign(body) {
-            let name = raw.to_ascii_uppercase();
-            // 표기·열쇠 = 대문자(저장소가 맞춘다 · 11-13).
-            self.vars.assign(raw, v.clone());
-            let mut acts = vec![Action::LocalAssign {
-                name: name.clone(),
-                value: v.clone(),
-            }];
-            if self.settings.autoprint {
-                acts.push(Action::Print(vec![(name, v)]));
-            }
-            return acts;
+            return self.local_assign_actions(raw, v);
         }
         // 사용 시 모드(D-184): `:V := 식`의 식을 수식으로 기억(의존 = 식 안의 바인드) — 의존이 바뀌면 참조 문장 전에 다시 계산.
         if self.settings.expand_at_use {
@@ -1148,6 +1157,9 @@ fn after_command_word(text: &str) -> String {
 /// **같은 판정**을 쓴다. 우변이 리터럴이 아니면(`:A + 10` · 함수 호출) `None` = 서버행.
 pub fn local_assign(body: &str) -> Option<(&str, Value)> {
     let body = body.trim().trim_end_matches(';').trim();
+    if let Some(hit) = local_select_into(body) {
+        return Some(hit);
+    }
     let (lhs, rhs) = body.split_once(":=")?;
     let lhs = lhs.trim();
     let is_bind =
@@ -1157,6 +1169,36 @@ pub fn local_assign(body: &str) -> Option<(&str, Value)> {
     }
     let v = parse_literal(rhs).ok()?;
     Some((&lhs[1..], v))
+}
+
+/// ★ T-304 ③(D-501 · 사용자 11-23 "리터럴만 로컬 대입"): **FROM 없는** `SELECT 리터럴 INTO :V`이면 `(변수 이름 원문 표기, 값)` —
+/// 값이 리터럴 **하나**(문자열 · 숫자 · NULL)이고 받는 변수가 하나일 때만. 식·함수(`SELECT SYSDATE INTO :V`) · 여러 값 ·
+/// FROM이 있는 꼴은 `None` = 종전대로 서버행(방언별 재작성). Oracle은 FROM 없는 SELECT가 문법 오류라 이 꼴이 서버에서
+/// 실패했다 — 이제 `EXEC :V := 리터럴`과 같은 로컬 대입이다. 엔진(계획)과 러너("서버로 가는 항목인가")가 같은 판정을 쓴다.
+pub fn local_select_into(sql: &str) -> Option<(&str, Value)> {
+    let s = sql.trim().trim_end_matches(';').trim();
+    let rest = s
+        .get(..6)
+        .filter(|h| h.eq_ignore_ascii_case("select"))
+        .map(|_| &s[6..])?;
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    // 마지막 `INTO`(ASCII 소문자화는 바이트 자리를 바꾸지 않는다) — 문자열 리터럴 안의 INTO는 꼬리가 바인드 하나가 아니라 걸러진다.
+    let at = rest.to_ascii_lowercase().rfind("into")?;
+    let (before, after) = (&rest[..at], &rest[at + 4..]);
+    if !before.ends_with(char::is_whitespace) || !after.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let bind = after.trim();
+    let is_bind = bind.starts_with(':')
+        && bind.len() > 1
+        && bind[1..].bytes().all(crate::lexer::is_ident_char);
+    if !is_bind {
+        return None;
+    }
+    let v = parse_literal(before).ok()?;
+    Some((&bind[1..], v))
 }
 
 #[cfg(test)]
@@ -1441,6 +1483,68 @@ mod tests {
             .iter()
             .flat_map(|it| engine.plan(it))
             .collect()
+    }
+
+    /// T-304 ③: FROM 없는 `SELECT 리터럴 INTO :V` = 로컬 대입(EXEC 유무 · 전 방언) — 식·여러 값·FROM 있는 꼴은 서버행 그대로.
+    #[test]
+    fn select_literal_into_is_local_assignment() {
+        use super::local_select_into as f;
+        assert_eq!(f("SELECT 10 INTO :v"), Some(("v", Value::Int(10))));
+        assert_eq!(
+            f("select 'a''b' into :V_S;"),
+            Some(("V_S", Value::Str("a'b".into())))
+        );
+        assert_eq!(f("SELECT\n  NULL\n  INTO\n  :n"), Some(("n", Value::Null)));
+        assert_eq!(
+            f("SELECT 'x INTO :y' INTO :v"),
+            Some(("v", Value::Str("x INTO :y".into())))
+        );
+        assert_eq!(f("SELECT 한글 INTO :v"), None);
+        for no in [
+            "SELECT 10 INTO :v FROM dual",
+            "SELECT SYSDATE INTO :v",
+            "SELECT 1 + 2 INTO :v",
+            "SELECT 1, 2 INTO :a, :b",
+            "SELECT 'a' || 'b' INTO :v",
+            "SELECT 'x INTO :v'",
+            "SELECT 1 INTO #t",
+            "SELECTED 1 INTO :v",
+            "SELECT 1 INTO :v WHERE 1 = 1",
+            "INSERT INTO t SELECT 1",
+            "SELECT :a INTO :v",
+        ] {
+            assert_eq!(f(no), None, "{no}");
+            assert!(super::local_assign(no).is_none(), "{no}");
+        }
+        for d in [Dialect::Oracle, Dialect::Mssql, Dialect::Postgres] {
+            let mut e = Engine::new(d);
+            let acts = plan_all(
+                &mut e,
+                "SELECT 'SP_M4P' INTO :V_PRG_NM;\nEXEC SELECT 7 INTO :V_N;\nSELECT :V_N AS n;\n",
+            );
+            assert_eq!(
+                acts[0],
+                Action::LocalAssign {
+                    name: "V_PRG_NM".into(),
+                    value: Value::Str("SP_M4P".into())
+                },
+                "{d:?}"
+            );
+            assert_eq!(
+                acts[1],
+                Action::LocalAssign {
+                    name: "V_N".into(),
+                    value: Value::Int(7)
+                },
+                "{d:?}"
+            );
+            match &acts[2] {
+                Action::Execute { prepared, .. } => {
+                    assert_eq!(prepared.params[0].value, Value::Int(7), "{d:?}")
+                }
+                a => panic!("{d:?} {a:?}"),
+            }
+        }
     }
 
     #[test]

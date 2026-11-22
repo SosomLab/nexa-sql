@@ -43,7 +43,7 @@ pub use call::{call_shape, mark_output, tsql_call_shape, CallArg, CallShape};
 pub use command::{explain_script, parse_spool, Command, SetOption, SpoolCmd, SpoolMode};
 pub use connect::{parse_on_off, ConnEnv, ConnectSpec, ENV_CHOICES};
 pub use dialect::{prepare, PrepareMode, Prepared};
-pub use engine::{local_assign, Action, Diagnostic, Engine, SYSTEM_VARS};
+pub use engine::{local_assign, local_select_into, Action, Diagnostic, Engine, SYSTEM_VARS};
 pub use inputs::{
     default_delivery, delivery_tag, input_preview, macro_refs, missing_inputs, missing_inputs_with,
     typed_input, Delivery, InputKind, InputNeed,
