@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| `t107b-grid-rows` | 2026-11-23(Windows · c81988e5 위) | 2026-11-23 → main ff 병합·삭제 · push ✓(c81988e5..45134679) | 3 | T-107b 1단계 그리드 적용 = 붙인 문장마다 1건(D-500 · a8c653b8) · T-172 P3 2단계 변수의 이 PC 자리(`project.pc_paths` `var:이름` · `project.var_set` · 1cb7443f) · 협업 기록 45134679(V1 project-paths k 절 138/0 · 대조 s8 pending 2 = txlog 2) · CI ✓(ci 45042005582 · integration 45042005595) · [journal 11-23 §3](journal/2026-11-23.md) |
 | `t304-select-into-literal` | 2026-11-23(Windows · 5c590cf0 위) | 2026-11-23 → main ff 병합·삭제 · push ✓(9d3232d4..c81988e5 · 무인 진행 "중간 중간 push") | 3 | T-304 ③ FROM 없는 `SELECT <리터럴> INTO :V` = 로컬 대입(D-501 · 4e43bb46) · O-1 서버 변경 자동 확인(D-499 · `history.server_check_secs` 기본 끔 · 48ebaeab) · 협업 기록 c81988e5(V1 history-check 자동 확인 절 22/0 · 26 §8 · 39 §3-2) · [journal 11-23 §2](journal/2026-11-23.md) |
 | `t172-p3-vars` | 2026-11-22(Windows · 5f159344 위) | 2026-11-22 → main ff 병합·삭제 · main = ec87d865(push 안 함) | 3 | T-172 P3 1단계 경로 변수(`"vars"` + `${var:이름}/…` 앵커 · 변수를 쓰는 파일만 version 3) · c9355995 + 협업 기록 9bbcb2fe(묶음 6 · 새 V1 history-check) · ec87d865(묶음 7 · V1 project-paths j 절 119/0 · history-check 실행 비트) · 문서(journal 11-22 §19·§20 · 73 §4-2) |
 | `o1-history-check` | 2026-11-22(Windows · 9a52f216 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | O-1 서버 변경 확인 명령 `edit.history_check`(마지막 서버 본과 해시 대조 · 다르면 `external` 시점 + 상태줄·로그 · 수동 명령만) · 5f159344 · 새 V1 `history-check` 9/0 · 문서(journal 11-22 §19 · 19 §3) |
