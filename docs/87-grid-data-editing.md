@@ -439,7 +439,7 @@
 | 결과 탭 닫기 · 다른 탭 닫기 · 오른쪽 닫기 | ✅ 묻는다 — "미적용 편집이 있는 결과 탭 N개 — 닫으면 편집을 버립니다" → [닫고 편집 버리기] / [취소] | `rclose_ask` · `rclose_pick` · 편집 없는 탭은 묻지 않고 바로 닫힘 |
 | 같은 탭에서 다시 실행(결과 교체) | 기존 규칙(§5 · 87 §12) | 이 절에서 바꾸지 않음 |
 | 결과 탭 상한 넘침으로 오래된 탭이 밀려남 | ☐ 아직 묻지 않음 | T-507 남음 |
-| 편집기 탭이 닫히며 딸린 결과 탭이 함께 사라짐 | ☐ 아직 묻지 않음(편집기 탭 확인과 합치는 설계 필요) | T-507 남음 · T-93 ⓑ(커서 닫기)와 함께 |
+| 편집기 탭이 닫히며 딸린 결과 탭이 함께 사라짐 | ✅ 11-22 — **한 번 더 닫기 확인**: 첫 닫기(탭 × · Ctrl+W · 띠 = 전부 `close_tab_guarded`)는 막고 상태줄 "N result tab(s) of this tab have unapplied edits - close the tab again to discard them." · 같은 탭을 한 번 더 닫으면 버리고 닫힘 | `editor_result_dirty` · `StTabCloseResultDirty` · V1 `tab-close-rdirty` 11/0 · [journal 11-22 §12](journal/2026-11-22.md) · 앱 종료 · 프로젝트 닫기 때는 아직 묻지 않음(T-507 남음) |
 
 - 자체 시험 = 기동 명령 `result.tab.close` 뒤 `rclose.discard` · `rclose.cancel`(접두 `rclose.`) · V1 = SQLite 표 · `grid.edit.set` 1칸 → 팝업 · 취소 = 탭과 편집 유지 · 버리기 = 닫힘 · 편집 없음 = 바로 닫힘 · [journal 11-21 §27](journal/2026-11-21.md).
 

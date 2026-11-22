@@ -7,6 +7,7 @@
 #   e. 못 찾은 등록 폴더를 `project.relocate_folder:<순번>:<경로>`로 다시 지정 → 정의·앵커 유지 + `"id"` 발급 + 격리 홈 `project.pc_paths` · e2 = 다시 열면 대응표 적용(T-172 (A)(B))
 #   f. 못 찾은 탭의 자리 탭(T-172 (C) · D-189 · D-496): 탭 줄 그 자리에 빈 읽기 전용 뷰 탭 · 저장 때 순서 그대로 · 닫으면 기록에서 뺀다
 #      (미저장 본문이 있으면 한 번 더 닫아야) · `project.missing_found:<경로>`로 되살림
+#   g. 자리 탭이 보관된 본문을 읽기 전용으로 보여 줌(이중 저장 없음) · 못 찾은 등록 폴더 알림(로그·토스트) · `file.close_tab`(Ctrl+W) 길도 재확인(11-22 묶음 4)
 #   종료: 프로젝트가 바뀐 채 `file.exit`면 "프로젝트 저장?" 물음이 뜬다 → 답 = `toolbar.pick:project.exit_skip`(물음 답은 indent_pick 길 · 직접 id는 menu_action이라 무시됨)
 #   임시 폴더 = OS 임시 `nsql-v1pp-*`(끝나면 삭제) · 쉼표가 든 경로는 기동 명령 구분자와 겹치므로 쓰지 않는다.
 . "$(dirname "$0")/../lib/v1.sh"
@@ -148,7 +149,36 @@ expect "f4-path-updated" "$V1_OUT/pf4.nsql-project" '"path": "sql/sub/gone1.sql"
 expect_not "f4-old-path-gone" "$V1_OUT/pf4.nsql-project" '"path": "sql/gone1.sql"'
 expect "f4-other-kept" "$V1_OUT/pf4.nsql-project" "-- v1pp f unsaved keep"
 
+# ── g. 자리 탭 본문 · 폴더 알림 · 닫기 길(11-22 묶음 4 · D-189) ──────────────────────
+#   g1. 미저장 본문 든 자리 탭(gone2)을 활성으로 열면 보관된 본문을 **읽기 전용**으로 보여 준다(`editor.dump` 머리 3번째 칸 = 읽기 전용) ·
+#       저장해도 그 본문이 탭 본문으로 이중 저장되지 않는다(gone2 항목 1개 · 본문 1번).
+mkf 2 g1.nsql-project
+v1_gui pg1 "project.load:$PM/g1.nsql-project,@after:1500:tabs.dump:$O/pg1-tabs.txt,@after:1800:editor.dump:$O/pg1-editor.txt,@after:2400:project.save,@after:3000:file.exit,@after:3600:toolbar.pick:project.exit_skip" 25
+cp "$P/g1.nsql-project" "$V1_OUT/pg1.nsql-project" 2>/dev/null
+expect_re "g-active-placeholder" "$V1_OUT/pg1-tabs.txt" '^\*gone2\.sql\|.*view=true'
+expect "g-body-shown" "$V1_OUT/pg1-editor.txt" "-- v1pp f unsaved keep"
+expect_re "g-body-readonly" "$V1_OUT/pg1-editor.txt" '^gone2\.sql\|[^|]*\|true\|'
+expect_re "g-tab-ro" "$V1_OUT/pg1-tabs.txt" '^\*gone2\.sql\|.*ro=true'
+expect_eq "g-body-still-kept" "$(grep -oF -- '-- v1pp f unsaved keep' "$V1_OUT/pg1.nsql-project" 2>/dev/null | wc -l | tr -d ' ')" "1"
+expect_eq "g-no-double-tab" "$(grep -oF '"path": "sql/gone2.sql"' "$V1_OUT/pg1.nsql-project" 2>/dev/null | wc -l | tr -d ' ')" "1"
+#   g2. 등록 폴더 하나가 없는 프로젝트 → 로그·알림 "project folder(s) not found on this PC" · 폴더가 모두 있으면(b 실행 로그) 그 줄 없음
+printf '{"version": 2, "folders": [{"path": "."}, {"path": "%s"}], "tabs": [{"path": "sql/a.sql", "title": "a.sql", "id": 21}]}\n' "$(v1_m "$WK/nofolder/lib")" > "$P/g2.nsql-project"
+v1_gui pg2 "project.load:$PM/g2.nsql-project,@after:1500:log.dump:$O/pg2-log.txt,@after:1700:toast.dump:$O/pg2-toast.txt,@after:2300:file.exit,@after:2900:toolbar.pick:project.exit_skip" 25
+expect "g-folders-missing-logged" "$V1_OUT/pg2-log.txt" "project folder(s) not found on this PC"
+expect "g-folders-missing-toast" "$V1_OUT/pg2-toast.txt" "project folder(s) not found on this PC"
+expect_not "g-no-false-notice" "$V1_OUT/pb-log.txt" "project folder(s) not found"
+#   g3. 닫기 길(`file.close_tab` = Ctrl+W → close_tab_guarded): 미저장 본문 든 자리 탭 첫 닫기 = 안 닫힘 + 안내 · 상태줄 글 끝 공백 없음
+mkf 2 g3.nsql-project
+v1_gui pg3 "project.load:$PM/g3.nsql-project,@after:1500:file.close_tab,@after:1800:status.dump:$O/pg3-status.txt,@after:2000:tabs.dump:$O/pg3-tabs.txt,@after:2500:project.save,@after:3100:file.exit,@after:3700:toolbar.pick:project.exit_skip" 25
+cp "$P/g3.nsql-project" "$V1_OUT/pg3.nsql-project" 2>/dev/null
+expect "g-close-tab-notice" "$V1_OUT/pg3-status.txt" "close it again to confirm"
+expect_re "g-close-tab-still" "$V1_OUT/pg3-tabs.txt" '^\*gone2\.sql\|.*view=true'
+expect "g-close-tab-body-kept" "$V1_OUT/pg3.nsql-project" "-- v1pp f unsaved keep"
+LASTC=$(tail -c 1 "$V1_OUT/pg3-status.txt" 2>/dev/null | od -An -c | tr -d ' ')
+if [ -s "$V1_OUT/pg3-status.txt" ] && [ "$LASTC" != "" ] && [ "$LASTC" != '\n' ]; then v1_pass "g-notice-no-trailing-space"
+else v1_failmsg "g-notice-no-trailing-space" "끝 글자='$LASTC' · $(head -c 200 "$V1_OUT/pg3-status.txt" 2>/dev/null)"; fi
+
 # 공통 — 모든 기동 panic 없음
-for t in pa pb pb2 pc pd pe pe2 pf1 pf2 pf3a pf3b pf4; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
+for t in pa pb pb2 pc pd pe pe2 pf1 pf2 pf3a pf3b pf4 pg1 pg2 pg3; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done
