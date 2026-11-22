@@ -515,8 +515,12 @@ impl App {
     fn project_set(&mut self, p: project::Project, restore: bool) {
         // 미저장 탭의 툴팁 "저장(프로젝트 파일)" 줄 = 이 프로젝트 파일(사용자 10-07).
         self.editors.set_tip_saved_fallback(p.path.clone());
+        // 못 찾은 탭 목록은 **이 프로젝트 문서에 아직 적혀 있는 것만** 남긴다 — 저장 뒤 다시 들어오는 길(같은 문서)에서는
+        //   그대로 두어야 다음 저장에서도 보존된다(11-22 V1: 여기서 비워 두 번째 저장 때 사라졌다) · 다른 프로젝트로 바뀌면
+        //   그 문서에 없으니 걷힌다(복원하는 길은 `project_restore`가 새로 채운다).
+        self.proj_missing
+            .retain(|m| p.tabs.iter().any(|t| t.path == m.path));
         self.project = p;
-        self.proj_missing.clear();
         self.apply_project_settings();
         let last = self
             .project
