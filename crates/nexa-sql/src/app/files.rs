@@ -687,6 +687,50 @@ impl App {
     }
 
     /// 파일 → 탭(인코딩 지정). 깨진 바이트는 대체 문자 + 안내 · `\r\n`은 `\n`으로(저장 때 되돌린다).
+    /// ★ T-512(11-23 · 협업 V1 발견): 상태줄 인코딩 ▸ "다시 열기" = **활성 파일 탭의 본문을 고른 인코딩으로 디스크에서 다시 읽는다**.
+    ///   종전에는 `open_file_enc` → `load_file`이 "이미 열린 파일이면 그 탭으로"에서 돌아가 아무 일도 하지 않았다(09-28 전부터).
+    ///   미저장 편집이 있으면 다시 읽지 않는다(본문을 조용히 버리지 않는다 · 저장하거나 되돌린 뒤) · 큰 파일 모드·비동기 적재
+    ///   크기의 파일은 주 스레드에서 통째로 읽지 않는다(닫고 그 인코딩으로 다시 열라고 안내). 버퍼 교체는 되돌리기 한 단계.
+    pub(crate) fn enc_reopen(&mut self, enc: &str) {
+        let Some(path) = self.editors.active_path() else {
+            return;
+        };
+        let i = self.editors.active();
+        if self.editors.active_loading() {
+            self.sess.status = t(Msg::StLoadTabBusy).into();
+            return;
+        }
+        if self.editors.is_dirty(i) {
+            self.sess.status = t(Msg::StEncReopenDirty).into();
+            return;
+        }
+        let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let async_at = (self.settings.int("file.async_load_mb").max(0) as u64) << 20;
+        if self.editors.large_level(i) > 0 || (async_at > 0 && size >= async_at) {
+            self.sess.status = t(Msg::StEncReopenLarge).into();
+            return;
+        }
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let (text, lossy, used) = enc::decode_owned(bytes, enc);
+                let (eol, body) = eol::detect_owned(text);
+                self.editors
+                    .apply_external(i, Some(&body), &body, Some(eol), Some(used));
+                let label = enc::label(used);
+                self.sess.status = tf(
+                    if lossy {
+                        Msg::StEncReopenedLossy
+                    } else {
+                        Msg::StEncReopened
+                    },
+                    &[&label],
+                );
+            }
+            Err(e) => self.sess.status = format!("{}: {e}", nexa_fs::path::display(&path)),
+        }
+        self.redraw();
+    }
+
     pub(crate) fn open_file_enc(&mut self, path: &Path, enc: &str) {
         // ★ 이진 파일은 큰 파일 질문·라이선스 게이트 없이 바로 안내 탭으로(협업 V1 10-13 "10 MB 이미지에 큰 파일 선택 목록이 뜸") —
         //   적재기가 첫 조각에서 이진이면 끊고 안내로 바꾼다.

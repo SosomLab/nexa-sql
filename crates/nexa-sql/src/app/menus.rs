@@ -305,10 +305,8 @@ impl App {
             return;
         }
         if let Some(e) = id.strip_prefix("enc.reopen:") {
-            if let Some(path) = self.editors.active_path() {
-                let e = e.to_string();
-                self.open_file_enc(&path, &e);
-            }
+            let e = e.to_string();
+            self.enc_reopen(&e);
             return;
         }
         if id == "demo.create" {
