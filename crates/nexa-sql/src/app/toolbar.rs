@@ -362,6 +362,29 @@ impl App {
         self.redraw();
     }
 
+    /// 화면 좌표(플로팅 창의 커서) → 주 창 클라이언트 좌표(도크 좌표) — 주 창 위치를 못 얻으면 `None`(Wayland).
+    pub(crate) fn float_drop_point(&self, at: Option<(i32, i32)>) -> Option<nexa_ctl::geom::Point> {
+        let (sx, sy) = at?;
+        let o = self.window.as_ref()?.inner_position().ok()?;
+        Some(nexa_ctl::geom::Point {
+            x: sx - o.x,
+            y: sy - o.y,
+        })
+    }
+
+    /// ★ T-134 ⓐ: 손잡이로 끌어 온 그룹을 **놓은 자리에** 붙인다(플로팅 창 닫기 포함).
+    pub(crate) fn dock_group_at(&mut self, gid: &str, p: nexa_ctl::geom::Point) {
+        if let Some(i) = self.tool_floats.iter().position(|f| f.group == gid) {
+            self.tool_floats[i].close();
+            self.tool_floats.remove(i);
+        }
+        self.tool_dock.dock_at(gid, p);
+        let _ = self.tool_dock.take_actions();
+        self.tool_layout_dirty = true;
+        self.layout();
+        self.redraw();
+    }
+
     /// 그룹을 도크로 되돌린다(플로팅 창 닫기 포함).
     pub(crate) fn dock_group(&mut self, gid: &str) {
         if let Some(i) = self.tool_floats.iter().position(|f| f.group == gid) {

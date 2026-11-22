@@ -3,6 +3,8 @@
 //! - 툴바 컨트롤은 [`nexa_ctl::ToolDock`]이 계속 **소유**한다. 이 창은 표면·이벤트 변환만 맡고, 그릴 때·이벤트 때마다
 //!   호스트가 `ToolDock::bar_mut(group)`로 빌려 `set_bounds(클라이언트)` → `paint`/`on_event` 한다(상태는 도크 한 곳).
 //! - 이동 = OS 타이틀바(`Moved` → 좌표를 도크 배치에 저장) · 크기 고정 · 닫기(×) = 도크로 복귀.
+//! - ★ 왼쪽 **손잡이**(점 2열 · T-134 ⓐ · 사용자 11-21/22)를 잡고 끌면 창이 따라오고, 주 창의 툴바 위에서 놓으면 그 자리에
+//!   붙는다 — OS 제목줄 이동은 "놓은 순간"이 앱에 오지 않아 직접 끈다(창 좌표를 못 얻는 Wayland에서는 동작하지 않는다).
 //! - 메인 창의 소유 창(`winfocus::owned_by`) — 작업표시줄 항목 없음 · 항상 메인 위 · 함께 최소화.
 
 use nexa_ctl::draw::DrawCtx;
@@ -27,7 +29,14 @@ pub(crate) enum FloatAction {
     Moved(i32, i32),
     /// × — 도크로 복귀.
     Close,
+    /// 손잡이로 끄는 중(커서의 화면 물리 px · 좌표를 못 얻으면 `None`).
+    Drag(Option<(i32, i32)>),
+    /// 손잡이를 놓았다(커서의 화면 물리 px).
+    Drop(Option<(i32, i32)>),
 }
+
+/// 손잡이 폭(논리 px).
+pub(crate) const GRIP_W: f32 = 12.0;
 
 pub(crate) struct ToolFloatWin {
     /// 담고 있는 그룹 id.
@@ -36,6 +45,8 @@ pub(crate) struct ToolFloatWin {
     surface: Option<crate::present::Presenter>,
     scale: f32,
     cursor: (i32, i32),
+    /// 손잡이를 잡은 자리(클라이언트 px) — 끄는 동안만.
+    grab: Option<(i32, i32)>,
 }
 
 impl ToolFloatWin {
@@ -56,7 +67,7 @@ impl ToolFloatWin {
             // 닫기만(Golden 플로팅 툴바처럼 최소화/최대화 없음).
             .with_enabled_buttons(winit::window::WindowButtons::CLOSE)
             .with_inner_size(winit::dpi::LogicalSize::new(
-                size.0.max(40.0),
+                size.0.max(40.0) + GRIP_W,
                 size.1.max(20.0),
             ));
         if let Some((x, y)) = pos {
@@ -74,6 +85,7 @@ impl ToolFloatWin {
             surface: None,
             scale,
             cursor: (-1, -1),
+            grab: None,
         };
         me.surface = crate::present::Presenter::new(win.clone()).ok();
         me.window = Some(win);
@@ -96,7 +108,18 @@ impl ToolFloatWin {
             .as_ref()
             .map(|w| (w.inner_size().width as i32, w.inner_size().height as i32))
             .unwrap_or((0, 0));
-        Rect::new(0, 0, w, h)
+        let g = self.grip_w();
+        Rect::new(g, 0, (w - g).max(0), h)
+    }
+
+    fn grip_w(&self) -> i32 {
+        (GRIP_W * self.scale).round() as i32
+    }
+
+    /// 커서의 화면 좌표(클라이언트 원점 + 커서).
+    fn cursor_screen(&self) -> Option<(i32, i32)> {
+        let o = self.window.as_ref()?.inner_position().ok()?;
+        Some((o.x + self.cursor.0, o.y + self.cursor.1))
     }
 
     /// 현재 창 좌표(화면 물리 px).
@@ -128,6 +151,18 @@ impl ToolFloatWin {
             WindowEvent::Moved(p) => FloatAction::Moved(p.x, p.y),
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = (position.x as i32, position.y as i32);
+                if let Some((gx, gy)) = self.grab {
+                    // 잡은 점이 커서 아래에 머물도록 창을 옮긴다(옮긴 뒤 커서의 클라이언트 좌표는 다시 잡은 점 근처).
+                    if let Some(w) = &self.window {
+                        if let Ok(o) = w.outer_position() {
+                            w.set_outer_position(winit::dpi::PhysicalPosition::new(
+                                o.x + self.cursor.0 - gx,
+                                o.y + self.cursor.1 - gy,
+                            ));
+                        }
+                    }
+                    return FloatAction::Drag(self.cursor_screen());
+                }
                 let (x, y) = self.cursor;
                 FloatAction::Input(InputEvent::MouseMove { x, y })
             }
@@ -138,6 +173,14 @@ impl ToolFloatWin {
             WindowEvent::MouseInput { state, button, .. } => {
                 let (x, y) = self.cursor;
                 match (button, state) {
+                    (MouseButton::Left, ElementState::Pressed) if x >= 0 && x < self.grip_w() => {
+                        self.grab = Some((x, y));
+                        FloatAction::None
+                    }
+                    (MouseButton::Left, ElementState::Released) if self.grab.is_some() => {
+                        self.grab = None;
+                        FloatAction::Drop(self.cursor_screen())
+                    }
                     (MouseButton::Left, ElementState::Pressed) => {
                         FloatAction::Input(InputEvent::MouseDown {
                             x,
@@ -179,7 +222,20 @@ impl ToolFloatWin {
             dc.fill_rect(Rect::new(0, 0, wi, hi), th.chrome_bg);
             let mut inv = Invalidations::default();
             bar.set_scale(self.scale);
-            bar.set_bounds(Rect::new(0, 0, wi, hi), &mut inv);
+            let g = self.grip_w();
+            // 손잡이 = 도크 그립과 같은 점 2열.
+            let dot = ((2.0 * self.scale).round() as i32).max(1);
+            let span = 4 * dot * 2 - dot;
+            let (x0, y0) = ((g - dot * 3) / 2, (hi - span) / 2);
+            for r in 0..4 {
+                for c in 0..2 {
+                    dc.fill_rect(
+                        Rect::new(x0 + c * dot * 2, y0 + r * dot * 2, dot, dot),
+                        th.text_dim,
+                    );
+                }
+            }
+            bar.set_bounds(Rect::new(g, 0, (wi - g).max(0), hi), &mut inv);
             bar.paint(&mut dc, th);
             bar.paint_tooltip(&mut dc, th);
         }

@@ -1725,6 +1725,31 @@ impl App {
                     self.drain_dock_actions();
                 }
                 FloatAction::Close => self.dock_group(&gid),
+                FloatAction::Drag(at) => {
+                    let on = self
+                        .float_drop_point(at)
+                        .is_some_and(|p| self.tool_dock.accepts_drop(p));
+                    if self.tool_dock.set_drop_hint(on) {
+                        self.redraw();
+                    }
+                }
+                FloatAction::Drop(at) => {
+                    let hit = self
+                        .float_drop_point(at)
+                        .filter(|p| self.tool_dock.accepts_drop(*p));
+                    match hit {
+                        Some(p) => self.dock_group_at(&gid, p),
+                        None => {
+                            if self.tool_dock.set_drop_hint(false) {
+                                self.redraw();
+                            }
+                            if let Some((x, y)) = self.tool_floats[fi].position() {
+                                self.tool_dock.set_floating_pos(&gid, x, y);
+                                self.drain_dock_actions();
+                            }
+                        }
+                    }
+                }
                 FloatAction::None => {}
             }
             return true;
