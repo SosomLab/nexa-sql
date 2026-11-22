@@ -1417,7 +1417,11 @@ impl App {
                         (PickerMode::Open, FilePurpose::RunFile) => {
                             self.load_file(&path, &enc, LoadMode::Run);
                         }
-                        (PickerMode::Open, _) => self.open_file_enc(&path, &enc),
+                        // 자리 탭의 [찾아보기…]로 연 창이면 그 탭을 이 파일로 되살린다(T-172 (C)).
+                        (PickerMode::Open, _) => match self.missing_browse.take() {
+                            Some(mid) => self.project_missing_found(mid, &path),
+                            None => self.open_file_enc(&path, &enc),
+                        },
                         (PickerMode::Save, _) => {
                             self.editors.set_active_encoding(&enc);
                             // ★ T-79: 저장 창에서 고른 줄끝(LF/CRLF) = 탭 줄끝으로 바꾼 뒤 저장(상태줄 세그먼트도 따라감).
@@ -1437,12 +1441,15 @@ impl App {
                 FileWinAction::ConfirmMany(paths, enc) => {
                     self.remember_file_dialog(paths.first().and_then(|p| p.parent()));
                     self.file_purpose = FilePurpose::Editor;
+                    self.missing_browse = None;
                     self.multi_open_ask(paths, enc);
                     self.sync_modal();
                 }
                 FileWinAction::Cancel => {
                     // 저장 창을 취소했다 = "저장하고 닫기"·"모두 저장"도 없던 일(탭은 그대로 · 종료 흐름 취소).
                     self.close_after_save = None;
+                    self.missing_browse = None;
+                    self.relocate_idx = None;
                     if self.save_all_pending {
                         self.save_all_pending = false;
                         self.exit_pending = false;

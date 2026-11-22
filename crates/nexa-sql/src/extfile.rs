@@ -140,6 +140,9 @@ pub(crate) enum BannerHit {
     SaveNow,
     /// 큰 버퍼 띠 닫기(이 탭 · 다시 안 띄움).
     BackupDismiss,
+    /// ★ T-172 (C): 못 찾은 탭의 자리 탭 — 원본 찾아보기 / 탭 닫기(프로젝트 기록에서도 지움).
+    MissingBrowse,
+    MissingClose,
 }
 
 /// 띠 내용(호스트가 만든다).

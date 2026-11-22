@@ -559,6 +559,9 @@ struct App {
     folder_start: Option<PathBuf>,
     /// 폴더 고르기 창이 "프로젝트 폴더 다시 지정"으로 열렸으면 그 폴더 순번(T-172 (B)) — 확정 때 꺼내 쓴다 · 폴더 추가는 비운다.
     relocate_idx: Option<usize>,
+    /// 파일 열기 창이 못 찾은 탭의 [찾아보기…]로 열렸으면 그 탭의 문서 id(T-172 (C)) · 미저장 본문을 든 자리 탭의 닫기 확인 대기.
+    missing_browse: Option<u64>,
+    missing_close_armed: Option<u64>,
     /// ★ 파일 열기/저장 창을 마지막으로 연 **작업 모드 열쇠**(사용자 10-22 · `project:<파일>` / `folder:<폴더>` / `file`):
     /// 모드가 같으면 마지막 위치 · 다르면(기동 직후 · 모드 전환 뒤) 그 모드의 위치에서 연다.
     file_dialog_mode: Option<String>,
@@ -2150,6 +2153,8 @@ fn main() {
         _instance_lock: instance_lock,
         folder_start: None,
         relocate_idx: None,
+        missing_browse: None,
+        missing_close_armed: None,
         file_dialog_mode: None,
         menubar,
         tabs_menu_sig: String::new(),

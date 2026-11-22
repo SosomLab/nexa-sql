@@ -276,6 +276,17 @@ impl App {
             }
             return;
         }
+        // ★ T-172 (C): 활성 자리 탭을 닫는다 / 원본을 이 파일로 지정한다(띠 버튼과 같은 길 · 자동 시험).
+        if id == "project.missing_close" {
+            self.project_missing_pick(false);
+            return;
+        }
+        if let Some(p) = id.strip_prefix("project.missing_found:") {
+            if let Some(mid) = self.missing_id_at(self.editors.active()) {
+                self.project_missing_found(mid, Path::new(p));
+            }
+            return;
+        }
         // ★ T-172 (B): `project.relocate_folder:<순번>` = 폴더 고르기 창 · `…:<순번>:<경로>` = 바로(자동 시험).
         if let Some(rest) = id.strip_prefix("project.relocate_folder:") {
             let (i, dir) = match rest.split_once(':') {
@@ -574,11 +585,125 @@ impl App {
         let (mut dirty, mut remap) = (0usize, Vec::new());
         for t in &found {
             let _ = self.project_restore_tab(t, &opts, &mut dirty, &mut remap);
+            // 자리 탭은 진짜 탭을 연 뒤에 닫는다(마지막 탭을 닫아 빈 탭이 생기는 일을 피한다).
+            self.missing_tab_close(t.id);
         }
         self.sess.status = tf(
             Msg::StProjectFolderRelocated,
             &[&nexa_fs::path::display(&old), &nexa_fs::path::display(&new)],
         );
+        self.project_changed(true);
+    }
+
+    // ───────── ★ T-172 (C)(D-189 · D-496): 못 찾은 탭의 자리 탭 ─────────
+    // 원본을 못 찾은 파일 탭은 탭 줄의 **그 자리에** 빈 읽기 전용 뷰 탭(열쇠 `missing:<문서 id>`)으로 보이고, 띠가 사정과
+    // [찾아보기…] [탭 닫기]를 낸다. 저장할 때 자리 탭이 살아 있으면 원래 기록(경로 · 캐럿 · 미저장 본문)을 그 자리에 되적고,
+    // 닫혔으면 기록에서도 뺀다(미저장 본문이 있으면 닫기 전에 한 번 더 묻는다).
+
+    /// 탭 `i`가 자리 탭이면 그 못 찾은 탭의 문서 id.
+    pub(crate) fn missing_id_at(&self, i: usize) -> Option<u64> {
+        self.editors
+            .view_key_of(i)?
+            .strip_prefix("missing:")?
+            .parse()
+            .ok()
+    }
+
+    fn missing_tab_close(&mut self, mid: u64) {
+        let hit = (0..self.editors.tab_count()).find(|&i| self.missing_id_at(i) == Some(mid));
+        if let Some(i) = hit {
+            self.editors.close_tab_forced(i);
+        }
+    }
+
+    /// 활성 탭이 자리 탭이면 그 띠.
+    pub(crate) fn project_missing_banner(&self, tab_id: u64) -> Option<extfile::BannerView> {
+        let i = self.editors.index_of_id(tab_id)?;
+        let mid = self.missing_id_at(i)?;
+        let m = self.proj_missing.iter().find(|m| m.id == mid)?;
+        let path = m
+            .path
+            .as_ref()
+            .map(|p| nexa_fs::path::display(p))
+            .unwrap_or_default();
+        let msg = if self.missing_close_armed == Some(mid) {
+            Msg::ProjBanMissingDiscard
+        } else if m.text.is_some() {
+            Msg::ProjBanMissingSnap
+        } else {
+            Msg::ProjBanMissing
+        };
+        Some(extfile::BannerView {
+            text: tf(msg, &[&path]),
+            buttons: vec![
+                (
+                    extfile::BannerHit::MissingBrowse,
+                    t(Msg::BtnProjMissingBrowse).to_string(),
+                ),
+                (
+                    extfile::BannerHit::MissingClose,
+                    t(Msg::BtnProjMissingClose).to_string(),
+                ),
+            ],
+            danger: true,
+        })
+    }
+
+    /// 띠 버튼(활성 자리 탭) — 찾아보기 = 파일 열기 창(고른 파일로 그 탭을 되살린다) · 닫기 = 탭 닫기 길 그대로.
+    pub(crate) fn project_missing_pick(&mut self, browse: bool) {
+        let i = self.editors.active();
+        let Some(mid) = self.missing_id_at(i) else {
+            return;
+        };
+        if browse {
+            self.missing_browse = Some(mid);
+            self.file_purpose = FilePurpose::Editor;
+            self.open_file_dlg = Some(PickerMode::Open);
+        } else {
+            self.close_tab_guarded(i);
+        }
+    }
+
+    /// 자리 탭을 닫으려 한다 — 프로젝트 파일에 미저장 본문이 들어 있으면 **한 번 더** 눌러야 닫힌다(D-496 · 닫으면 그 본문이 사라진다).
+    ///   막았으면 true(상태줄·띠로 알림).
+    pub(crate) fn project_missing_close_blocked(&mut self, i: usize) -> bool {
+        let Some(mid) = self.missing_id_at(i) else {
+            return false;
+        };
+        let has_body = self
+            .proj_missing
+            .iter()
+            .any(|m| m.id == mid && m.text.is_some());
+        if !has_body {
+            return false;
+        }
+        if self.missing_close_armed == Some(mid) {
+            self.missing_close_armed = None;
+            return false;
+        }
+        self.missing_close_armed = Some(mid);
+        let id = self.editors.tab_id(i);
+        self.editors.switch_to_id(id);
+        self.sync_grid_tab();
+        self.sess.status = tf(Msg::ProjBanMissingDiscard, &[""]);
+        self.ext_banner_sync();
+        true
+    }
+
+    /// 못 찾은 탭의 원본을 사용자가 찾아 주었다 → 그 파일로 탭을 되살리고(캐럿 · 미저장 본문 그대로) 자리 탭을 닫는다.
+    pub(crate) fn project_missing_found(&mut self, mid: u64, path: &Path) {
+        let Some(k) = self.proj_missing.iter().position(|m| m.id == mid) else {
+            return;
+        };
+        if !path.is_file() {
+            return;
+        }
+        let mut tab = self.proj_missing.remove(k);
+        tab.path = Some(path.to_path_buf());
+        let opts = nsql_bookmarks::RelocateOpts::default();
+        let (mut dirty, mut remap) = (0usize, Vec::new());
+        let _ = self.project_restore_tab(&tab, &opts, &mut dirty, &mut remap);
+        self.missing_tab_close(mid);
         self.project_changed(true);
     }
 
@@ -1121,8 +1246,19 @@ impl App {
         // 미저장 본문 상한 = 탭 하나 기준(`project.unsaved_max_mb` · 0 = 무제한 · 사용자 09-30).
         let max_bytes = (self.settings.int("project.unsaved_max_mb").max(0) as usize) << 20;
         let mut over: Vec<(String, usize)> = Vec::new();
+        // ★ T-172 (C)(D-496): 자리 탭이 닫힌 못 찾은 탭은 기록에서도 뺀다 · 살아 있는 것은 탭 줄의 그 자리에 되적는다.
+        let alive: Vec<u64> = (0..self.editors.tab_count())
+            .filter_map(|i| self.missing_id_at(i))
+            .collect();
+        self.proj_missing.retain(|m| alive.contains(&m.id));
         let mut tabs = Vec::new();
         for i in 0..self.editors.tab_count() {
+            if let Some(mid) = self.missing_id_at(i) {
+                if let Some(m) = self.proj_missing.iter().find(|m| m.id == mid) {
+                    tabs.push(m.clone());
+                }
+                continue;
+            }
             let Some(tb) = self.editors.tab_box(i) else {
                 continue;
             };
@@ -1299,7 +1435,8 @@ impl App {
         let mut scratch_remap: Vec<(u64, u64)> = Vec::new();
         self.proj_missing.clear();
         for t in &tabs {
-            let id = self.project_restore_tab(t, &opts, &mut restored_dirty, &mut scratch_remap);
+            let mut id =
+                self.project_restore_tab(t, &opts, &mut restored_dirty, &mut scratch_remap);
             // ★ T-172 P1: 원본을 못 찾은 파일 탭 = 상태를 들고 있다가 저장 때 되돌려 적는다 + 로그로 알린다(조용히 잃지 않는다).
             if let (None, Some(p)) = (id, &t.path) {
                 if !p.is_file() {
@@ -1307,7 +1444,20 @@ impl App {
                         LogKind::Info,
                         tf(Msg::StProjectTabMissing, &[&p.to_string_lossy()]),
                     ));
-                    self.proj_missing.push(t.clone());
+                    // ★ T-172 (C): 탭 줄의 그 자리에 자리 탭(빈 읽기 전용 뷰 탭)을 둔다 — 띠가 사정과 [찾아보기…] [탭 닫기]를 낸다.
+                    let mut m = t.clone();
+                    if m.id == 0 || self.proj_missing.iter().any(|x| x.id == m.id) {
+                        m.id = new_doc_id();
+                    }
+                    let title = if m.title.is_empty() {
+                        editors::file_title(p)
+                    } else {
+                        m.title.clone()
+                    };
+                    self.editors
+                        .open_view_tab(&format!("missing:{}", m.id), &title);
+                    id = Some(self.editors.active_id());
+                    self.proj_missing.push(m);
                 }
             }
             ids.push(id);

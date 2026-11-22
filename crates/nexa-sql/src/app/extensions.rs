@@ -2443,6 +2443,8 @@ impl App {
             })
         });
         // ★ T-165 P3 ④(70 §4): 미저장 본문이 상한을 넘는 탭 — 자동 백업·보존에 담기지 않는다는 띠 [저장][닫기](닫으면 그 탭은 다시 안 띄움).
+        // ★ T-172 (C): 못 찾은 탭의 자리 탭이면 그 띠가 먼저다.
+        let view = self.project_missing_banner(id).or(view);
         let view = view.or_else(|| {
             if !self.backup_over.contains(&id) || self.backup_over_dismissed.contains(&id) {
                 return None;
@@ -2609,6 +2611,8 @@ impl App {
             extfile::BannerHit::BackupDismiss => {
                 self.backup_over_dismissed.insert(id);
             }
+            extfile::BannerHit::MissingBrowse => self.project_missing_pick(true),
+            extfile::BannerHit::MissingClose => self.project_missing_pick(false),
             extfile::BannerHit::Dismiss => {
                 // 삭제 안내를 닫는다 — 상태(`deleted`)는 남겨 같은 삭제로 다시 띄우지 않는다.
                 if let Some(e) = self.ext_files.get_mut(&id) {

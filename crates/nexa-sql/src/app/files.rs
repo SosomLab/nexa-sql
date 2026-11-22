@@ -155,6 +155,11 @@ impl App {
             self.redraw();
             return;
         }
+        // ★ T-172 (C)(D-496): 미저장 본문을 든 못 찾은 탭의 자리 탭 = 한 번 더 눌러야 닫힌다.
+        if self.project_missing_close_blocked(i) {
+            self.redraw();
+            return;
+        }
         // 그 탭이 쓰는 세션의 대기 문장(전용 세션이면 그 세션 전부 = 탭을 닫으면 세션도 닫힌다 · docs/52 §8).
         let sid = self.sess_id_for_tab(id);
         let n = self.sess_by_id(sid).map_or(0, |s| {
