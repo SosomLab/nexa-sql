@@ -82,6 +82,26 @@ impl App {
                 format!("tbg:{gid}"),
                 format!("{title} - {verb}"),
             ));
+            // ★ T-105: 옆 띠에 붙이기 / 위로 되돌리기(끌어 붙이기와 같은 결과 · 지금 자리는 빼고 보인다).
+            if !floating {
+                let here = self.tool_dock.side_of(&gid);
+                for (side, code, m) in [
+                    (Some(nexa_ctl::DockSide::Left), "left", Msg::MnDockGroupLeft),
+                    (
+                        Some(nexa_ctl::DockSide::Right),
+                        "right",
+                        Msg::MnDockGroupRight,
+                    ),
+                    (None, "top", Msg::MnDockGroupTop),
+                ] {
+                    if side != here {
+                        items.push(CtxItem::item(
+                            format!("tbs:{gid}={code}"),
+                            format!("{title} - {}", t(m)),
+                        ));
+                    }
+                }
+            }
             items.push(CtxItem::Separator);
         }
         items.push(CtxItem::item("tb.settings", t(Msg::MnToolbarSettings)));
@@ -191,6 +211,8 @@ impl App {
             order,
             rows,
             floating: old.floating,
+            // 옆 띠 소속도 지킨다(T-105).
+            sides: old.sides,
         });
         let _ = self.tool_dock.take_actions();
         self.apply_toolbar_visibility();
@@ -389,6 +411,60 @@ impl App {
         self.tool_layout_dirty = true;
         self.layout();
         self.redraw();
+    }
+
+    /// ★ T-105(D-497): 그룹을 옆 띠(왼쪽/오른쪽)에 붙이거나 위 도크로(`None`) — 플로팅 창이 있으면 닫는다.
+    ///   진입점 = 플로팅 창을 가장자리에 놓기 · 우클릭 메뉴 · 기동 명령 `toolbar.side:<그룹>=left|right|top`
+    ///   (도크 안에서 손잡이를 끌어 가장자리에 놓는 길은 도크가 스스로 처리하고 `Resized`로 알린다).
+    pub(crate) fn dock_group_side(&mut self, gid: &str, side: Option<nexa_ctl::DockSide>) {
+        if let Some(i) = self.tool_floats.iter().position(|f| f.group == gid) {
+            self.tool_floats[i].close();
+            self.tool_floats.remove(i);
+        }
+        self.tool_dock.set_side(gid, side);
+        self.tool_dock.set_side_hint(None);
+        self.tool_dock.set_drop_hint(false);
+        let _ = self.tool_dock.take_actions();
+        self.tool_layout_dirty = true;
+        self.layout();
+        self.redraw();
+    }
+
+    /// 툴바 배치 덤프(자동 시험 · `toolbar.dump:<파일>`): 그룹마다 `id|자리(top/left/right/float/hidden)|x,y,w,h|세로 여부` +
+    /// 마지막 줄 `layout=<toolbar.layout 글>` · `editor=<편집기 영역 x,y,w,h>`(옆 띠만큼 본문이 들어갔는지 판정).
+    pub(crate) fn toolbar_dump(&self) -> String {
+        let mut out = String::new();
+        for (id, _, floating) in self.tool_dock.groups() {
+            let place = if floating {
+                "float"
+            } else if !self.tool_dock.is_group_visible(&id) {
+                "hidden"
+            } else {
+                match self.tool_dock.side_of(&id) {
+                    Some(nexa_ctl::DockSide::Left) => "left",
+                    Some(nexa_ctl::DockSide::Right) => "right",
+                    None => "top",
+                }
+            };
+            let (r, v) = self
+                .tool_dock
+                .bar(&id)
+                .map_or((Rect::default(), false), |b| (b.bounds(), b.is_vertical()));
+            out.push_str(&format!(
+                "{id}|{place}|{},{},{},{}|vertical={v}\n",
+                r.x, r.y, r.w, r.h
+            ));
+        }
+        let e = self.editors.cur().bounds();
+        out.push_str(&format!(
+            "layout={}\neditor={},{},{},{}\n",
+            self.tool_dock.layout().serialize(),
+            e.x,
+            e.y,
+            e.w,
+            e.h
+        ));
+        out
     }
 
     /// 그룹을 도크로 되돌린다(플로팅 창 닫기 포함).

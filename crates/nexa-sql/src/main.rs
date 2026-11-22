@@ -1242,17 +1242,41 @@ impl App {
         self.tool_dock
             .set_bounds(Rect::new(0, menu_h, w, tool_h), &mut inv);
         let chrome_h = menu_h + tool_h;
+        // ★ 툴바 옆 띠(T-105 세로 도크 · D-497): 그룹이 붙은 쪽만 폭이 생긴다(없으면 0 = 종전 배치 그대로) · 크롬 아래 ~ 상태줄 위.
+        //   끌어 붙일 가장자리 영역은 띠가 비어 있어도 잡히게 28 px.
+        let side_l = px(
+            self.tool_dock.side_width(nexa_ctl::DockSide::Left) as f32,
+            s,
+        );
+        let side_r = px(
+            self.tool_dock.side_width(nexa_ctl::DockSide::Right) as f32,
+            s,
+        );
+        {
+            let (sy, sh) = (chrome_h, (h - chrome_h - status_h).max(0));
+            self.tool_dock.set_side_bounds(
+                Rect::new(0, sy, side_l, sh),
+                Rect::new(w - side_r, sy, side_r, sh),
+                &mut inv,
+            );
+            let zone = px(28.0, s);
+            let (zl, zr) = (side_l.max(zone), side_r.max(zone));
+            self.tool_dock
+                .set_side_zones(Rect::new(0, sy, zl, sh), Rect::new(w - zr, sy, zr, sh));
+        }
         // Run 버튼 줄은 제거(사용자 09-15 — 툴바·단축키로 충분) · 접속 패널은 별도 창(conn_win) — 본문은 창 전폭.
         let _ = (panel_w, btn_w);
         let rx = pad;
-        let rw = w - rx - pad;
+        let rw = w - rx - pad - side_r;
         let body_top = chrome_h + px(4.0, s);
         let body_h = h - body_top - status_h;
         let _ = chrome_h;
         // 좌측 활동 막대(VS Code 48px) → 그 오른쪽에 패널(오브젝트 탐색기 · 보이면 본문을 그만큼 오른쪽으로).
         let act_w = px(activity::BAR_W, s);
         self.act_bar
-            .set_bounds(Rect::new(0, body_top, act_w, body_h), s);
+            .set_bounds(Rect::new(side_l, body_top, act_w, body_h), s);
+        // 아래의 `act_w`는 전부 "활동 막대 오른쪽 끝의 x"로 쓰인다 → 왼쪽 띠 폭을 더해 둔다(패널·편집기가 그만큼 들어간다).
+        let act_w = act_w + side_l;
         // 확장 아이콘·패널 = 확장 관리자가 켜져 있을 때만(꺼지면 아이콘이 사라지고 패널도 닫힌다 · 사용자 09-19).
         let ext_on = self.settings.flag("extensions.enabled");
         self.act_bar.set_item_visible("view.extensions", ext_on);

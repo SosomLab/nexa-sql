@@ -235,7 +235,9 @@ impl App {
             SplitEvent::Drag(x) => {
                 // 띠 시작 x → 탐색기 폭(논리 px · 설정 범위로 클램프) → `explorer.width`(자동 기억).
                 let grip = px(SPLIT_GRIP, s);
-                let act_w = px(activity::BAR_W, s);
+                // 활동 막대 오른쪽 끝 = 왼쪽 툴바 띠(T-105 · 없으면 0) + 막대 폭.
+                let act_w =
+                    px(activity::BAR_W, s) + self.tool_dock.side_bounds(nexa_ctl::DockSide::Left).w;
                 let w = ((x + grip / 2 - act_w) as f32 / s).round() as i64;
                 let _ = self
                     .settings
@@ -763,7 +765,7 @@ impl App {
 
     /// 점이 든 띠(1 = 툴바 · 2 = 상태바 · 0 = 둘 다 아님) — 툴바/상태바 메뉴 토글 판정.
     pub(crate) fn toolbar_band_at(&self, p: Point) -> u8 {
-        if self.tool_dock.bounds().contains(p) {
+        if self.tool_dock.bounds().contains(p) || self.tool_dock.side_contains(p) {
             1
         } else if self.status_bar_rect.contains(p) {
             2
@@ -1285,7 +1287,9 @@ impl App {
             self.menubar.dismiss();
         }
         if let InputEvent::RightDown { x, y } = ev {
-            if self.tool_dock.bounds().contains(Point { x, y }) {
+            if self.tool_dock.bounds().contains(Point { x, y })
+                || self.tool_dock.side_contains(Point { x, y })
+            {
                 self.open_toolbar_menu(x, y);
                 self.redraw();
                 return;

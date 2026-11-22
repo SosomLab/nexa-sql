@@ -1690,10 +1690,13 @@ impl App {
                 }
                 FloatAction::Close => self.dock_group(&gid),
                 FloatAction::Drag(at) => {
-                    let on = self
-                        .float_drop_point(at)
-                        .is_some_and(|p| self.tool_dock.accepts_drop(p));
-                    if self.tool_dock.set_drop_hint(on) {
+                    let p = self.float_drop_point(at);
+                    let on = p.is_some_and(|p| self.tool_dock.accepts_drop(p));
+                    // 위 도크 자리가 아니면 옆 띠 자리(T-105) — 붙을 수 있음을 그 가장자리에 표시.
+                    let side = p
+                        .filter(|_| !on)
+                        .and_then(|p| self.tool_dock.side_zone_at(p));
+                    if self.tool_dock.set_drop_hint(on) | self.tool_dock.set_side_hint(side) {
                         self.redraw();
                     }
                 }
@@ -1701,10 +1704,17 @@ impl App {
                     let hit = self
                         .float_drop_point(at)
                         .filter(|p| self.tool_dock.accepts_drop(*p));
+                    let side = self
+                        .float_drop_point(at)
+                        .filter(|_| hit.is_none())
+                        .and_then(|p| self.tool_dock.side_zone_at(p));
                     match hit {
                         Some(p) => self.dock_group_at(&gid, p),
+                        None if side.is_some() => self.dock_group_side(&gid, side),
                         None => {
-                            if self.tool_dock.set_drop_hint(false) {
+                            if self.tool_dock.set_drop_hint(false)
+                                | self.tool_dock.set_side_hint(None)
+                            {
                                 self.redraw();
                             }
                             if let Some((x, y)) = self.tool_floats[fi].position() {

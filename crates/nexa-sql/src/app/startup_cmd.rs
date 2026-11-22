@@ -838,6 +838,22 @@ cells={n}
             self.redraw();
             return;
         }
+        // ★ T-105 세로 도크(자체 시험): `toolbar.side:<그룹>=left|right|top` · `toolbar.dump:<경로>` = 그룹별 자리·사각형.
+        if let Some(rest) = id.strip_prefix("toolbar.side:") {
+            if let Some((gid, code)) = rest.split_once('=') {
+                let side = match code.trim() {
+                    "left" => Some(nexa_ctl::DockSide::Left),
+                    "right" => Some(nexa_ctl::DockSide::Right),
+                    _ => None,
+                };
+                self.dock_group_side(gid.trim(), side);
+            }
+            return;
+        }
+        if let Some(path) = id.strip_prefix("toolbar.dump:") {
+            let _ = std::fs::write(path, self.toolbar_dump());
+            return;
+        }
         if let Some(path) = id.strip_prefix("toolbar.menudump:") {
             let _ = std::fs::write(path, self.status_menu.item_ids().join("\n") + "\n");
             return;

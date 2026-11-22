@@ -318,6 +318,18 @@ impl App {
         if id == "demo.later" || id == "demo.ask" {
             return;
         }
+        // ★ T-105: `tbs:<그룹>=left|right|top` = 옆 띠에 붙이기 / 위 도크로.
+        if let Some(rest) = id.strip_prefix("tbs:") {
+            if let Some((gid, code)) = rest.split_once('=') {
+                let side = match code {
+                    "left" => Some(nexa_ctl::DockSide::Left),
+                    "right" => Some(nexa_ctl::DockSide::Right),
+                    _ => None,
+                };
+                self.dock_group_side(gid, side);
+            }
+            return;
+        }
         if let Some(gid) = id.strip_prefix("tbg:") {
             if self.tool_dock.is_floating(gid) {
                 self.dock_group(gid);
