@@ -20,6 +20,19 @@ impl App {
             self.prefs_win.redraw();
             return;
         }
+        // 자체 시험(11-22 · 무지개 괄호 색 조사): `ext.effects:<파일>` = 활성 확장별 괄호 효과(없으면 none)·WASM 응답 요약 +
+        //   편집기에 마지막으로 내려간 괄호 옵션 한 줄(`editors bracket=[…]`).
+        if let Some(path) = id.strip_prefix("ext.effects:") {
+            let off = self.ext_disabled();
+            let mut out = self.extensions.effects_dump(&self.settings, &off);
+            out.push_str(&format!(
+                "editors bracket=[{}]
+",
+                self.editors.bracket_opts_dump()
+            ));
+            let _ = std::fs::write(path, out);
+            return;
+        }
         // 자체 시험(11-22 · T-119): 색 창 — `colors.open:<설정 키>`(설정 창 [선택…]과 같은 길 · 색 목록 키면 목록 모드) ·
         //   `colors.op:<add|del|up|down|sel:N|set:#hex>`(목록 버튼·패널과 같은 길 → 설정 저장·적용) · `colors.dump:<파일>`.
         if let Some(key) = id.strip_prefix("colors.open:") {

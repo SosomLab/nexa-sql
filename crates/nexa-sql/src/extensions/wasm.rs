@@ -1240,6 +1240,10 @@ impl Extension for WasmExtension {
             .and_then(|t| effect_from_json(&t))
             .unwrap_or_default()
     }
+    fn settings_raw(&mut self, settings: &Settings) -> Option<Result<String, String>> {
+        let input = settings_json(settings, &self.prefix, &self.readable());
+        Some(self.call_buf("nx_ext_settings", Some(&input)))
+    }
     fn disabled_effect(&self) -> ExtensionEffect {
         self.call_buf("nx_ext_disabled", None)
             .and_then(|t| effect_from_json(&t))

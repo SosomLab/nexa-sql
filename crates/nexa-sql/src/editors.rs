@@ -570,6 +570,20 @@ impl Editors {
     }
 
     /// 안내선 표시·색·투명도 · 동일 출현 외곽선(설정 4종 · 전 탭).
+    /// 자체 시험 `ext.effects:` — 편집기에 마지막으로 내려간 괄호 옵션(없으면 `none` = 컨트롤 기본값).
+    pub(crate) fn bracket_opts_dump(&self) -> String {
+        self.bracket_opts.as_ref().map_or("none".to_string(), |b| {
+            format!(
+                "rainbow={} unmatched={} match_mode={} colors={} auto_close={}",
+                b.rainbow,
+                b.unmatched,
+                b.match_mode,
+                b.colors.len(),
+                b.auto_close
+            )
+        })
+    }
+
     /// 확장 효과: 괄호 옵션을 전 탭에(새 탭에도).
     pub(crate) fn set_bracket_opts(&mut self, opts: nexa_ctl::BracketOpts) {
         for tb in &mut self.bufs {

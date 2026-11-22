@@ -241,6 +241,10 @@ pub(crate) trait Extension {
     fn menus(&self) -> Vec<MenuContribution>;
     /// 설정이 바뀜(또는 시작) → 호스트가 적용할 편집기 옵션을 돌려준다.
     fn on_settings(&mut self, settings: &Settings) -> ExtensionEffect;
+    /// 자체 시험(11-22 · 무지개 괄호 색 조사): 설정 응답의 **원문**(WASM 게스트 `nx_ext_settings`의 출력 또는 호출 오류) — 내장 = None.
+    fn settings_raw(&mut self, _settings: &Settings) -> Option<Result<String, String>> {
+        None
+    }
     /// 사용자가 껐을 때(Extension Manager: Disable) 적용할 효과 — 기본 = 아무것도 안 함.
     fn disabled_effect(&self) -> ExtensionEffect {
         ExtensionEffect::default()
@@ -459,6 +463,50 @@ impl Registry {
     }
 
     /// 활성 확장의 인덱스 — 같은 id가 둘(내장 + WASM)이면 WASM만.
+    /// 자체 시험 `ext.effects:` — 활성 확장마다 한 줄: id · wasm 여부 · 꺼짐 여부 · 이번에 낸 괄호 효과(없으면 `none`) · WASM 응답
+    /// 원문 요약. 효과가 `none`이면 호스트는 괄호 옵션을 **바꾸지 않는다**(직전 값이 남는다).
+    pub(crate) fn effects_dump(&mut self, settings: &Settings, disabled: &[String]) -> String {
+        let mut out = String::new();
+        for i in self.active_indices() {
+            let p = &mut self.extensions[i];
+            let off = disabled.iter().any(|d| d == p.id());
+            let raw = match p.settings_raw(settings) {
+                None => "builtin".to_string(),
+                Some(Err(e)) => format!("err:{}", e.replace('\n', " ")),
+                Some(Ok(t)) => format!(
+                    "len:{} head:{}",
+                    t.len(),
+                    t.chars().take(120).collect::<String>().replace('\n', " ")
+                ),
+            };
+            let eff = if off {
+                p.disabled_effect()
+            } else {
+                p.on_settings(settings)
+            };
+            let bracket = eff.bracket_opts.map_or("none".to_string(), |b| {
+                format!(
+                    "rainbow={} unmatched={} colors={} max_chars={}",
+                    b.rainbow,
+                    b.unmatched,
+                    b.colors.len(),
+                    if b.max_chars == usize::MAX {
+                        "max".to_string()
+                    } else {
+                        b.max_chars.to_string()
+                    }
+                )
+            });
+            out.push_str(&format!(
+                "ext id={} wasm={} disabled={off} bracket=[{bracket}] raw=[{raw}]
+",
+                p.id(),
+                p.is_wasm()
+            ));
+        }
+        out
+    }
+
     fn active_indices(&self) -> Vec<usize> {
         let mut out = Vec::new();
         for (i, p) in self.extensions.iter().enumerate() {
