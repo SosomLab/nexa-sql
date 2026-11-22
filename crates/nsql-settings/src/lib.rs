@@ -7410,6 +7410,16 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Bool,
         default: "on",
     },
+    // ★ O-1 서버 변경 자동 확인(D-499 · 사용자 11-23): 오브젝트 탭이 활성화될 때 마지막 확인에서 이 초가 지났으면 한 번 확인 ·
+    //   0 = 끔(기본 · 수동 명령 `edit.history_check`만) · 주기 폴링 아님(26 §8 · 39 §3 원장 등재).
+    Entry {
+        key: "history.server_check_secs",
+        cat: Msg::CatUndo,
+        label: Msg::LblHistoryServerCheck,
+        desc: Msg::DescHistoryServerCheck,
+        kind: SettingKind::Int { min: 0, max: 86400 },
+        default: "0",
+    },
     Entry {
         key: "history.max_per_item",
         cat: Msg::CatUndo,

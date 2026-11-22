@@ -105,6 +105,7 @@ impl App {
         let kind = o.kind;
         let server = o.server.clone();
         self.history_server_wait = Some(o);
+        self.history_server_wait_at = Some(Instant::now());
         self.explorer
             .reload_source_for(server.as_ref(), &info, kind);
     }
@@ -123,6 +124,57 @@ impl App {
             return;
         }
         self.history_server_check = true;
+        self.history_server_auto = false;
+        self.history_server_request(tab);
+    }
+
+    /// ★ O-1 자동 확인(D-499 · 사용자 11-23 "탭 활성화 때 최소 간격으로 · 기본 끔"): 오브젝트 탭이 **활성화될 때** 그 탭의 마지막
+    ///   확인에서 `history.server_check_secs`초(0 = 끔 = 기본)가 지났으면 서버 변경 확인을 한 번 건다 — 주기 폴링이 아니다
+    ///   (보고 있지 않은 탭에는 조회가 나가지 않는다 · 26 §8). 처음 보는 탭(방금 연 것)은 시각만 적고 확인하지 않는다. 실행 중이거나
+    ///   다른 확인을 기다리는 중이면 건너뛴다. 바뀌지 않았으면 조용히 끝난다(상태줄을 비운다). `about_to_wait`마다 불리지만 활성
+    ///   탭이 바뀐 순간에만 일한다.
+    pub(crate) fn history_auto_check(&mut self) {
+        let tab = self.editors.active_id();
+        if tab == self.history_auto_tab {
+            return;
+        }
+        self.history_auto_tab = tab;
+        let secs = self.settings.int("history.server_check_secs").max(0) as u64;
+        if secs == 0 || !self.settings.flag("history.enabled") {
+            return;
+        }
+        // 응답이 오지 않은 옛 요청(오류·접속 끊김)은 30초 뒤 버린다 — 남아 있으면 다음 확인이 영영 막힌다.
+        if self
+            .history_server_wait_at
+            .is_some_and(|t0| t0.elapsed().as_secs() >= 30)
+        {
+            self.history_server_wait = None;
+            self.history_server_wait_at = None;
+            self.history_server_check = false;
+        }
+        if !self.object_tabs.contains_key(&tab)
+            || self.history_server_wait.is_some()
+            || self.sess.busy
+        {
+            return;
+        }
+        let now = Instant::now();
+        self.history_auto_seen
+            .retain(|(id, _)| self.object_tabs.contains_key(id));
+        match self.history_auto_seen.iter_mut().find(|(id, _)| *id == tab) {
+            None => {
+                self.history_auto_seen.push((tab, now));
+                return;
+            }
+            Some((_, at)) => {
+                if now.duration_since(*at).as_secs() < secs {
+                    return;
+                }
+                *at = now;
+            }
+        }
+        self.history_server_check = true;
+        self.history_server_auto = true;
         self.history_server_request(tab);
     }
 
@@ -133,13 +185,21 @@ impl App {
         };
         let verdict = store::server_check(&store::list_in(&dir), store::content_hash(text));
         let name = format!("{}.{}", o.schema, o.name);
+        // 자동 확인(D-499)은 바뀌지 않았으면 조용히 — 요청 때의 "소스 읽는 중…" 상태줄만 비운다.
+        let auto = std::mem::take(&mut self.history_server_auto);
+        self.history_server_wait_at = None;
         match verdict {
+            store::ServerCheck::Unchanged(_) if auto => self.sess.status = String::new(),
             store::ServerCheck::Unchanged(when) => {
                 self.sess.status = tf(Msg::StHistoryCheckSame, &[&name, &when]);
             }
             store::ServerCheck::NoBaseline => {
                 self.history_store_in(&dir, Tag::Open, text);
-                self.sess.status = tf(Msg::StHistoryCheckFirst, &[&name]);
+                self.sess.status = if auto {
+                    String::new()
+                } else {
+                    tf(Msg::StHistoryCheckFirst, &[&name])
+                };
             }
             store::ServerCheck::Changed(when) => {
                 self.history_store_in(&dir, Tag::External, text);

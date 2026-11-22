@@ -862,6 +862,13 @@ struct App {
     history_server_wait: Option<explorer::ObjectOrigin>,
     /// 기다리는 서버 소스가 **외부 변경 확인**(`edit.history_check`)용인가 — 거짓 = 컴파일 뒤 `server` 시점 저장.
     history_server_check: bool,
+    /// 그 확인이 **자동**(탭 활성화 · D-499)인가 — 바뀌지 않았으면 상태줄에 알리지 않는다.
+    history_server_auto: bool,
+    /// 서버 소스 요청 시각(응답이 오지 않은 요청을 30초 뒤 버린다).
+    history_server_wait_at: Option<Instant>,
+    /// 자동 확인: 마지막으로 본 활성 탭 · 탭별 마지막 확인 시각(오브젝트 탭만 · 닫힌 탭은 걷는다).
+    history_auto_tab: u64,
+    history_auto_seen: Vec<(u64, Instant)>,
     /// ★ T-167 B5: 객체 북마크 재개 — 소스 조회를 보내 두고 탭이 열리면 이어서 이동할 (북마크 id, 정식 탭 여부).
     bm_goto_pending: Option<(u64, bool)>,
     /// `output.show=always` 갖춤을 탭 전환마다 한 번만(09-30).
@@ -2329,6 +2336,10 @@ fn main() {
         object_tabs: HashMap::new(),
         history_server_wait: None,
         history_server_check: false,
+        history_server_auto: false,
+        history_server_wait_at: None,
+        history_auto_tab: 0,
+        history_auto_seen: Vec::new(),
         bm_goto_pending: None,
         output_last_editor: 0,
         default_shared: SHARED,

@@ -279,6 +279,8 @@ impl ApplicationHandler<Wake> for App {
         self.pump_os_open_files();
         self.persist_window_sizes(false);
         self.pump_window_requests(el);
+        // O-1 자동 확인(D-499 · 기본 끔): 활성 탭이 바뀐 순간에만 일한다.
+        self.history_auto_check();
         // 캐럿 깜빡임 — 0.5초 타이머가 **실제로 만료됐을 때만** 다시 그린다.
         // ★ 매 호출마다 request_redraw를 하면 그리기 → about_to_wait → 그리기의 무한 루프가 되어
         //   유휴 CPU 한 코어 100% · 키 입력이 프레임당 하나씩만 처리되는 지연(글자 14개에 3초 ·
