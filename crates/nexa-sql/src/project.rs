@@ -36,6 +36,10 @@ pub(crate) struct Project {
     ///   폴더 기준 상대·홈 앵커·절대(다른 변수·등록 폴더는 가리키지 않는다). 탭·폴더 경로가 그 아래면 `${var:DATA}/…`로 적힌다.
     ///   지금은 파일을 직접 고쳐 적는다(설정 표 · CLI · 이 PC만의 값 = 다음 단계) · 적힌 글을 그대로 보존한다.
     pub path_vars: Vec<(String, String)>,
+    /// ★ T-172 P3 2단계: 경로 변수의 **이 PC만의 자리**(이름, 폴더) — 프로젝트 파일에는 적지 않는다(설정 `project.pc_paths`의
+    ///   `var:이름` 열쇠 · D-494). 공유 정의(`path_vars`)가 없거나 그 자리가 이 PC에 없을 때 대신 쓴다 · 저장할 때 그 아래 경로는
+    ///   `${var:이름}/…`로 적힌다(이 PC의 실제 경로가 공유 파일에 새지 않는다).
+    pub var_pc: Vec<(String, PathBuf)>,
     /// 탐색기에서 마지막으로 고른 항목(절대 · 다시 열 때 그 자리에 선택 · 사용자 09-22).
     pub last_selected: Option<PathBuf>,
     /// ★ 작업 환경(사용자 09-23): 편집기 탭들(순서 · 파일 경로 또는 미저장 스크립트 본문 · 캐럿 + fuzzy 앵커) · 활성 탭 · 북마크(JSON).
@@ -637,10 +641,79 @@ impl Project {
             home: home.as_deref(),
             vars: &[],
         };
-        self.path_vars
+        let mut out: Vec<(String, PathBuf)> = self
+            .path_vars
             .iter()
             .map(|(n, v)| (n.clone(), resolve(v, &cx)))
-            .collect()
+            .collect();
+        // 이 PC만의 자리가 공유 정의를 덮는다(없는 이름은 추가).
+        for (n, d) in &self.var_pc {
+            match out.iter_mut().find(|(x, _)| x == n) {
+                Some(hit) => hit.1 = d.clone(),
+                None => out.push((n.clone(), d.clone())),
+            }
+        }
+        out
+    }
+
+    /// 변수 `name`이 지금 가리키는 자리 — 정의(공유·이 PC)가 있으면 그 폴더, 없으면 미정의 앵커가 글자 그대로 풀린 자리
+    /// (`<프로젝트 폴더>/${var:이름}` · `resolve`가 보존하는 꼴).
+    fn var_place(&self, name: &str) -> Option<PathBuf> {
+        if let Some((_, d)) = self.var_dirs().into_iter().find(|(n, _)| n == name) {
+            return Some(d);
+        }
+        Some(self.base()?.join(format!("{ANCHOR_VAR}{name}}}")))
+    }
+
+    /// ★ 못 찾은 경로가 어느 경로 변수 아래인가 — `(이름, 변수 폴더 뒤의 꼬리)`. 정의된 변수(가장 깊게 맞는 것) 또는 미정의
+    /// 앵커(`${var:이름}/…`가 글자 그대로 남은 경로). 꼬리가 비면(변수 폴더 자신) `None`.
+    pub(crate) fn var_of_path(&self, p: &Path) -> Option<(String, PathBuf)> {
+        let hit = self
+            .var_dirs()
+            .into_iter()
+            .filter_map(|(n, d)| {
+                let r = p.strip_prefix(&d).ok()?.to_path_buf();
+                Some((d.components().count(), n, r))
+            })
+            .max_by_key(|(depth, _, _)| *depth)
+            .map(|(_, n, r)| (n, r));
+        let hit = hit.or_else(|| {
+            let rel = p.strip_prefix(self.base()?).ok()?;
+            let mut it = rel.components();
+            let first = it.next()?.as_os_str().to_string_lossy().into_owned();
+            let name = first.strip_prefix(ANCHOR_VAR)?.strip_suffix('}')?;
+            Some((valid_folder_name(name)?, it.as_path().to_path_buf()))
+        })?;
+        (!hit.1.as_os_str().is_empty()).then_some(hit)
+    }
+
+    /// ★ T-172 P3 2단계: 변수 `name`의 **이 PC 자리**를 `dir`로 — 그 변수 아래를 가리키던 탭·펼침·선택·등록 폴더 경로를 새 자리로
+    /// 옮긴다(프로젝트 파일의 `vars`는 그대로). 바뀌었으면 (옛 자리, 새 자리).
+    pub(crate) fn set_var_pc(&mut self, name: &str, dir: &Path) -> Option<(PathBuf, PathBuf)> {
+        let name = valid_folder_name(name)?;
+        let old = self.var_place(&name)?;
+        if old == dir {
+            return None;
+        }
+        self.var_pc.retain(|(n, _)| *n != name);
+        self.var_pc.push((name, dir.to_path_buf()));
+        let re = |p: &mut PathBuf| {
+            if let Ok(r) = p.strip_prefix(&old) {
+                *p = if r.as_os_str().is_empty() {
+                    dir.to_path_buf()
+                } else {
+                    dir.join(r)
+                };
+            }
+        };
+        self.tabs
+            .iter_mut()
+            .filter_map(|t| t.path.as_mut())
+            .for_each(re);
+        self.expanded.iter_mut().for_each(re);
+        self.last_selected.iter_mut().for_each(re);
+        self.folders.iter_mut().for_each(re);
+        Some((old, dir.to_path_buf()))
     }
 
     fn folder_defs(&self) -> Vec<PathBuf> {
@@ -748,6 +821,14 @@ impl Project {
     /// ★ T-172 (A): 이 PC의 대응표(설정 `project.pc_paths`)를 입힌다 — **못 찾은 폴더만**, 표의 자리가 실제로 있을 때만.
     pub(crate) fn apply_pc_paths(&mut self, raw: &str) {
         let Some(id) = self.id.clone() else { return };
+        // 경로 변수의 이 PC 자리(T-172 P3 2단계 · 열쇠 `var:이름`) — 폴더보다 먼저(등록 폴더가 변수 아래일 수 있다) ·
+        //   폴더와 같은 규칙: 지금 자리가 이 PC에 없고 표의 자리가 실제로 있을 때만.
+        for (name, to) in pc_paths_vars(raw, &id) {
+            let here = self.var_place(&name).is_some_and(|d| d.is_dir());
+            if !here && to.is_dir() {
+                self.set_var_pc(&name, &to);
+            }
+        }
         for i in 0..self.folders.len() {
             if self.folders[i].is_dir() {
                 continue;
@@ -1030,6 +1111,18 @@ fn pc_paths_rows(raw: &str) -> Vec<(&str, &str, &str)> {
     }
     out
 }
+
+/// PC별 대응표에서 프로젝트 `id`의 경로 변수 행(열쇠 `var:이름`) — (이름, 이 PC의 폴더).
+pub(crate) fn pc_paths_vars(raw: &str, id: &str) -> Vec<(String, PathBuf)> {
+    pc_paths_rows(raw)
+        .into_iter()
+        .filter(|(i, _, _)| *i == id)
+        .filter_map(|(_, k, p)| Some((k.strip_prefix(PC_VAR_KEY)?.to_string(), PathBuf::from(p))))
+        .collect()
+}
+
+/// PC별 대응표의 경로 변수 열쇠 접두(`var:이름`).
+pub(crate) const PC_VAR_KEY: &str = "var:";
 
 pub(crate) fn pc_paths_get(raw: &str, id: &str, key: &str) -> Option<PathBuf> {
     pc_paths_rows(raw)
@@ -1404,6 +1497,62 @@ mod tests {
         let plain = Project::from_bytes(&file, br#"{"version":2,"folders":[]}"#).unwrap();
         assert!(plain.to_json().contains("\"version\": 2"));
         assert!(Project::from_bytes(&file, br#"{"version":4,"folders":[]}"#).is_err());
+    }
+
+    /// T-172 P3 2단계: 변수의 이 PC 자리 — 미정의 변수·이 PC에 없는 공유 자리를 대응표(`var:이름`)가 채운다 · 탭이 새 자리로
+    /// 풀리고 · 저장하면 `${var:이름}/…` 그대로(이 PC의 경로는 파일에 새지 않는다) · 공유 `vars` 글은 보존.
+    #[test]
+    fn var_pc_override_fills_missing_and_keeps_shared_text() {
+        let root = std::env::temp_dir().join(format!("nsql-varpc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (proj, here, gone) = (root.join("p"), root.join("here"), root.join("gone"));
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::create_dir_all(&here).unwrap();
+        // 두 변수는 서로 다른 자리(같은 폴더를 가리키면 어느 이름으로 적을지 정해지지 않는다).
+        let here2 = root.join("here2");
+        std::fs::create_dir_all(&here2).unwrap();
+        let file = proj.join("my.nsql-project");
+        let gone_txt = gone.to_string_lossy().replace('\\', "/");
+        let doc = format!(
+            r#"{{"version":3,"id":"00aa11bb22cc33dd","vars":{{"DATA":"{gone_txt}"}},"tabs":[{{"path":"${{var:DATA}}/a.sql","title":"a"}},{{"path":"${{var:NOPE}}/sub/b.sql","title":"b"}}]}}"#
+        );
+        let p0 = Project::from_bytes(&file, doc.as_bytes()).unwrap();
+        // 못 찾은 경로가 어느 변수 아래인지(정의된 것 · 미정의 앵커).
+        assert_eq!(
+            p0.var_of_path(p0.tabs[0].path.as_ref().unwrap()),
+            Some(("DATA".into(), PathBuf::from("a.sql")))
+        );
+        assert_eq!(
+            p0.var_of_path(p0.tabs[1].path.as_ref().unwrap()),
+            Some(("NOPE".into(), PathBuf::from("sub").join("b.sql")))
+        );
+        assert_eq!(p0.var_of_path(&proj.join("plain.sql")), None);
+        let table = pc_paths_set("", "00aa11bb22cc33dd", "var:DATA", &here);
+        let table = pc_paths_set(&table, "00aa11bb22cc33dd", "var:NOPE", &here2);
+        assert_eq!(pc_paths_vars(&table, "00aa11bb22cc33dd").len(), 2);
+        assert!(pc_paths_vars(&table, "ffff").is_empty());
+        let p = Project::from_bytes_pc(&file, doc.as_bytes(), &table).unwrap();
+        assert_eq!(
+            p.tabs[0].path.as_deref(),
+            Some(here.join("a.sql").as_path())
+        );
+        assert_eq!(
+            p.tabs[1].path.as_deref(),
+            Some(here2.join("sub").join("b.sql").as_path())
+        );
+        let js = p.to_json();
+        assert!(js.contains(&format!("\"DATA\": \"{gone_txt}\"")), "{js}");
+        assert!(js.contains("\"path\": \"${var:DATA}/a.sql\""), "{js}");
+        assert!(js.contains("\"path\": \"${var:NOPE}/sub/b.sql\""), "{js}");
+        assert!(!js.contains("here"), "{js}");
+        // 공유 자리가 이 PC에 실제로 있으면 대응표를 쓰지 않는다(폴더와 같은 규칙).
+        std::fs::create_dir_all(&gone).unwrap();
+        let p2 = Project::from_bytes_pc(&file, doc.as_bytes(), &table).unwrap();
+        assert_eq!(
+            p2.tabs[0].path.as_deref(),
+            Some(gone.join("a.sql").as_path())
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

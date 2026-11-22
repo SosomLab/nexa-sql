@@ -288,6 +288,13 @@ impl App {
             return;
         }
         // ★ T-172 (B): `project.relocate_folder:<순번>` = 폴더 고르기 창 · `…:<순번>:<경로>` = 바로(자동 시험).
+        // 경로 변수의 이 PC 자리(시험·자동화용 기동 명령 · `project.var_set:이름=폴더`).
+        if let Some(rest) = id.strip_prefix("project.var_set:") {
+            if let Some((name, dir)) = rest.split_once('=') {
+                self.project_set_var_pc(name, Path::new(dir.trim()));
+            }
+            return;
+        }
         if let Some(rest) = id.strip_prefix("project.relocate_folder:") {
             let (i, dir) = match rest.split_once(':') {
                 Some((a, b)) => (a.parse::<usize>().ok(), Some(PathBuf::from(b))),
@@ -581,9 +588,20 @@ impl App {
         );
         let _ = self.settings.set("project.pc_paths", &raw);
         self.persist_settings();
+        self.missing_repoint(&old, &new);
+        self.sess.status = tf(
+            Msg::StProjectFolderRelocated,
+            &[&nexa_fs::path::display(&old), &nexa_fs::path::display(&new)],
+        );
+        self.project_changed(true);
+    }
+
+    /// 못 찾은 탭들 가운데 `old` 아래를 가리키던 것을 `new` 아래로 옮기고, 그래서 찾게 된 탭은 다시 연다(폴더 다시 지정 ·
+    /// 경로 변수의 이 PC 자리 공용).
+    fn missing_repoint(&mut self, old: &Path, new: &Path) {
         for m in &mut self.proj_missing {
             if let Some(p) = m.path.as_mut() {
-                if let Ok(r) = p.strip_prefix(&old) {
+                if let Ok(r) = p.strip_prefix(old) {
                     *p = new.join(r);
                 }
             }
@@ -599,11 +617,39 @@ impl App {
             // 자리 탭은 진짜 탭을 연 뒤에 닫는다(마지막 탭을 닫아 빈 탭이 생기는 일을 피한다).
             self.missing_tab_close(t.id);
         }
-        self.sess.status = tf(
-            Msg::StProjectFolderRelocated,
-            &[&nexa_fs::path::display(&old), &nexa_fs::path::display(&new)],
+    }
+
+    /// ★ T-172 P3 2단계(D-498 · 73 §4-2 "이 PC만의 값"): 경로 변수 `name`의 이 PC 자리를 `dir`로 — 프로젝트 파일의 `vars`는 그대로
+    ///   두고 설정 `project.pc_paths`에 `고유 번호 + var:이름 → 폴더`를 적는다. 그 변수 아래라서 못 찾았던 탭은 다시 연다.
+    ///   진입점 = 자리 탭 [찾아보기…]에서 고른 파일로 추론(`project_missing_found`) · 기동 명령 `project.var_set:이름=폴더`.
+    pub(crate) fn project_set_var_pc(&mut self, name: &str, dir: &Path) -> bool {
+        if !self.project.is_open() || !dir.is_dir() {
+            return false;
+        }
+        let Some(id) = self.project.ensure_id() else {
+            return false;
+        };
+        let Some((old, new)) = self.project.set_var_pc(name, dir) else {
+            return false;
+        };
+        let raw = project::pc_paths_set(
+            self.settings.get("project.pc_paths").unwrap_or(""),
+            &id,
+            &format!("{}{}", project::PC_VAR_KEY, name.trim()),
+            &new,
         );
+        let _ = self.settings.set("project.pc_paths", &raw);
+        self.persist_settings();
+        self.missing_repoint(&old, &new);
+        let msg = tf(
+            Msg::StProjectVarSet,
+            &[name.trim(), &nexa_fs::path::display(&new)],
+        );
+        self.log_win
+            .push(LogEntry::new(LogKind::Info, format!("project: {msg}")));
+        self.sess.status = msg;
         self.project_changed(true);
+        true
     }
 
     // ───────── ★ T-172 (C)(D-189 · D-496): 못 찾은 탭의 자리 탭 ─────────
@@ -709,6 +755,29 @@ impl App {
         if !path.is_file() {
             return;
         }
+        // ★ T-172 P3 2단계: 못 찾은 경로가 경로 변수 아래(`${var:이름}/꼬리`)이고 고른 파일이 같은 꼬리로 끝나면, 그 변수의
+        //   **이 PC 자리**를 추론해 적는다 — 같은 변수 아래의 다른 못 찾은 탭도 함께 열린다(이 탭도 그 길에서 열렸으면 끝).
+        let hint = self.proj_missing[k]
+            .path
+            .as_ref()
+            .and_then(|old| self.project.var_of_path(old))
+            .filter(|(_, tail)| path.ends_with(tail));
+        if let Some((name, tail)) = hint {
+            let mut dir = path.to_path_buf();
+            for _ in tail.components() {
+                dir.pop();
+            }
+            if self.project_set_var_pc(&name, &dir) {
+                let Some(k2) = self.proj_missing.iter().position(|m| m.id == mid) else {
+                    return;
+                };
+                return self.project_missing_found_at(k2, mid, path);
+            }
+        }
+        self.project_missing_found_at(k, mid, path);
+    }
+
+    fn project_missing_found_at(&mut self, k: usize, mid: u64, path: &Path) {
         let mut tab = self.proj_missing.remove(k);
         tab.path = Some(path.to_path_buf());
         let opts = nsql_bookmarks::RelocateOpts::default();
