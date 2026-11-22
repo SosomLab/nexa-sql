@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| `feat/color-list-editor` | 2026-11-22(Windows · d241ee26 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-119 색 목록 편집(색 창 목록 모드 · `ColorList` · 설정 창 [선택…] · `colors.open/op/dump`) + `DescSyntaxColor` 문구(#RRGGBBAA) + syntax-colors sc8 로그 · 312d4e26 · 새 V1 `color-list` 19/0(괄호 색 d 절 제외) · 문서(journal 11-22 §17 · 51 · 94) |
 | `fix/syntax-color-rgba` | 2026-11-22(Windows · c35f3d20 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-78 ⓑ 결함 = 색 창 [고르기]의 `#RRGGBBAA`(8자리) 값이 적용되지 않던 것 → `rgba_from_hex`(알파 무시) · 23333d77 · V1 syntax-colors 9/0(sc8) · 문서(journal 11-22 §17) |
 | `feat/syntax-color-overrides` | 2026-11-22(Windows · 78389de4 위 · 직전 이름 feat/editor-tokens-dump) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-78 ⓑ 구문 색 개별 덮어쓰기(설정 키 9 `editor.syntax_<종류>_color`) + 판정용 `editor.tokens` + C-1 변경 띠 팝업 문맥(이웃 덩어리 병합) · 1c675dab · 새 V1 `dialect-types` 11/0 · `syntax-colors` 7/0(+ scripts/lib/magenta_px.py) · 문서(journal 11-22 §17 · 102 §12) |
 | `feat/dialect-types-var-check` | 2026-11-22(Windows · deebee06 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-78 ⓐ 방언별 자료형 강조(`sql_for` + `datatype_words`) + T-304 ② 리터럴 대입 타입 검사(숫자 타입 + 비숫자 문자열 = 오류) · 41c1f140 · golden 양 방언 diff 0 · 문서(journal 11-22 §17) |
