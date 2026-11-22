@@ -101,7 +101,7 @@
 
 | ID | 항목 | 의존 |
 |---|---|---|
-| **T-51** | D-41 반영 — 옵션 파서 재정리(별칭 표 · 충돌 안내) · `-e` · `-v` · `-b` · `-W`/`NSQL_PASSWORD` · `-S host,port` · `--help`를 진영별 예시 3줄로 | D-41 |
+| **T-51** | D-41 반영 — 옵션 파서 재정리(별칭 표 · 충돌 안내) · `-e` · `-v` · `-b` · `-W`/`NSQL_PASSWORD` · `-S host,port` · `--help`를 진영별 예시 3줄로 · ★ **11-23 구현(D-379 범위 · 무인 진행)** = 접속 옵션을 받는 명령에서 `-U`·`-D`·`-Q`/`-e`·`-i`·`-S host[,port]`·`-P <숫자>`·`-W` 별칭 · sqlcmd `-P <password>`·`-T` 거절(rc 2) · `run -q` · `--help` 개요 4줄 · 필드 형식 대상 조립은 `conn add`에서만(run·export = `-c` 필수 · 결정 후보) · V1 cli-aliases · [위키 Command-Line](wiki/Command-Line.md) | D-41 · D-379 |
 | **T-52** | 셸 명령 대응표 — `\d`·`:r`·`.tables`를 SQL*Plus식 `DESC`·`@`·`SHOW TABLES` 별칭으로 받기(docs/11 §shell) | T-7 |
 
 ---

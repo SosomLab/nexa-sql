@@ -18,6 +18,7 @@
 - [Bookmarks](Bookmarks)
 - [Large files and feature limits](Large-Files-and-Limits)
 - [Keyboard shortcuts and the user keymap file (Keyboard Shortcuts)](Keyboard-Shortcuts)
+- [Command line (nsql)](Command-Line)
 - [Settings window](Settings)
 - [License](License)
 
@@ -41,5 +42,6 @@
 - [북마크](Bookmarks-ko)
 - [큰 파일과 기능 제한](Large-Files-and-Limits-ko)
 - [단축키와 사용자 키맵 파일(Keyboard Shortcuts)](Keyboard-Shortcuts-ko)
+- [명령줄(nsql)](Command-Line-ko)
 - [설정 창](Settings-ko)
 - [라이선스(License)](License-ko)
