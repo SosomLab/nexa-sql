@@ -282,6 +282,18 @@ expect_not "l-no-var-notice" "$V1_OUT/pl-log.txt" "Path variable DATA on this PC
 expect "l-b-path-unchanged" "$V1_OUT/pl.nsql-project" '"${var:DATA}/b.sql"'
 expect "l-vars-kept" "$V1_OUT/pl.nsql-project" "\"DATA\": \"$LDM\""
 
+# ── m. 변수 아래 등록 폴더의 이름이 이 PC 자리 지정 뒤에도 남음(둘째 독립 검토 후속 · `set_var_pc` · 11-23 묶음 18) ─────────
+#   vars DATA = 이 PC에 없는 자리 + 등록 폴더 `{"path": "${var:DATA}/lib", "name": "lib-x"}` → `project.var_set:DATA=<실재 폴더>` → 저장 →
+#   파일에 `"name": "lib-x"` 그대로 · 정의 경로 `${var:DATA}/lib` 그대로(종전 = 이 PC 자리를 옮기면 폴더 이름이 저장에서 빠졌다)
+MD="$WK/md"; mkdir -p "$MD/lib"; printf 'SELECT 31 AS m FROM dual;\n' > "$MD/lib/m.sql"; MDM=$(v1_m "$MD")
+printf '{"version": 3, "vars": {"DATA": "%s"}, "folders": [{"path": "."}, {"path": "${var:DATA}/lib", "name": "lib-x"}], "active": 0, "tabs": [{"path": "sql/a.sql", "title": "a.sql", "id": 71}]}\n' "$(v1_m "$WK/nowhere")" > "$P/m.nsql-project"
+HOME="$IHM" v1_gui pm "project.load:$PM/m.nsql-project,@after:1800:project.var_set:DATA=$MDM,@after:2600:project.save,@after:3200:file.exit,@after:3800:toolbar.pick:project.exit_skip" 25
+cp "$P/m.nsql-project" "$V1_OUT/pm.nsql-project" 2>/dev/null
+expect "m-folder-name-kept" "$V1_OUT/pm.nsql-project" '"name": "lib-x"'
+expect "m-folder-path-kept" "$V1_OUT/pm.nsql-project" '"${var:DATA}/lib"'
+expect "m-pc-var-recorded" "$V1_HOME/settings.conf" "var:DATA"
+expect_not "m-no-abs-folder" "$V1_OUT/pm.nsql-project" "\"path\": \"$MDM/lib\""
+
 # ── h. 절대 경로 알림(T-172 · D-188 · project.warn_absolute · 협업 초안 11-22) ───────────
 #   OS 임시 폴더가 홈 아래(Windows %TEMP% = 사용자 폴더 · 맥 /var/folders는 홈 밖)라 그대로면 탭이 `${userHome}/…`으로 적혀 세지 않는다
 #   → 이 절의 기동만 HOME을 WK 안 빈 폴더로 바꿔 홈 앵커를 피한다(home_dir_str = HOME → USERPROFILE).
@@ -314,6 +326,6 @@ expect_eq "h2-dump-ran" "$([ -f "$V1_OUT/ph2-log.txt" ] && echo y)" "y"
 expect_not "h2-off-no-warn" "$V1_OUT/ph2-log.txt" "$ABSW"
 
 # 공통 — 모든 기동 panic 없음
-for t in pa pb pb2 pc pd pe pe2 pf1 pf2 pf3a pf3b pf4 pg1 pg2 pg3 pi1 pi2 pi0 pj pk1 pk2 pk3 pl ph1 ph0 ph2; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
+for t in pa pb pb2 pc pd pe pe2 pf1 pf2 pf3a pf3b pf4 pg1 pg2 pg3 pi1 pi2 pi0 pj pk1 pk2 pk3 pl pm ph1 ph0 ph2; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done

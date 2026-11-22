@@ -43,5 +43,31 @@ expect_eq "r5-ten-lines" "$(tail -n +2 "$V1_OUT/rv5-ed.txt" 2>/dev/null | grep -
 expect_eq "r-disk-g-untouched" "$(md5sum < "$R/g.sql")" "$G0"
 expect_eq "r-disk-d-untouched" "$(md5sum < "$R/d.sql")" "$D0"
 for t in rv1 rv4 rv5; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
+
+# ── 둘째 독립 검토 후속(11-23 묶음 18 · C-1) ──
+#   r6 탭을 a(g.sql · 7행 수정) → b(미추적 · 7행이 다른 글)로 바꾼 **직후** 7행에서 되돌림 → b 본문 불변 · "No git change at the cursor line"
+#      (종전 = 감시가 a의 HEAD를 들고 있어 b 7행을 a의 HEAD 글로 바꿀 수 있었다)
+#   r7 UTF-8 BOM으로 커밋한 파일(수정 없음) 1행에서 되돌림 → 본문 첫 글자가 U+FEFF가 아님 · 덩어리 0
+#   r8 EUC-KR 한글 파일을 커밋 → 작업본 한 줄 수정 → 열어 되돌림 → "not valid UTF-8" 안내 · 되돌리기 전후 본문 같음(HEAD 글이 들어오지 않음)
+#      ※ `enc.reopen:euckr`(인코딩으로 다시 열기)는 이미 열린 파일이면 다시 읽지 않고 그 탭으로 가기만 해서(app/files.rs `load_file`)
+#        본문은 UTF-8 대체 문자로 열린 채다 — 별개 결함 후보(11-23 협업 발견 · 개발 보고) · 이 판정은 "되돌리기가 본문을 바꾸지 않음"만 본다.
+for i in 1 2 3 4 5 6 7 8 9 10; do [ "$i" = 7 ] && echo "SELECT 700 FROM dual;" || echo "SELECT $i FROM dual;"; done > "$R/u.sql"
+printf '\xef\xbb\xbfSELECT 1 FROM dual;\nSELECT 2 FROM dual;\n' > "$R/bom.sql"
+printf "SELECT '한글 하나' FROM dual;\nSELECT '한글 둘' FROM dual;\nSELECT '한글 셋' FROM dual;\n" | iconv -f UTF-8 -t CP949 > "$R/k.sql"
+git -C "$R" add bom.sql k.sql && git -C "$R" -c user.name=v1 -c user.email=v1@example.invalid commit -q -m enc
+printf "SELECT '한글 하나' FROM dual;\nSELECT '한글 둘 고침' FROM dual;\nSELECT '한글 셋' FROM dual;\n" | iconv -f UTF-8 -t CP949 > "$R/k.sql"
+UM=$(v1_m "$R/u.sql"); BM=$(v1_m "$R/bom.sql"); KM=$(v1_m "$R/k.sql")
+rv rv6 "$GM" "open:$UM,@after:5000:tab.prev,@after:7000:tab.next,@after:7020:editor.caret:120,@after:7040:git.revert_hunk,@after:7300:status.dump:$O/rv6-st.txt,@after:7500:editor.dump:$O/rv6-ed.txt,@after:7900:file.exit,@after:8400:toolbar.pick:project.exit_skip"
+expect "r6-other-file-body-unchanged" "$V1_OUT/rv6-ed.txt" "SELECT 700 FROM dual;"
+expect "r6-status-no-hunk" "$V1_OUT/rv6-st.txt" "No git change at the cursor line"
+rv rv7 "$BM" "git.revert_hunk,@after:3800:editor.dump:$O/rv7-ed.txt,@after:4000:git.next_hunk,@after:4200:status.dump:$O/rv7-st.txt,@after:4600:file.exit"
+if tail -n +2 "$V1_OUT/rv7-ed.txt" 2>/dev/null | head -c 3 | od -An -tx1 | grep -q 'ef bb bf'; then v1_failmsg "r7-no-bom-char-in-body" "첫 글자 = U+FEFF"; else v1_pass "r7-no-bom-char-in-body"; fi
+expect "r7-body-first-line" "$V1_OUT/rv7-ed.txt" "SELECT 1 FROM dual;"
+expect "r7-no-hunks" "$V1_OUT/rv7-st.txt" "No git changes in this tab"
+rv rv8 "$KM" "enc.reopen:euckr,@after:5000:editor.caret:30,@after:5100:editor.dump:$O/rv8-ed0.txt,@after:5200:git.revert_hunk,@after:5500:status.dump:$O/rv8-st.txt,@after:5700:editor.dump:$O/rv8-ed.txt,@after:6100:file.exit,@after:6600:toolbar.pick:project.exit_skip"
+expect "r8-refuses-not-utf8" "$V1_OUT/rv8-st.txt" "not valid UTF-8"
+expect_eq "r8-dump-before-ran" "$([ -s "$V1_OUT/rv8-ed0.txt" ] && echo y)" "y"
+expect_eq "r8-body-unchanged-by-revert" "$(tail -n +2 "$V1_OUT/rv8-ed.txt" 2>/dev/null | md5sum)" "$(tail -n +2 "$V1_OUT/rv8-ed0.txt" 2>/dev/null | md5sum)"
+for t in rv6 rv7 rv8; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done
