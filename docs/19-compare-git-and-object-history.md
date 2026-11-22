@@ -20,7 +20,7 @@
 
 | 기능 | 내용 | 단계 |
 |---|---|---|
-| Git gutter(GitGutter 대응) | 저장 파일의 HEAD 대비 추가/변경/삭제 줄 표시 · 변경 hunk 이동 · hunk diff 팝업 | M3 · ✅ **11-10 hunk diff 팝업 1차**(7ccff1c7 · be462daa · D-477 · 되돌리기·ahead/behind = 2차 · 🚧 **11-22 덩어리 되돌리기** = 명령 `git.revert_hunk`(Edit 묶음 · 기본 단축키 없음 · 캐럿 줄 덩어리 → HEAD · `replace_range` 한 번 = 되돌리기 한 단계 · 디스크·저장소 불변 · 확인 대화 없음 · 팝업 버튼·거터 우클릭 없음 = 사용자 질문 1 무응답 → 보수적 추천안 (가) · [journal 11-22 §15](journal/2026-11-22.md) · V2 ✓ verify 20261122-181801 · V1 r 절 초안 19/0) · [journal 11-10 §13](journal/2026-11-10.md)) |
+| Git gutter(GitGutter 대응) | 저장 파일의 HEAD 대비 추가/변경/삭제 줄 표시 · 변경 hunk 이동 · hunk diff 팝업 | M3 · ✅ **11-10 hunk diff 팝업 1차**(7ccff1c7 · be462daa · D-477 · 되돌리기·ahead/behind = 2차 · 🚧 **11-22 덩어리 되돌리기** = 명령 `git.revert_hunk`(Edit 묶음 · 기본 단축키 없음 · 캐럿 줄 덩어리 → HEAD · `replace_range` 한 번 = 되돌리기 한 단계 · 디스크·저장소 불변 · 확인 대화 없음 · 팝업 버튼·거터 우클릭 없음 = 사용자 질문 1 무응답 → 보수적 추천안 (가) · [journal 11-22 §15](journal/2026-11-22.md) · V2 ✓ verify 20261122-181801 · V1 `git-revert` 19/0 · 466e3a01) · [journal 11-10 §13](journal/2026-11-10.md)) |
 | 상태줄 | 브랜치 · dirty · ahead/behind | M3 |
 | 명령 | `git_stage_file` · `git_commit`(메시지 입력) · `git_diff_file`(비교 뷰로) · `git_blame_line` · `git_log_file`(시점 목록 → 비교) | M4 |
 | 프로젝트 | `.nexa-project`가 git 루트를 인지 · 무시 규칙(`.gitignore`) 반영 | M4 |

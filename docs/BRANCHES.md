@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| `feat/git-revert-hunk` | 2026-11-22(Windows · 537e7691 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | C-1 덩어리 되돌리기 `git.revert_hunk`(캐럿 줄 명령 · 되돌리기 한 단계 · 디스크 불변 · 466e3a01) · 새 V1 `git-revert` 19/0 · 문서 4(journal 11-22 §15) |
 | `feat/history-pin` | 2026-11-22(Windows · 528f23e8 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | O-1 히스토리 시점 고정 `edit.history_pin` + git 감시 결함 수정(`statusbar.git` 끔에서도 거터·미니맵 감시 · 969cb472) · 새 V1 `history-pin` 16/0 · `git-watch` 9/0 · 문서 4(journal 11-22 §15) |
 | `feat/project-folder-name` | 2026-11-22(Windows · 001c9996 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-172 P2 `folders[].name`(D-187 · dbb23a4d) · 앵커 이름 = 적은 이름 → leaf · 열쇠 = 정의 경로 · V1 project-paths i 절 111/0 · 문서 7(journal 11-22 §15) |
 | `feat/project-warn-absolute` | 2026-11-22(Windows · 49621456 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-172 절대 경로 알림(D-188 · `project.warn_absolute` · 603958ab) · V1 project-paths h 절 94/0 · 문서 10(journal 11-22 §15) |
