@@ -121,7 +121,7 @@
 | **Timeline(Stage)** | `nsql-core` | 각 층이 자기 단계만 · 표시 시점 포맷 | `--timing` · 상태줄 |
 | **ConnTuning + HIDDEN 설정** | `conn_win.rs` · `nsql-settings` | 구현 상수 → 설정(비노출) 주입 | 접속 창 |
 | **RowSource 포트 · ResultData(Arc 세그먼트) · View(인덱스 투영)** | `nsql-core` · `nsql-io` | 결과 **한 세트** · 형식별 사본 0 · 렌더러 하나(`render_block`/`generate_src`) · NULL 글자 설정 1 | 그리드 · 텍스트 보기 7종 · 복사 · SQL 복사 · CLI(DR-33) |
-| **ToolDock · ToolGroup · DockLayout · ToolItem::separator + ToolFloatWin** | nexa-ctl `tooldock` · `toolfloat.rs` | 목적별 그룹(아이콘·구분자 계층) · 그립 드래그 순서 · 떼어 내기 = 액션만(창은 호스트) · 배치 문자열 1키 · 툴바 소유 한 곳 | 상단 툴바(09-17) · 결과 도구줄 후보 |
+| **ToolDock · ToolGroup · DockLayout · ToolItem::separator + ToolFloatWin** | nexa-ctl `tooldock` · `toolfloat.rs` | 목적별 그룹(아이콘·구분자 계층) · 그립 드래그 순서 · 떼어 내기 = 액션만(창은 호스트) · 배치 문자열 1키 · 툴바 소유 한 곳 · ★ 11-23 **옆 띠(세로 도크 · T-105 · D-497)** = `DockSide` Left/Right · `Toolbar::set_vertical` · 배치 `id@L`/`id@R` · 가장자리 영역에 끌어 놓으면 붙음 · 떼어 내면 띠 소속 해제 | 상단 툴바(09-17) · 결과 도구줄 후보 |
 
 | **타이밍 두 벌 — 트레일링 스로틀 / 트레일링 디바운스**(사용자 09-28 용어 확정) | `app/project.rs` `project_autosave_tick`(스로틀 + 주기 안전망) · `persist_settings`·저장 큐(디바운스 · [70 §3](70-autosave-and-restore.md)) | 잦은 요청을 1회로 접기 — **스로틀** = 창의 기준이 **첫** 사건 · 창이 닫힐 때 쌓인 것을 한 번에(코얼레싱·배치 · 프로젝트/파일 저장) · **디바운스** = 창의 기준이 **마지막** 사건 · 마지막 값이 전체를 대변(latest-wins · 설정 저장 · 잦은 호출) · 새 타이머를 만들 때 둘 중 무엇인지 먼저 정한다([70 §7-1](70-autosave-and-restore.md)) | 프로젝트 자동 저장 · 설정 저장 · 저장 큐 |
 | ⏳ **행 다중 선택 모델**(후보 · 10-27 · T-438) | nexa-dlg(`marks`) · nexa-grid(`SelectOp`) · nexa-sql `driver_win` `Sel`(순수 · 10-27 · 세 번째) | 클릭 단일 · Ctrl 토글 · Shift 범위 · 키 이동 · Space · Ctrl+A를 행 목록마다 따로 구현 → **세 번째 등장 = nexa-ui로 올릴 후보**(요청 시) | 파일 대화상자 · 결과 그리드 · 드라이버 관리자 |
