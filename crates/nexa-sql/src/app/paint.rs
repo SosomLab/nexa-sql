@@ -508,7 +508,12 @@ impl App {
     /// git 세그먼트 글(`statusbar.git` · 활성 파일 폴더 · 배경 조회) — 끔·정보 없음이면 None.
     fn status_seg_git(&mut self) -> Option<String> {
         // git 세그먼트(Sublime `main ⑥` · 활성 파일 폴더 · 설정 `statusbar.git` · 배경 조회).
-        if !self.settings.flag("statusbar.git") {
+        // 🔧 11-22(협업 발견): 감시(폴더·파일·갱신)는 상태줄 글과 따로다 — `statusbar.git`을 끄면 여기서 바로 돌아가 git 거터·hunk
+        //   팝업·미니맵 git 줄까지 HEAD를 못 받던 결함. 셋 중 하나라도 켜져 있으면 감시하고, 글은 `statusbar.git`일 때만 낸다.
+        let seg = self.settings.flag("statusbar.git");
+        let marks =
+            self.settings.flag("editor.minimap_git") || self.settings.flag("editor.git_gutter");
+        if !seg && !marks {
             return None;
         }
         let path = self.editors.active_path();
@@ -519,16 +524,11 @@ impl App {
         // ★ T-110 2-3(10-30): 감시 파일 = 활성 탭(HEAD 본문 → 미니맵 git 변경 줄 · 켜져 있을 때만 받는다).
         self.git
             // ★ 11-10 C-1 후속(협업 V1 ❌1): git 거터·hunk 팝업도 HEAD 본문이 필요 — 미니맵 git **또는** 거터가 켜져 있으면 감시.
-            .set_file(
-                if self.settings.flag("editor.minimap_git")
-                    || self.settings.flag("editor.git_gutter")
-                {
-                    path
-                } else {
-                    None
-                },
-            );
+            .set_file(if marks { path } else { None });
         self.git.refresh(false);
+        if !seg {
+            return None;
+        }
         self.git
             .info()
             .map(|info| format!("{} ({})", info.branch, info.changed))

@@ -175,6 +175,24 @@ pub(crate) fn entry_of(path: &Path) -> Option<Entry> {
     Some(e)
 }
 
+/// ★ O-1 고정(pin) 켜기/끄기(19 §3 "고정 보존"): 시점 파일 이름의 `_pin` 꼬리를 붙이거나 뗀다(본문은 건드리지 않는다 · 이름만).
+/// 고정된 시점은 항목 상한·전체 상한 정리에서 빠진다. 반환 = (새 경로, 바뀐 뒤 고정 여부). 규칙에 맞지 않는 이름·이름 바꾸기 실패 = `Err`.
+pub(crate) fn toggle_pin(path: &Path) -> Result<(PathBuf, bool), String> {
+    let e = entry_of(path).ok_or_else(|| format!("{}: not a history snapshot", path.display()))?;
+    let stem = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_suffix(".sql"))
+        .ok_or_else(|| format!("{}: not a history snapshot", path.display()))?;
+    let name = match stem.strip_suffix("_pin") {
+        Some(base) => format!("{base}.sql"),
+        None => format!("{stem}_pin.sql"),
+    };
+    let to = path.with_file_name(name);
+    std::fs::rename(path, &to).map_err(|err| format!("{}: {err}", path.display()))?;
+    Ok((to, !e.pinned))
+}
+
 /// 항목 폴더의 시점 목록(**최신 먼저** · 규칙에 맞는 파일만 · 폴더 없음 = 빈 목록).
 pub(crate) fn list_in(dir: &Path) -> Vec<Entry> {
     let Ok(rd) = std::fs::read_dir(dir) else {
@@ -293,6 +311,33 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&list[0].path).unwrap(), "select 3");
         assert_eq!(list[1].tag, Tag::Save);
         assert!(list[0].stamp > list[1].stamp, "최신 먼저");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// ★ O-1: 고정 = 이름만 바뀐다(본문·시각·종류·해시 그대로) · 고정된 시점은 항목 상한 정리에서 남는다 · 다시 부르면 풀린다.
+    #[test]
+    fn toggle_pin_renames_and_survives_item_prune() {
+        let root = tmp("pin");
+        let dir = file_dir_in(&root, Path::new("/pin.sql"));
+        store_in(&dir, "select 1", Tag::Save, 10).unwrap();
+        let old = list_in(&dir).pop().unwrap();
+        let (to, on) = toggle_pin(&old.path).unwrap();
+        assert!(on && to.to_string_lossy().ends_with("_pin.sql") && !old.path.exists());
+        let e = entry_of(&to).unwrap();
+        assert!(e.pinned && e.stamp == old.stamp && e.tag == old.tag && e.hash == old.hash);
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), "select 1");
+        // 상한 1 — 새 시점 둘을 더 써도 고정된 가장 오래된 것은 남는다(고정 1 + 고정 아닌 1).
+        store_in(&dir, "select 2", Tag::Save, 1).unwrap();
+        store_in(&dir, "select 3", Tag::Save, 1).unwrap();
+        let list = list_in(&dir);
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().any(|x| x.pinned && x.stamp == old.stamp));
+        // 다시 = 풀림 · 규칙에 맞지 않는 파일은 손대지 않는다.
+        let (back, on) = toggle_pin(&to).unwrap();
+        assert!(!on && !entry_of(&back).unwrap().pinned && back == old.path);
+        let other = dir.join("notes.txt");
+        std::fs::write(&other, "x").unwrap();
+        assert!(toggle_pin(&other).is_err() && other.exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 

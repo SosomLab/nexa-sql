@@ -196,6 +196,36 @@ impl App {
         self.history_list_palette("hrst:");
     }
 
+    /// ★ O-1 명령 `edit.history_pin`: 같은 목록 → `hpin:<경로>` → 그 시점의 고정을 켜거나 끈다(고정 = 상한 정리에서 보존 · 19 §3).
+    pub(crate) fn history_pin_pick(&mut self) {
+        self.history_list_palette("hpin:");
+    }
+
+    /// 팔레트 선택 `hpin:<시점 파일 경로>`: 고정 토글(파일 이름만 바뀐다) · 상태줄 안내 · 실패 = 로그 + 상태줄.
+    pub(crate) fn history_pin(&mut self, id: &str) {
+        let Some(p) = id.strip_prefix("hpin:") else {
+            return;
+        };
+        let p = PathBuf::from(p);
+        let when = store::entry_of(&p).map(|e| e.when()).unwrap_or_default();
+        match store::toggle_pin(&p) {
+            Ok((_, on)) => {
+                let m = if on {
+                    Msg::StHistoryPinned
+                } else {
+                    Msg::StHistoryUnpinned
+                };
+                self.sess.status = tf(m, &[&when]);
+            }
+            Err(e) => {
+                self.log_win
+                    .push(LogEntry::new(LogKind::Info, format!("history: {e}")));
+                self.sess.status = t(Msg::StHistoryNone).into();
+            }
+        }
+        self.redraw();
+    }
+
     /// 팔레트 선택 `hrst:<시점 파일 경로>`: 활성 탭 본문 = 시점 본문(사용자 11-06 결정 = 편집기로 복원 · 확인 뒤 F5로 컴파일) · 복원도
     /// `restore` 시점으로 남긴다(19 §3 "복원 자체도 시점") · 상태줄 안내.
     pub(crate) fn history_restore(&mut self, id: &str) {

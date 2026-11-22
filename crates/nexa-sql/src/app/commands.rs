@@ -140,6 +140,7 @@ pub(crate) const PALETTE: &[PalCmd] = &[
     p("edit.compare_with", Msg::MnEdit, Msg::MnCompareWith),
     p("edit.history", Msg::MnFile, Msg::MnHistory),
     p("edit.history_restore", Msg::MnFile, Msg::MnHistoryRestore),
+    p("edit.history_pin", Msg::MnFile, Msg::MnHistoryPin),
     p("git.next_hunk", Msg::MnEdit, Msg::MnGitNextHunk),
     p("git.prev_hunk", Msg::MnEdit, Msg::MnGitPrevHunk),
     p("obj.menu", Msg::MnExplorer, Msg::MnObjMenu),
