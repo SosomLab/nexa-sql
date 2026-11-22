@@ -131,6 +131,16 @@ if grep -qE 'still in progress|server source (unchanged|changed) since|no earlie
 expect "r9-v2-tab-opened" "$V1_OUT/hr-9t.txt" "v2.sql"
 expect_eq "r9-one-v1-tab" "$(grep -c 'v1[.]sql' "$V1_OUT/hr-9t.txt" 2>/dev/null)" "1"
 expect_not "r9-no-late-drop" "$V1_OUT/hr-9log.txt" "late source response dropped"
+# r10(F-1 · T-513 검토 후속): 확인을 건 **0~20 ms 안**에(답이 오기 전을 노림) 같은 객체를 탐색기에서 열기를 세 번 →
+#      매번 v1 탭 수 = 대조(hr8c · 확인 없이 같은 순서 = 2) · 종전 = 표식 요청 중이면 같은 이름 열기가 "중복"으로 버려져 탭이 안 열렸다
+#      (SQLite는 답이 빨라 그 창을 못 잡을 수 있음 → 세 번 모두 같으면 PASS · 잡혔는지는 덤프로 가르지 못함 = 단위 시험이 덮음)
+CTRL=$(grep -c 'v1[.]sql' "$V1_OUT/hr-8cb.txt" 2>/dev/null)
+for k in 0 10 20; do
+  fresh; mkv2
+  v1_gui "hr10_$k" "$OPEN,${C}@after:6000:explorer.select:v1,${C}@after:6200:edit.history_check,${C}@after:$((6200 + k)):explorer.pick:source,${C}@after:10000:tabs.dump:$O/hr-10-$k.txt,${C}@after:10300:file.exit,${C}@after:10800:toolbar.pick:project.exit_skip" 25 lite
+  expect_eq "r10-$k-ms-tab-opened-like-control" "$(grep -c 'v1[.]sql' "$V1_OUT/hr-10-$k.txt" 2>/dev/null)" "$CTRL"
+  expect_not "hr10_$k-no-panic" "$V1_OUT/hr10_$k.stderr" "panicked"
+done
 for t in hr5 hr7 hr8 hr8c hr9; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done
