@@ -44,7 +44,7 @@ fresh() { # [설정…] — 새 격리 홈 + 같은 DB 파일을 처음 뷰(SELE
 }
 OPEN="${C}open:$W/c.sql,${C}@after:1500:explorer.expand:main,${C}@after:2500:explorer.expand:Views,${C}@after:3300:explorer.select:v1,${C}@after:3600:explorer.pick:source"
 rm -f "$V1_OUT"/ha-*.txt
-fresh "history.server_check_secs=1"
+fresh "history.server_check_secs=1" "ui.toast_ms=60000"
 v1_gui ha1 "$OPEN,${C}@after:6000:tab.prev,${C}@after:7500:tab.next,${C}@after:10000:status.dump:$O/ha-1.txt,${C}@after:10300:log.dump:$O/ha-1log.txt,${C}@after:10600:file.exit,${C}@after:11100:toolbar.pick:project.exit_skip" 30 lite
 expect_eq "a1-dump-ran" "$([ -f "$V1_OUT/ha-1.txt" ] && [ -f "$V1_OUT/ha-1log.txt" ] && echo y)" "y"
 expect_not "a1-auto-quiet-when-same" "$V1_OUT/ha-1.txt" "unchanged since"
