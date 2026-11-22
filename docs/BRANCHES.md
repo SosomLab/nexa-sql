@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| `feat/project-folder-name` | 2026-11-22(Windows · 001c9996 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-172 P2 `folders[].name`(D-187 · dbb23a4d) · 앵커 이름 = 적은 이름 → leaf · 열쇠 = 정의 경로 · V1 project-paths i 절 111/0 · 문서 7(journal 11-22 §15) |
 | `feat/project-warn-absolute` | 2026-11-22(Windows · 49621456 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-172 절대 경로 알림(D-188 · `project.warn_absolute` · 603958ab) · V1 project-paths h 절 94/0 · 문서 10(journal 11-22 §15) |
 | `finish-5` | 2026-11-21(Windows · main 위) | 2026-11-21 → main ff 병합·삭제(main = 4413987c · push 안 함) | 2 | 마무리 5건 = CLI Oracle OS 인증 면제 · 모달 틀린 값 재질문(상한 2) · CLI `--no-prompt` 8곳 · ODBC SQLSTATE 28000 판별 · 결과 탭 닫기 미적용 편집 확인(d2cf2bf5) + 기록 |
 | `conn-role-combo` | 2026-11-21(Windows · da4560cc 위) | 2026-11-21 → main ff 병합·삭제(push 안 함) | 5 | Oracle 역할 콤보(a4a0ac9d) · `[stall]` 계측(0eec6621) · T-250 분류 둘(99c4c4e8) + 기록(80199bc6 · 52e18941 · V2 · V1 ✓ · Debug 37064) |
