@@ -1589,6 +1589,28 @@ impl App {
             }
             ids.push(id);
         }
+        // ★ T-172 P3(73 §4-3 "모아서 한 번"): 못 찾은 탭 가운데 **경로 변수 아래**인 것을 변수 이름별로 모아 로그 한 줄 —
+        //   자리 탭 하나에서 [찾아보기…]로 파일을 고르면 그 변수의 이 PC 자리가 정해져 나머지도 함께 열린다는 것까지 알린다(창 없음).
+        let mut need: Vec<(String, usize)> = Vec::new();
+        for m in &self.proj_missing {
+            if let Some((name, _)) = m.path.as_ref().and_then(|p| self.project.var_of_path(p)) {
+                match need.iter_mut().find(|(n, _)| *n == name) {
+                    Some(hit) => hit.1 += 1,
+                    None => need.push((name, 1)),
+                }
+            }
+        }
+        if !need.is_empty() {
+            let names = need
+                .iter()
+                .map(|(n, c)| format!("{n} ({c})"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                tf(Msg::StProjectVarsMissing, &[&names]),
+            ));
+        }
         if let Some(Some(id)) = ids.get(self.project.active) {
             self.editors.switch_to_id(*id);
             self.sync_grid_tab();
