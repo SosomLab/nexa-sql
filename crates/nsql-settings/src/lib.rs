@@ -4277,6 +4277,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ T-172 (D-188 · 사용자 확정 11-21): 저장할 때 절대 경로로 남는 것이 있으면 로그 한 줄(저장은 막지 않는다).
+    Entry {
+        key: "project.warn_absolute",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectWarnAbsolute,
+        desc: Msg::DescProjectWarnAbsolute,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
     Entry {
         key: "project.restore_last",
         cat: Msg::CatProject,

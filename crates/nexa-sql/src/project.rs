@@ -587,6 +587,38 @@ impl Project {
         relativize(&self.folder_def(i), &fcx)
     }
 
+    /// ★ T-172 (D-188): 프로젝트 파일에 **절대 경로로 적히는** 것의 수(등록 폴더 정의 + 탭 경로 · 같은 글은 한 번) — 프로젝트 폴더
+    /// 기준 상대 · 등록 폴더 앵커 · 홈 앵커로 적히는 것은 세지 않는다. 폴더째 옮기거나 다른 PC에서 열면 따라오지 않는 경로다
+    /// (저장은 막지 않는다 · 호출 쪽이 `project.warn_absolute`일 때 로그 한 줄).
+    pub(crate) fn absolute_path_count(&self) -> usize {
+        let (base, home) = (self.base(), home_dir());
+        let defs = self.folder_defs();
+        let fcx = PathCtx {
+            base: base.as_deref(),
+            folders: &[],
+            names: &[],
+            home: home.as_deref(),
+        };
+        let cx = PathCtx {
+            base: base.as_deref(),
+            folders: &self.folders,
+            names: &defs,
+            home: home.as_deref(),
+        };
+        let tabs = self.tabs.iter().filter_map(|t| t.path.as_deref());
+        let mut seen: Vec<String> = Vec::new();
+        for s in defs
+            .iter()
+            .map(|f| relativize(f, &fcx))
+            .chain(tabs.map(|p| relativize(p, &cx)))
+        {
+            if is_absolute_text(&s) && !seen.contains(&s) {
+                seen.push(s);
+            }
+        }
+        seen.len()
+    }
+
     /// 고유 번호(없으면 지금 만든다 · OS 난수 8바이트 = 16진 16자) — PC별 대응표의 열쇠(D-494). 난수를 못 얻으면 `None`.
     pub(crate) fn ensure_id(&mut self) -> Option<String> {
         if self.id.is_none() {
@@ -834,6 +866,11 @@ fn relativize(p: &Path, cx: &PathCtx<'_>) -> String {
     slash(p)
 }
 
+/// `relativize`가 낸 글이 절대 경로인가(`/…` · `//서버/…` · `X:/…`) — 상대·앵커(`${…}`)가 아니면 절대다.
+fn is_absolute_text(s: &str) -> bool {
+    s.starts_with('/') || s.as_bytes().get(1) == Some(&b':')
+}
+
 fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -1015,6 +1052,37 @@ mod tests {
         // 이 PC에 없는 폴더 앵커 = 글자 그대로 프로젝트 폴더 아래로 → 저장하면 같은 글로 되돌아간다(잃지 않는다).
         let raw = "${workspaceFolder:gone}/c.sql";
         assert_eq!(relativize(&resolve(raw, &cx), &cx), raw);
+    }
+
+    /// ★ T-172 (D-188): 절대로 남는 경로만 센다 — 프로젝트 폴더 아래(상대) · 등록 폴더 아래(앵커)는 빼고 · 같은 경로는 한 번.
+    #[test]
+    fn absolute_path_count_counts_only_non_portable_paths() {
+        let root = PathBuf::from(if cfg!(windows) { "Q:\\w" } else { "/w" });
+        let (proj, lib, far) = (
+            root.join("proj"),
+            root.join("ext").join("lib"),
+            root.join("far").join("c.sql"),
+        );
+        let tab = |p: PathBuf| TabState {
+            path: Some(p),
+            ..TabState::default()
+        };
+        let mut p = Project::default().with_path(&proj.join("p.nsql-project"));
+        assert_eq!(p.absolute_path_count(), 0);
+        p.folders = vec![proj.join("sql")];
+        p.tabs = vec![tab(proj.join("sql").join("a.sql")), TabState::default()];
+        assert_eq!(p.absolute_path_count(), 0, "프로젝트 폴더 아래 = 상대");
+        // 프로젝트 밖 등록 폴더 = 폴더 정의 자신은 절대(1) · 그 아래 탭은 앵커(0).
+        p.folders.push(lib.clone());
+        p.tabs.push(tab(lib.join("b.sql")));
+        assert_eq!(p.absolute_path_count(), 1);
+        // 어느 앵커에도 안 걸리는 탭 = 절대 · 같은 경로 두 탭은 한 번.
+        p.tabs.push(tab(far.clone()));
+        p.tabs.push(tab(far));
+        assert_eq!(p.absolute_path_count(), 2);
+        assert!(is_absolute_text("//srv/share/a.sql") && is_absolute_text("C:/a.sql"));
+        assert!(!is_absolute_text("sql/a.sql") && !is_absolute_text("${userHome}/a.sql"));
+        assert!(!is_absolute_text(".") && !is_absolute_text(""));
     }
 
     /// ★ T-172 (A)(B): 고유 번호 왕복 · 다시 지정한 폴더는 이 PC에서만 바뀌고(파일에는 정의 경로 그대로 · 앵커 이름도 정의 쪽) ·

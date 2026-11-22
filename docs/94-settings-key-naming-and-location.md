@@ -368,6 +368,12 @@
 | `grid.copy_null` | Choice blank\|shown\|null | **blank** | 결과 셋 | 그리드에서 복사할 때 NULL 셀 — blank = 빈 칸 · shown = `grid.null_text` 글자 · null = `NULL` · 범위 = 그리드 셀 복사(TSV · 머리글 포함 · CSV · 텍스트 · Markdown) · SQL·JSON 복사와 텍스트 보기 복사는 그대로 · ★ 기본 blank = 종전(NULL 글자 복사)과 달라짐(사용자 11-19) |
 | `intel.dblink_remote_meta` | Bool | off | 코드 완성 | DB 링크 너머 원격 테이블 메타 조회 — **구현 전 잠금**(`PENDING_KEYS` · 설정 창 잠김 · `set` 거부 "not available yet") · 기능 = T-502(보류 · 사용자 지시 때만) |
 
+### 6-39. 11-22 새 키 1(프로젝트 절대 경로 알림 · T-172 · D-188 · [73 §4-4](73-project-path-portability.md) · [journal 11-22 §15](journal/2026-11-22.md) · 브랜치 `feat/project-warn-absolute` · 검증·커밋 대기)
+
+| 키 | 종류 | 기본 | 분류 | 뜻 |
+|---|---|---|---|---|
+| `project.warn_absolute` | Bool | on | 프로젝트 | 프로젝트 저장 때 절대 경로 알림 — 절대 경로로 남는 폴더·탭 경로(프로젝트 폴더 · 등록 폴더 · 홈 폴더 밖)가 있으면 로그에 한 줄(`StProjectAbsolutePaths`) · 이런 경로는 다른 자리·PC로 옮기면 따라오지 않음 · 저장은 막지 않음 · 끔 = 알리지 않음 |
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).

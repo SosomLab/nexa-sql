@@ -8,6 +8,7 @@
 #   f. 못 찾은 탭의 자리 탭(T-172 (C) · D-189 · D-496): 탭 줄 그 자리에 빈 읽기 전용 뷰 탭 · 저장 때 순서 그대로 · 닫으면 기록에서 뺀다
 #      (미저장 본문이 있으면 한 번 더 닫아야) · `project.missing_found:<경로>`로 되살림
 #   g. 자리 탭이 보관된 본문을 읽기 전용으로 보여 줌(이중 저장 없음) · 못 찾은 등록 폴더 알림(로그·토스트) · `file.close_tab`(Ctrl+W) 길도 재확인(11-22 묶음 4)
+#   h. 절대 경로 알림(T-172 · D-188 · `project.warn_absolute`): 프로젝트 밖 탭이 절대 경로로 남으면 명시 저장마다 로그 한 줄 · 상대뿐이면 0 · 끄면 0
 #   종료: 프로젝트가 바뀐 채 `file.exit`면 "프로젝트 저장?" 물음이 뜬다 → 답 = `toolbar.pick:project.exit_skip`(물음 답은 indent_pick 길 · 직접 id는 menu_action이라 무시됨)
 #   임시 폴더 = OS 임시 `nsql-v1pp-*`(끝나면 삭제) · 쉼표가 든 경로는 기동 명령 구분자와 겹치므로 쓰지 않는다.
 . "$(dirname "$0")/../lib/v1.sh"
@@ -178,7 +179,38 @@ LASTC=$(tail -c 1 "$V1_OUT/pg3-status.txt" 2>/dev/null | od -An -c | tr -d ' ')
 if [ -s "$V1_OUT/pg3-status.txt" ] && [ "$LASTC" != "" ] && [ "$LASTC" != '\n' ]; then v1_pass "g-notice-no-trailing-space"
 else v1_failmsg "g-notice-no-trailing-space" "끝 글자='$LASTC' · $(head -c 200 "$V1_OUT/pg3-status.txt" 2>/dev/null)"; fi
 
+# ── h. 절대 경로 알림(T-172 · D-188 · project.warn_absolute · 협업 초안 11-22) ───────────
+#   OS 임시 폴더가 홈 아래(Windows %TEMP% = 사용자 폴더 · 맥 /var/folders는 홈 밖)라 그대로면 탭이 `${userHome}/…`으로 적혀 세지 않는다
+#   → 이 절의 기동만 HOME을 WK 안 빈 폴더로 바꿔 홈 앵커를 피한다(home_dir_str = HOME → USERPROFILE).
+FAR="$WK/far"; HH="$WK/h"; mkdir -p "$FAR" "$HH"
+printf 'SELECT 6 AS h FROM dual;
+' > "$FAR/h.sql"
+FM=$(v1_m "$FAR"); HM=$(v1_m "$HH")
+mkh() { printf '%s
+' '{"version": 2, "folders": [{"path": "."}], "active": 0, "tabs": [{"path": "sql/a.sql", "title": "a.sql", "id": 31}]}' > "$P/$1"; }
+ABSW="path(s) in the project file are absolute"
+rm -f "$V1_OUT"/ph1-log.txt "$V1_OUT"/ph0-log.txt "$V1_OUT"/ph2-log.txt
+#   h1. 켬(기본) — 프로젝트 밖 탭 1개 + 저장 2번(명시 저장은 매번) → 줄 2개 · 수 = 1
+mkh h1.nsql-project
+HOME="$HM" v1_gui ph1 "project.load:$PM/h1.nsql-project,@after:1500:open:$FM/h.sql,@after:2300:project.save,@after:2700:project.save,@after:3100:log.dump:$O/ph1-log.txt,@after:3700:file.exit,@after:4300:toolbar.pick:project.exit_skip" 25
+cp "$P/h1.nsql-project" "$V1_OUT/ph1.nsql-project" 2>/dev/null
+expect "h1-tab-abs-in-file" "$V1_OUT/ph1.nsql-project" "$FM/h.sql"
+expect "h1-warn-count-1" "$V1_OUT/ph1-log.txt" "1 $ABSW"
+expect_eq "h1-warn-each-explicit-save" "$(grep -cF "$ABSW" "$V1_OUT/ph1-log.txt" 2>/dev/null)" "2"
+#   h0. 상대 경로뿐 → 줄 0(부정 판정 전제 = 덤프가 실제로 돌았다 — 로그가 비면 0바이트 파일)
+mkh h0.nsql-project
+HOME="$HM" v1_gui ph0 "project.load:$PM/h0.nsql-project,@after:1500:project.save,@after:1900:log.dump:$O/ph0-log.txt,@after:2500:file.exit,@after:3100:toolbar.pick:project.exit_skip" 25
+expect_eq "h0-dump-ran" "$([ -f "$V1_OUT/ph0-log.txt" ] && echo y)" "y"
+expect_not "h0-no-warn-relative" "$V1_OUT/ph0-log.txt" "$ABSW"
+#   h2. 끔 → 줄 0(settings를 바꾸므로 시나리오 맨 끝)
+v1_set "project.warn_absolute=off"
+mkh h2.nsql-project
+HOME="$HM" v1_gui ph2 "project.load:$PM/h2.nsql-project,@after:1500:open:$FM/h.sql,@after:2300:project.save,@after:2700:log.dump:$O/ph2-log.txt,@after:3300:file.exit,@after:3900:toolbar.pick:project.exit_skip" 25
+expect "h2-tab-abs-in-file" "$P/h2.nsql-project" "$FM/h.sql"
+expect_eq "h2-dump-ran" "$([ -f "$V1_OUT/ph2-log.txt" ] && echo y)" "y"
+expect_not "h2-off-no-warn" "$V1_OUT/ph2-log.txt" "$ABSW"
+
 # 공통 — 모든 기동 panic 없음
-for t in pa pb pb2 pc pd pe pe2 pf1 pf2 pf3a pf3b pf4 pg1 pg2 pg3; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
+for t in pa pb pb2 pc pd pe pe2 pf1 pf2 pf3a pf3b pf4 pg1 pg2 pg3 ph1 ph0 ph2; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done

@@ -537,6 +537,7 @@ impl App {
         match self.project.save() {
             Ok(()) => {
                 self.sess.status = tf(Msg::StProjectSaved, &[&nexa_fs::path::display(&path)]);
+                self.project_warn_absolute(true);
                 // 파일 모드 → 새 프로젝트: 로컬 북마크는 프로젝트로 **이관**(로컬 파일 비움 · 사용자 09-23 "닫으면 북마크도 초기화").
                 if !prev.is_open() {
                     self.bookmarks.mark_migrate_local();
@@ -758,6 +759,10 @@ impl App {
         }
         // ★ T-172: 다른 프로젝트를 열었는데 등록 폴더를 못 찾았다 → 알린다(로그 + 알림 · 탐색기 우클릭 "폴더 다시 지정…").
         let gone = self.project.folders.iter().filter(|f| !f.is_dir()).count();
+        if switched {
+            // 다른 프로젝트 = 절대 경로 알림 기준을 처음으로(T-172 · D-188).
+            self.project_abs_warned = 0;
+        }
         if switched && gone > 0 {
             let msg = tf(Msg::StProjectFoldersMissing, &[&gone.to_string()]);
             self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
@@ -1251,8 +1256,25 @@ impl App {
         if r.is_ok() {
             self.project_note_disk(self.project.to_document());
             self.project_mark_saved_gen();
+            self.project_warn_absolute(false);
         }
         r
+    }
+
+    /// ★ T-172 (D-188 · 73 §4-4 ④): 방금 쓴 프로젝트 파일에 절대 경로로 남은 것이 있으면 로그 창에 한 줄(`project.warn_absolute` ·
+    /// 저장은 막지 않는다). 명시 저장(`explicit`)은 매번 · 자동 저장·닫기 길은 그 수가 달라졌을 때만(같은 줄이 주기마다 쌓이지 않게).
+    fn project_warn_absolute(&mut self, explicit: bool) {
+        let n = if self.settings.flag("project.warn_absolute") {
+            self.project.absolute_path_count()
+        } else {
+            0
+        };
+        let changed = n != self.project_abs_warned;
+        self.project_abs_warned = n;
+        if n > 0 && (explicit || changed) {
+            let msg = tf(Msg::StProjectAbsolutePaths, &[&n.to_string()]);
+            self.log_win.push(LogEntry::new(LogKind::Info, msg));
+        }
     }
 
     /// 작업 환경을 프로젝트에 담는다(사용자 09-23): 탐색기 선택 · 탭 순서(파일 = 경로만 · 스크립트 = 본문 ≤ `project.unsaved_max_mb`) ·
@@ -2056,6 +2078,7 @@ impl App {
         } else if self.project.save().is_ok() {
             self.project_note_disk(js);
             self.project_mark_saved_gen();
+            self.project_warn_absolute(false);
         }
     }
 

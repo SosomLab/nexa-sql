@@ -504,6 +504,8 @@ struct App {
     /// 우리 상태를 마지막으로 **쓰거나 맞춘** 시점의 문서 지문 — 자동 저장은 지금 문서가 이것과 다를 때만 쓴다. 디스크 문서와 비교하면
     /// 화면 상태(활성 탭·캐럿)만 다른 두 유휴 인스턴스가 서로의 문서를 끝없이 번갈아 덮어쓴다.
     project_ours_mark: u64,
+    /// ★ T-172 (D-188): 마지막으로 알린 "절대로 남는 경로" 수 — 자동 저장·닫기 길은 수가 달라졌을 때만 다시 알린다(반복 방지).
+    project_abs_warned: usize,
     /// 탭 id(이 인스턴스 안에서만 유일) → **문서 id**(프로젝트 파일에 적는 탭 `id` · 인스턴스가 달라도 같은 탭이면 같은 값 · 병합 열쇠).
     tab_doc_ids: std::collections::HashMap<u64, u64>,
     /// 다른 인스턴스가 고친 탭 본문 중 우리 편집과 겹쳐 확인을 기다리는 것(탭 id → 저쪽 본문 · 겹친 곳 수) — 탭 띠로 묻는다.
@@ -2128,6 +2130,7 @@ fn main() {
         project_last_json: Vec::new(),
         project_sig: None,
         project_ours_mark: 0,
+        project_abs_warned: 0,
         tab_doc_ids: std::collections::HashMap::new(),
         project_pending: std::collections::HashMap::new(),
         capture_cache: std::collections::HashMap::new(),
