@@ -16,6 +16,7 @@ use nexa_gfx::{Font, Surface};
 use nsql_i18n::{t, tf, Msg};
 use std::num::NonZeroU32;
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
@@ -75,6 +76,14 @@ pub(crate) struct KeysWin {
     selected: Option<usize>,
     /// 캡처 중(선택 행에 다음 키 조합을 넣는다).
     capturing: bool,
+    /// ★ T-98(11-22): 2단 코드 캡처 — 첫 조합을 받은 시각. `chord_wait` 안에 둘째 조합이 오면 `첫,둘째`(Sublime 키 시퀀스) ·
+    ///   지나면 첫 조합 하나로 확정(`tick` → `take_change`). 첫 조합은 **기다리는 동안 지정하지 않는다**(먼저 지정하면 그 조합을 쓰던
+    ///   다른 명령에서 빼 버려 2단으로 바뀐 뒤에도 돌아오지 않는다).
+    capture_first: Option<(Chord, Instant)>,
+    /// 첫 조합 뒤 둘째 조합을 기다리는 시간(설정 `ui.key_capture_chord_ms` · 0 = 기다리지 않음 = 한 조합만).
+    chord_wait: Duration,
+    /// `tick`이 확정한 변경(명령 id · 코드) — 호스트가 `take_change`로 가져가 `KeysAction::Changed`와 같은 길로 적용한다.
+    pending_change: Option<(String, String)>,
     /// ★ 180차(결정 ② a′ · D-397): 파일의 context 없는 바인딩 복사본(열 때) — [지정]한 조합을 파일이 쓰면 안내(B).
     file_chords: Vec<(Vec<Chord>, &'static str)>,
     /// ★ 180차: 안내 한 줄(명령 id · 글) — 그 행의 오른쪽 열에 경고색. 동작은 파일 > 설정 그대로 · 혼란만 줄인다(사용자 10-30 a′).
@@ -107,6 +116,9 @@ impl KeysWin {
             rows: Vec::new(),
             selected: None,
             capturing: false,
+            capture_first: None,
+            chord_wait: Duration::from_millis(1200),
+            pending_change: None,
             file_chords: Vec::new(),
             notice: None,
             all: Vec::new(),
@@ -236,13 +248,14 @@ impl KeysWin {
 
     /// ★ 180차(결정 ② a′): [지정]으로 받은 조합을 키맵 파일이 **다른** 명령에 묶어 두었으면 안내 글(B 경우 — 설정은 저장되지만
     ///   키맵을 다시 만들 때 파일이 가로채므로 이 행에서는 빠져 보인다). 같은 명령이면 가로채는 것이 없으니 None.
-    fn assign_notice(&self, ch: &Chord, id: &str) -> Option<String> {
-        keymap::file_owner_in(&self.file_chords, std::slice::from_ref(ch))
+    fn assign_notice(&self, chords: &[Chord], id: &str) -> Option<String> {
+        keymap::file_owner_in(&self.file_chords, chords)
             .filter(|owner| *owner != id)
             .map(|owner| {
+                let disp: Vec<String> = chords.iter().map(Chord::display).collect();
                 tf(
                     Msg::KeysFileHasKey,
-                    &[&ch.display(), &keymap::label_of(owner)],
+                    &[&disp.join(", "), &keymap::label_of(owner)],
                 )
             })
     }
@@ -253,6 +266,71 @@ impl KeysWin {
             .get(i)
             .and_then(|r| r.file_disp.as_deref())
             .map(|d| tf(Msg::KeysFileHasCmd, &[d]))
+    }
+
+    /// 둘째 조합을 기다리는 시간(설정 `ui.key_capture_chord_ms`).
+    pub(crate) fn set_chord_wait_ms(&mut self, ms: u64) {
+        self.chord_wait = Duration::from_millis(ms);
+    }
+
+    /// `tick`이 확정한 변경(첫 조합만으로 끝난 캡처) — 한 번만 내준다.
+    pub(crate) fn take_change(&mut self) -> Option<(String, String)> {
+        self.pending_change.take()
+    }
+
+    /// ★ T-98: 캡처 중 조합 하나를 받았다 — 첫 조합이면 기다리고(`chord_wait` 0이면 바로 확정) · 둘째면 2단 코드로 확정.
+    fn capture_chord(&mut self, ch: Chord, now: Instant) -> KeysAction {
+        let Some(id) = self.selected.and_then(|i| self.rows.get(i)).map(|r| r.id) else {
+            self.stop_capture();
+            return KeysAction::None;
+        };
+        match self.capture_first.take() {
+            Some((first, _)) => self.finish_capture(id, &[first, ch]),
+            None if self.chord_wait.is_zero() => self.finish_capture(id, &[ch]),
+            None => {
+                self.capture_first = Some((ch, now));
+                KeysAction::None
+            }
+        }
+    }
+
+    fn stop_capture(&mut self) {
+        self.capturing = false;
+        self.sync_enabled();
+    }
+
+    /// 캡처 확정: 코드 = 조합을 쉼표로 이은 글(`ctrl+k,ctrl+u`) · 파일 바인딩이 같은 조합을 쓰면 안내(B).
+    fn finish_capture(&mut self, id: &'static str, chords: &[Chord]) -> KeysAction {
+        self.stop_capture();
+        self.notice = self.assign_notice(chords, id).map(|n| (id, n));
+        let codes: Vec<String> = chords.iter().map(Chord::code).collect();
+        KeysAction::Changed {
+            id: id.to_string(),
+            code: codes.join(","),
+        }
+    }
+
+    /// 첫 조합 뒤 기다림이 끝났으면 그 조합 하나로 확정해 `pending_change`에 둔다(바뀌었으면 true).
+    fn capture_timeout(&mut self, now: Instant) -> bool {
+        let due = self
+            .capture_first
+            .as_ref()
+            .is_some_and(|(_, t0)| now.duration_since(*t0) >= self.chord_wait);
+        if !due {
+            return false;
+        }
+        let Some((first, _)) = self.capture_first.take() else {
+            return false;
+        };
+        match self.selected.and_then(|i| self.rows.get(i)).map(|r| r.id) {
+            Some(id) => {
+                if let KeysAction::Changed { id, code } = self.finish_capture(id, &[first]) {
+                    self.pending_change = Some((id, code));
+                }
+            }
+            None => self.stop_capture(),
+        }
+        true
     }
 
     /// 캡처 시작(안내는 새 동작이 시작되면 걷는다).
@@ -284,7 +362,7 @@ impl KeysWin {
         if self.window.is_none() {
             return false;
         }
-        let mut any = false;
+        let mut any = self.capture_timeout(Instant::now());
         for b in self.buttons() {
             any |= b.tick(now_ms);
         }
@@ -292,15 +370,17 @@ impl KeysWin {
     }
 
     pub(crate) fn animating(&self) -> bool {
-        self.window.is_some()
-            && [
-                &self.assign_btn,
-                &self.clear_btn,
-                &self.reset_btn,
-                &self.close_btn,
-            ]
-            .iter()
-            .any(|b| b.is_animating())
+        // 첫 조합 뒤 기다리는 동안은 tick이 돌아야 한다(확정 시각).
+        self.window.is_some() && self.capture_first.is_some()
+            || self.window.is_some()
+                && [
+                    &self.assign_btn,
+                    &self.clear_btn,
+                    &self.reset_btn,
+                    &self.close_btn,
+                ]
+                .iter()
+                .any(|b| b.is_animating())
     }
 
     fn buttons(&mut self) -> [&mut Button; 4] {
@@ -343,6 +423,7 @@ impl KeysWin {
         self.surface = crate::present::Presenter::new(win.clone()).ok();
         self.window = Some(win);
         self.capturing = false;
+        self.capture_first = None;
         self.sync_enabled();
         self.layout();
         self.redraw();
@@ -352,6 +433,7 @@ impl KeysWin {
         self.surface = None;
         self.window = None;
         self.capturing = false;
+        self.capture_first = None;
         self.notice = None;
     }
 
@@ -465,6 +547,7 @@ impl KeysWin {
                 if self.capturing {
                     if is_esc {
                         self.capturing = false;
+                        self.capture_first = None;
                         self.sync_enabled();
                         self.redraw();
                         return KeysAction::None;
@@ -480,17 +563,9 @@ impl KeysWin {
                     ) else {
                         return KeysAction::None;
                     };
-                    self.capturing = false;
-                    self.sync_enabled();
-                    if let Some(i) = self.selected {
-                        let id = self.rows[i].id;
-                        self.notice = self.assign_notice(&ch, id).map(|n| (id, n));
-                        return KeysAction::Changed {
-                            id: id.to_string(),
-                            code: ch.code(),
-                        };
-                    }
-                    return KeysAction::None;
+                    let act = self.capture_chord(ch, Instant::now());
+                    self.redraw();
+                    return act;
                 }
                 if is_esc {
                     // ★ T-53: 검색 글이 있으면 Esc는 먼저 검색을 비운다 · 빈 상태의 Esc = 창 닫기.
@@ -555,6 +630,7 @@ impl KeysWin {
                     return KeysAction::None;
                 }
                 self.capturing = false;
+                self.capture_first = None;
                 self.selected = Some(i);
                 self.sync_enabled();
                 for b in self.buttons() {
@@ -615,6 +691,7 @@ impl KeysWin {
         }
         if self.reset_btn.take_clicked() {
             self.capturing = false;
+            self.capture_first = None;
             self.notice = None;
             self.sync_enabled();
             self.redraw();
@@ -754,7 +831,11 @@ impl KeysWin {
                 }
                 dc.text(list.x + pad / 2, ty, clip, &r.label, th.text);
                 let (chord, color) = if sel && self.capturing {
-                    (t(Msg::KeysCapturing).to_string(), th.accent)
+                    // ★ T-98: 첫 조합을 받았으면 그 조합과 함께 둘째를 기다리는 중임을 보인다(`Ctrl+K, …`).
+                    match &self.capture_first {
+                        Some((first, _)) => (format!("{}, …", first.display()), th.accent),
+                        None => (t(Msg::KeysCapturing).to_string(), th.accent),
+                    }
                 } else if r.file {
                     (
                         format!("{} {}", r.chord, t(Msg::KeysFromFile)),
@@ -979,15 +1060,20 @@ mod tests {
         w.refresh(&km);
         let ch = Chord::parse("ctrl+alt+9").unwrap();
         // B: 다른 명령에 지정 → 안내에 조합 표시와 파일 쪽 명령 라벨이 들어간다.
-        let n = w.assign_notice(&ch, "edit.upper_case").expect("B 안내");
+        let n = w
+            .assign_notice(std::slice::from_ref(&ch), "edit.upper_case")
+            .expect("B 안내");
         assert!(
             n.contains(&ch.display()) && n.contains(&keymap::label_of("file.save_as")),
             "{n}"
         );
         // 같은 명령이면 가로채는 것이 없다 · 파일에 없는 조합도 없다.
-        assert_eq!(w.assign_notice(&ch, "file.save_as"), None);
         assert_eq!(
-            w.assign_notice(&Chord::parse("ctrl+alt+8").unwrap(), "edit.upper_case"),
+            w.assign_notice(std::slice::from_ref(&ch), "file.save_as"),
+            None
+        );
+        assert_eq!(
+            w.assign_notice(&[Chord::parse("ctrl+alt+8").unwrap()], "edit.upper_case"),
             None
         );
         // C: 파일이 지정한 명령을 비우면 안내 · 아니면 없음 · context 행은 [비우기] 자체가 꺼지지만 file_disp도 없다.
@@ -1003,8 +1089,48 @@ mod tests {
         w.selected = Some(i_save);
         w.start_capture();
         assert!(w.capturing && w.notice.is_none());
+        // ★ T-98: 첫 조합은 기다리고(지정 안 함) · 둘째가 오면 2단 코드 · 기다림이 끝나면 한 조합으로 확정(take_change 한 번).
+        let (k, u) = (
+            Chord::parse("ctrl+k").unwrap(),
+            Chord::parse("ctrl+u").unwrap(),
+        );
+        let t0 = Instant::now();
+        assert!(matches!(w.capture_chord(k.clone(), t0), KeysAction::None));
+        assert!(w.capturing && w.capture_first.is_some());
+        assert!(!w.capture_timeout(t0 + Duration::from_millis(100)));
+        match w.capture_chord(u.clone(), t0 + Duration::from_millis(200)) {
+            KeysAction::Changed { id, code } => {
+                assert_eq!(id, "file.save_as");
+                assert_eq!(code, format!("{},{}", k.code(), u.code()));
+            }
+            _ => panic!("2단 코드로 확정돼야 한다"),
+        }
+        assert!(!w.capturing && w.capture_first.is_none() && w.take_change().is_none());
+        w.start_capture();
+        assert!(matches!(w.capture_chord(k.clone(), t0), KeysAction::None));
+        assert!(w.capture_timeout(t0 + Duration::from_millis(1200)));
+        assert_eq!(
+            w.take_change(),
+            Some(("file.save_as".to_string(), k.code()))
+        );
+        assert!(!w.capturing && w.take_change().is_none());
+        // 기다림 0 = 한 조합만(종전 동작) · 캡처를 취소하면 첫 조합도 버린다.
+        w.set_chord_wait_ms(0);
+        w.start_capture();
+        assert!(matches!(
+            w.capture_chord(k.clone(), t0),
+            KeysAction::Changed { .. }
+        ));
+        w.set_chord_wait_ms(1200);
+        w.start_capture();
+        let _ = w.capture_chord(k, t0);
+        w.close();
+        assert!(w.capture_first.is_none() && !w.capture_timeout(t0 + Duration::from_secs(9)));
         // 파일 없는 키맵 = 안내 없음.
         w.refresh(&Keymap::default());
-        assert_eq!(w.assign_notice(&ch, "edit.upper_case"), None);
+        assert_eq!(
+            w.assign_notice(std::slice::from_ref(&ch), "edit.upper_case"),
+            None
+        );
     }
 }

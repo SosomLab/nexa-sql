@@ -377,6 +377,10 @@ impl ApplicationHandler<Wake> for App {
             self.colors_win.redraw();
         }
         if self.keys_win.tick(now_ms) {
+            // ★ T-98: 첫 조합 뒤 기다림이 끝나 한 조합으로 확정된 변경(창 사건 밖에서 생긴다).
+            if let Some((id, code)) = self.keys_win.take_change() {
+                self.keys_apply_change(&id, &code);
+            }
             self.keys_win.redraw();
         }
         if self.prefs_win.tick(now_ms) {
@@ -1631,15 +1635,7 @@ impl App {
             let ui_px = self.settings.font_px("ui.font_size");
             match self.keys_win.handle(event) {
                 KeysAction::Paint => self.keys_win.paint(&self.ui_font, &self.theme, ui_px),
-                KeysAction::Changed { id, code } => {
-                    let _ = self.settings.set(&keymap::setting_key(&id), &code);
-                    let _ = self.settings.save();
-                    self.keymap = Keymap::from_settings(&self.settings);
-                    self.sync_menu_shortcuts();
-                    self.apply_menu_decor();
-                    self.keys_win.refresh(&self.keymap);
-                    self.keys_win.redraw();
-                }
+                KeysAction::Changed { id, code } => self.keys_apply_change(&id, &code),
                 KeysAction::ResetAll => {
                     for c in keymap::COMMANDS {
                         let _ = self.settings.reset(&keymap::setting_key(c.id));
@@ -2305,6 +2301,17 @@ impl App {
 
 impl App {
     /// 단축키 창 열기 본체(사건 경로와 펌프 `pump_window_requests`가 같이 쓴다 · 174차) — 설정 창에서 열면 설정 창을 소유자로(색 창과 같은 이유).
+    /// 단축키 창이 낸 변경(명령 id · 코드)을 설정에 쓰고 키맵·메뉴 표시를 다시 맞춘다(창 사건 · tick 확정 공용).
+    fn keys_apply_change(&mut self, id: &str, code: &str) {
+        let _ = self.settings.set(&keymap::setting_key(id), code);
+        let _ = self.settings.save();
+        self.keymap = Keymap::from_settings(&self.settings);
+        self.sync_menu_shortcuts();
+        self.apply_menu_decor();
+        self.keys_win.refresh(&self.keymap);
+        self.keys_win.redraw();
+    }
+
     fn open_keys_now(&mut self, el: &ActiveEventLoop) {
         let parent: Option<&Window> = self.prefs_win.window().or(self.window.as_deref());
         let over = parent.and_then(|w| {
@@ -2313,6 +2320,8 @@ impl App {
             Some((p.x, p.y, sz.width, sz.height))
         });
         self.keys_win.refresh(&self.keymap);
+        self.keys_win
+            .set_chord_wait_ms(self.settings.int("ui.key_capture_chord_ms").max(0) as u64);
         self.keys_win.open(
             el,
             theme::window_theme(self.settings.theme_mode()),

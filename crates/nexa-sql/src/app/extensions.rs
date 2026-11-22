@@ -2480,6 +2480,36 @@ impl App {
         }
     }
 
+    /// ★ T-140(11-22 · 58 §66 "19 비교 기능이 들어오면 교체"): 외부 변경 띠 [차이 보기] = 좌우 비교 탭(왼쪽 = 지금 버퍼 · 오른쪽 =
+    /// 다른 쪽 본문 — 디스크 `kind = "disk"` · 다른 인스턴스 `"proj"`) · C-1 공용 `open_diff_tab`(읽기 전용 뷰 탭 · 같은 탭이면 그 탭을
+    /// 다시 쓴다 · 공백 무시 = `compare.ignore_ws`). 버퍼·디스크·대기 본문은 건드리지 않는다(띠의 다시 읽기/유지는 그대로).
+    fn ext_open_diff(&mut self, kind: &str, tab: u64, name: &str, other: &str, other_label: &str) {
+        let cur = self.editors.cur().text();
+        let ignore_ws = self.settings.flag("compare.ignore_ws");
+        let (a, a_show): (Vec<String>, Vec<String>) = app::compare::buffer_pairs(&cur, ignore_ws)
+            .into_iter()
+            .unzip();
+        let (b, b_show): (Vec<String>, Vec<String>) = app::compare::buffer_pairs(other, ignore_ws)
+            .into_iter()
+            .unzip();
+        let obj = format!("{name} ↔ {other_label}");
+        let key = format!("compare:ext:{kind}:{tab}");
+        let tab_title = format!("⇄ {other_label}");
+        self.open_diff_tab(
+            &key,
+            &tab_title,
+            &a,
+            &b,
+            &a_show,
+            &b_show,
+            &obj,
+            (
+                t(Msg::CompareLabelCurrent).to_string(),
+                other_label.to_string(),
+            ),
+        );
+    }
+
     pub(crate) fn ext_banner_pick(&mut self, hit: extfile::BannerHit) {
         let id = self.editors.active_id();
         let Some(i) = self.editors.index_of_id(id) else {
@@ -2494,14 +2524,7 @@ impl App {
                     let text = self.project_pending.get(&id).map(|p| p.0.clone());
                     if let Some(text) = text {
                         let title = tf(Msg::ProjOtherTitle, &[&name]);
-                        let created = self.editors.open_info_tab_like(&title, &text, Some(&name));
-                        if created {
-                            let tab = self.editors.active_id();
-                            self.make_unconnected(tab);
-                        }
-                        let di = self.editors.active();
-                        self.editors.set_read_only(di, true);
-                        self.set_focus(Focus::Editor);
+                        self.ext_open_diff("proj", id, &name, &text, &title);
                     }
                 }
                 extfile::BannerHit::Reload => {
@@ -2525,7 +2548,7 @@ impl App {
         match hit {
             extfile::BannerHit::None | extfile::BannerHit::Body => {}
             extfile::BannerHit::Diff => {
-                // 1차 = 디스크 내용을 읽기용 안내 탭으로(원래 파일의 구문 · No connection) — 좌우 비교 뷰는 docs/19가 들어오면.
+                // ★ T-140(11-22): 디스크 내용과의 좌우 비교 탭(C-1 `open_diff_tab` · 종전 = 디스크 내용을 읽기용 안내 탭으로만).
                 let text = self
                     .ext_files
                     .get(&id)
@@ -2539,15 +2562,7 @@ impl App {
                     });
                 if let Some(text) = text {
                     let title = tf(Msg::ExtDiskTitle, &[&name]);
-                    let created = self.editors.open_info_tab_like(&title, &text, Some(&name));
-                    if created {
-                        let tab = self.editors.active_id();
-                        self.make_unconnected(tab);
-                    }
-                    // 디스크 사본은 읽을거리 — 읽기 전용(객체 정보 탭과 같음 · 협업 bin61 관찰).
-                    let di = self.editors.active();
-                    self.editors.set_read_only(di, true);
-                    self.set_focus(Focus::Editor);
+                    self.ext_open_diff("disk", id, &name, &text, &title);
                 }
             }
             extfile::BannerHit::Reload => {

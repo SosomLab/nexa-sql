@@ -6,7 +6,7 @@ Nexa SQL's keyboard shortcuts follow Sublime Text. There are two ways to change 
 
 | Way | Where | Features |
 |---|---|---|
-| Keyboard Shortcuts window | Menu **View ▸ Keyboard shortcuts** (or a shortcut entry in the Preferences window) | For each command: [Assign] → press the key combination · [Clear] · [Reset] · values are stored in the setting `key.<command id>` |
+| Keyboard Shortcuts window | Menu **View ▸ Keyboard shortcuts** (or a shortcut entry in the Preferences window) | For each command: [Assign] → press the key combination (for a two-step chord, press the second combination within `ui.key_capture_chord_ms` = 1.2 s by default; otherwise the first combination alone is assigned · Esc cancels) · [Clear] · [Reset] · values are stored in the setting `key.<command id>` |
 | User keymap file | `<settings folder>/Packages/User/Default.sublime-keymap` → `Default (Windows).sublime-keymap` / `Default (OSX).sublime-keymap` / `Default (Linux).sublime-keymap` | Sublime format as is · **conditions (context)** · two-step chords (`ctrl+k, ctrl+u`) · read only when the file exists |
 
 - Settings folder = Windows `%APPDATA%\nexa-sql` · macOS `~/Library/Application Support/nexa-sql` · Linux XDG `~/.config/nexa-sql` · if the environment variable `NSQL_HOME` is set, it takes precedence.

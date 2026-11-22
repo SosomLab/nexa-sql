@@ -5293,6 +5293,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 0, max: 2000 },
         default: "350",
     },
+    // ★ T-98(11-22): 단축키 창에서 첫 조합 뒤 둘째 조합(2단 코드 `ctrl+k,ctrl+u`)을 기다리는 시간. 0 = 기다리지 않음(한 조합만).
+    Entry {
+        key: "ui.key_capture_chord_ms",
+        cat: Msg::CatAppearance,
+        label: Msg::LblKeyCaptureChordMs,
+        desc: Msg::DescKeyCaptureChordMs,
+        kind: SettingKind::Int { min: 0, max: 5000 },
+        default: "1200",
+    },
     Entry {
         key: "ui.dblclick_ms",
         cat: Msg::CatAppearance,

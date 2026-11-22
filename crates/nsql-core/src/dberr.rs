@@ -615,7 +615,12 @@ pub fn classify(dialect: Dialect, code: Option<i64>, message: &str, stmt: &str) 
             {
                 // ODBC 드라이버 관리자(unixODBC · odbc32)의 "드라이버/DSN 없음" · 확장 드라이버 미지원 OS — 접속 끊김 아님.
                 mk(ErrorClass::Driver, None)
-            } else if has("unable to open database") || has("connection") {
+            } else if has("unable to open database") {
+                // ★ T-148(11-22): SQLite 파일을 열지 못함(경로 없음 · 폴더 없음 · 권한) — 서버 접속이 끊긴 것이 아니라 이 PC의 파일
+                //   문제다. 종전 = Connection("접속 끊김")으로 잘못 안내 → 분류하지 않고 원본 메시지만 보인다(권한 문구가 있으면
+                //   위의 Permission 가지가 먼저 잡는다).
+                mk(ErrorClass::Unknown, None)
+            } else if has("connection") {
                 mk(ErrorClass::Connection, None)
             } else {
                 mk(ErrorClass::Unknown, None)
@@ -627,6 +632,20 @@ pub fn classify(dialect: Dialect, code: Option<i64>, message: &str, stmt: &str) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ T-148: SQLite 파일 열기 실패는 "접속 끊김"이 아니다(원본만) · 진짜 연결 문구는 그대로 Connection.
+    #[test]
+    fn sqlite_cannot_open_is_not_connection_lost() {
+        let c = classify(
+            Dialect::Sqlite,
+            Some(14),
+            "unable to open database file",
+            "",
+        );
+        assert_eq!(c.class, ErrorClass::Unknown);
+        let c = classify(Dialect::Odbc, None, "Connection reset by peer", "");
+        assert_eq!(c.class, ErrorClass::Connection);
+    }
 
     /// ODBC 분류(10-24): 벤더 꼬리표(SQL Server 18456 → Login · ORA-00942 → NoTable) · SQLSTATE(28000 · 08001 · 42S02 · IM002 · 23000+unique) ·
     /// 모르는 상태 = None(공용 규칙으로).

@@ -6,7 +6,7 @@ Nexa SQL의 단축키는 Sublime Text를 따릅니다. 바꾸는 방법은 두 �
 
 | 방법 | 어디서 | 특징 |
 |---|---|---|
-| 단축키 설정 창 | 메뉴 **보기 ▸ 단축키**(또는 설정 창의 [단축키…]) | 명령마다 [지정] → 키 조합 누르기 · [비우기] · [초기화] · 값은 설정 `key.<명령 id>`에 저장 |
+| 단축키 설정 창 | 메뉴 **보기 ▸ 단축키**(또는 설정 창의 [단축키…]) | 명령마다 [지정] → 키 조합 누르기(2단 코드는 둘째 조합을 `ui.key_capture_chord_ms` = 기본 1.2초 안에 누름 · 지나면 첫 조합 하나로 지정 · Esc = 취소) · [비우기] · [초기화] · 값은 설정 `key.<명령 id>`에 저장 |
 | 사용자 키맵 파일 | `<설정 폴더>/Packages/User/Default.sublime-keymap` → `Default (Windows).sublime-keymap` / `Default (OSX).sublime-keymap` / `Default (Linux).sublime-keymap` | Sublime 형식 그대로 · **조건(context)** · 2단 코드(`ctrl+k, ctrl+u`) · 파일이 있을 때만 읽음 |
 
 - 설정 폴더 = Windows `%APPDATA%\nexa-sql` · macOS `~/Library/Application Support/nexa-sql` · Linux XDG `~/.config/nexa-sql` · 환경 변수 `NSQL_HOME`이 있으면 그것이 우선.

@@ -66,8 +66,10 @@ step() {
   done
   wait "$pid" 2>/dev/null; local rc=$?; local dt=$((SECONDS - t0))
   [ "$to" = 1 ] && rc=124
-  # 이력 = 실제로 끝까지 돈 판(PASS · FAIL)만 — SKIP(1 s)·TIMEOUT을 넣으면 중앙값이 줄어 다음 상한이 120 s로 떨어진다(11-22 it 단계 TIMEOUT).
-  [ $rc -ne 99 ] && [ $rc -ne 124 ] && printf '%s\t%s\t%s\t%s\n' "$LEVEL" "$name" "$dt" "$(date +%F)" >> "$HIST"
+  # 이력 = 통과한 판만(아래 T-510) — SKIP(1 s)·TIMEOUT을 넣으면 중앙값이 줄어 다음 상한이 120 s로 떨어진다(11-22 it 단계 TIMEOUT).
+  # ★ T-510(11-22): 소요 이력은 **통과한 단계만** 적는다 — 실패(특히 강제 종료된 판)는 짧게 끝나 중앙값을 끌어내리고, 다음 판의
+  #   상한(중앙값 × 3)이 실제 소요보다 작아져 멀쩡한 단계가 TIMEOUT으로 잘렸다(11-22: 죽은 판의 test 80 s → 상한 240 s).
+  [ $rc -eq 0 ] && printf '%s\t%s\t%s\t%s\n' "$LEVEL" "$name" "$dt" "$(date +%F)" >> "$HIST"
   if [ $rc -eq 0 ]; then row "$name" PASS "$dt" "$(grep -m1 -E 'test result|통과|PASS' "$OUT/$name.log" 2>/dev/null | cut -c1-80)"
   elif [ $rc -eq 99 ]; then row "$name" SKIP "$dt" "$(tail -1 "$OUT/$name.log" | cut -c1-120)"
   else
