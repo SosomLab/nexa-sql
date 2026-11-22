@@ -860,6 +860,9 @@ struct App {
     object_tabs: HashMap<u64, explorer::ObjectOrigin>,
     /// ★ O-1 `server` 시점(11-10): 컴파일 성공 뒤 다시 요청한 소스의 출처 — 같은 출처의 `OpenSql` 응답을 히스토리에만 넣고 소비.
     history_server_wait: Option<explorer::ObjectOrigin>,
+    /// 그 요청을 건 순간의 히스토리 항목 폴더 — 응답 때 다시 계산하지 않는다(그 사이 활성 탭·세션이 바뀌면 다른 프로필의
+    /// 폴더가 된다 · 검토 11-23).
+    history_server_dir: Option<PathBuf>,
     /// 기다리는 서버 소스가 **외부 변경 확인**(`edit.history_check`)용인가 — 거짓 = 컴파일 뒤 `server` 시점 저장.
     history_server_check: bool,
     /// 그 확인이 **자동**(탭 활성화 · D-499)인가 — 바뀌지 않았으면 상태줄에 알리지 않는다.
@@ -2359,6 +2362,7 @@ fn main() {
         objlink_menu_force_closed_for_resync: false,
         object_tabs: HashMap::new(),
         history_server_wait: None,
+        history_server_dir: None,
         history_server_check: false,
         history_server_auto: false,
         history_server_wait_at: None,

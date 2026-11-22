@@ -1358,7 +1358,7 @@ impl App {
                 if std::mem::take(&mut self.sess.run_object) && !self.sess.run_had_err {
                     // 컴파일 뒤 요청 = 저장용. 다른 서버 소스 요청(다른 탭의 변경 확인)이 답을 기다리는 중이면 덮어쓰지 않고
                     //   이번 서버 본 저장을 건너뛴다(덮으면 그 답이 일반 소스 열기로 흘러 중복 탭이 열린다 · 검토 11-23).
-                    self.history_wait_expire();
+                    self.history_wait_reap();
                     if self.history_server_wait.is_none() {
                         self.history_server_check = false;
                         self.history_server_auto = false;

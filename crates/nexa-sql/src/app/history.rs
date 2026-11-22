@@ -109,6 +109,8 @@ impl App {
         };
         let kind = o.kind;
         let server = o.server.clone();
+        // 항목 폴더는 **지금** 정한다(요청을 건 탭의 세션 프로필) — 응답 때는 활성 탭이 달라져 있을 수 있다.
+        self.history_server_dir = store::object_dir(&self.history_object_stem(&o));
         self.history_server_wait = Some(o);
         self.history_server_wait_at = Some(Instant::now());
         self.explorer
@@ -131,7 +133,7 @@ impl App {
         }
         // 앞선 서버 소스 요청(다른 탭의 확인 · 컴파일 뒤 저장)이 아직 답을 기다리면 덮어쓰지 않는다 — 덮으면 그 답이 일반
         //   "소스 열기"로 흘러 중복 탭이 열린다(검토 11-23). 답이 오지 않은 옛 요청은 여기서 버린다.
-        self.history_wait_expire();
+        self.history_wait_reap();
         if self.history_server_wait.is_some() {
             self.sess.status = t(Msg::StHistoryCheckBusy).into();
             return;
@@ -157,10 +159,27 @@ impl App {
     /// 답이 오지 않은 서버 소스 요청(오류 · 접속 끊김 · 객체가 사라짐)은 30초 뒤 버린다 — 남아 있으면 같은 객체를 탐색기에서
     /// 열 때 그 응답이 "확인의 답"으로 삼켜져 탭이 열리지 않는다(검토 11-23). 수동 확인 · 자동 확인 · 응답 가로채기가 같이 쓴다.
     pub(crate) fn history_wait_expire(&mut self) {
+        // 탐색기의 소스 타임아웃(`explorer.timeout` · 안내 뒤에도 요청은 살아 있다)보다 먼저 만료되지 않게 여유를 둔다.
+        let limit = 30.max(self.settings.int("explorer.timeout").max(0) as u64 + 15);
         if self
             .history_server_wait_at
-            .is_some_and(|t0| t0.elapsed().as_secs() >= 30)
+            .is_some_and(|t0| t0.elapsed().as_secs() >= limit)
         {
+            self.history_wait_clear();
+        }
+    }
+
+    /// 죽은 대기 걷기(검토 11-23): 만료 + **그 서버 칸에 진행 중인 소스 요청이 없으면**(답이 이미 왔거나 · 끊김·재결합·세대
+    /// 바뀜으로 버려졌거나 · 오프라인) 대기를 접는다. 한 칸의 소스 요청은 한 번에 하나라, 칸이 비었는데 대기가 남아 있으면
+    /// 그 답은 오지 않는다. ★ 탐색기 사건을 처리하는 중(`meta.rs` 가로채기 자리)에는 쓰지 않는다 — 그때는 방금 온 답이 아직
+    /// 소비되기 전이라 칸이 비어 보인다.
+    pub(crate) fn history_wait_reap(&mut self) {
+        self.history_wait_expire();
+        let dead = self.history_server_wait.as_ref().is_some_and(|w| {
+            let (ready, offline) = self.explorer.source_ready_for(w.server.as_ref());
+            ready || offline
+        });
+        if dead {
             self.history_wait_clear();
         }
     }
@@ -169,6 +188,7 @@ impl App {
     pub(crate) fn history_wait_clear(&mut self) {
         self.history_server_wait = None;
         self.history_server_wait_at = None;
+        self.history_server_dir = None;
         self.history_server_check = false;
         self.history_server_auto = false;
     }
@@ -185,7 +205,7 @@ impl App {
         }
         self.history_auto_tab = tab;
         // 답이 오지 않은 옛 요청 정리는 자동 확인이 꺼져 있어도 한다(수동 확인·컴파일 뒤 요청도 남을 수 있다).
-        self.history_wait_expire();
+        self.history_wait_reap();
         let secs = self.settings.int("history.server_check_secs").max(0) as u64;
         if secs == 0 || !self.settings.flag("history.enabled") {
             return;
@@ -208,12 +228,16 @@ impl App {
                 if now.duration_since(*at).as_secs() < secs {
                     return;
                 }
-                *at = now;
             }
         }
         self.history_server_check = true;
         self.history_server_auto = true;
-        if !self.history_server_request(tab) {
+        if self.history_server_request(tab) {
+            // 보냈을 때만 간격을 소비한다(못 보냈으면 다음 탭 활성화 때 다시 시도).
+            if let Some((_, at)) = self.history_auto_seen.iter_mut().find(|(id, _)| *id == tab) {
+                *at = now;
+            }
+        } else {
             // 보내지 못했다(오프라인 · 다른 소스 요청 중) — 자동 확인은 조용히 다음 기회로.
             self.history_server_check = false;
             self.history_server_auto = false;
@@ -222,10 +246,22 @@ impl App {
 
     /// 외부 변경 확인의 응답 처리 — 달라졌으면 `external` 시점 저장 + 상태줄·로그 안내 · 같으면 상태줄만.
     pub(crate) fn history_check_done(&mut self, o: &explorer::ObjectOrigin, text: &str) {
-        let Some(dir) = store::object_dir(&self.history_object_stem(o)) else {
+        // 폴더 = 요청 때 정한 것(없으면 지금 계산 · 옛 길).
+        let dir = self
+            .history_server_dir
+            .take()
+            .or_else(|| store::object_dir(&self.history_object_stem(o)));
+        let Some(dir) = dir else {
+            self.history_server_wait_at = None;
+            self.history_server_auto = false;
             return;
         };
-        let verdict = store::server_check(&store::list_in(&dir), store::content_hash(text));
+        // ★ 가장 최신 시점이 **버퍼 시점**(컴파일 직전 · 복원)이고 서버 글과 같으면 = 내가 컴파일한 것이 서버에 그대로 있다
+        //   (컴파일 뒤 서버 본 저장이 건너뛰어졌거나 실패한 경우) → 그 시점을 `server`로 표시해 기준으로 삼는다(검토 11-23 ·
+        //   외부 변경으로 알리지 않는다 · 같은 내용은 새로 저장되지 않으므로 표시해 두지 않으면 확인할 때마다 되풀이된다).
+        let hash = store::content_hash(text);
+        store::mark_newest_in(&dir, hash, Tag::Server);
+        let verdict = store::server_check(&store::list_in(&dir), hash);
         let name = format!("{}.{}", o.schema, o.name);
         // 자동 확인(D-499)은 바뀌지 않았으면 조용히 — 요청 때의 "소스 읽는 중…" 상태줄만 비운다.
         let auto = std::mem::take(&mut self.history_server_auto);
@@ -296,7 +332,12 @@ impl App {
         if !self.settings.flag("history.enabled") {
             return;
         }
-        let Some(dir) = store::object_dir(&self.history_object_stem(o)) else {
+        // 서버 본 저장(컴파일 뒤 요청의 답)은 요청 때 정한 폴더로 — 그 밖(열기 · 컴파일 직전 · 복원)은 지금 활성 탭의 것.
+        let dir = (tag == Tag::Server)
+            .then(|| self.history_server_dir.take())
+            .flatten()
+            .or_else(|| store::object_dir(&self.history_object_stem(o)));
+        let Some(dir) = dir else {
             return;
         };
         self.history_store_in(&dir, tag, text);

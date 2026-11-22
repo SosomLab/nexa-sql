@@ -173,6 +173,11 @@ pub(crate) fn server_check(list: &[Entry], hash: u64) -> ServerCheck {
 /// 바꾼다 · 본문·시각·고정 그대로) — 컴파일 뒤 서버 본이 그 버퍼와 같아 따로 저장되지 않았을 때 서버 기준을 남기는 길(검토 11-23).
 /// 이미 서버 쪽 시점이거나 해시가 다르면 아무것도 하지 않는다. 반환 = 바꿨는가.
 pub(crate) fn mark_newest_server_in(dir: &Path, hash: u64) -> bool {
+    mark_newest_in(dir, hash, Tag::Server)
+}
+
+/// [`mark_newest_server_in`]의 일반형 — 다시 표시할 종류를 받는다(서버 쪽 종류 `open`·`server`·`external`만 뜻이 있다).
+pub(crate) fn mark_newest_in(dir: &Path, hash: u64, tag: Tag) -> bool {
     let Some(e) = list_in(dir).into_iter().next() else {
         return false;
     };
@@ -180,12 +185,7 @@ pub(crate) fn mark_newest_server_in(dir: &Path, hash: u64) -> bool {
         return false;
     }
     let pin = if e.pinned { "_pin" } else { "" };
-    let name = format!(
-        "{}_{}_{:016x}{pin}.sql",
-        e.stamp,
-        Tag::Server.as_str(),
-        e.hash
-    );
+    let name = format!("{}_{}_{:016x}{pin}.sql", e.stamp, tag.as_str(), e.hash);
     std::fs::rename(&e.path, e.path.with_file_name(name)).is_ok()
 }
 
