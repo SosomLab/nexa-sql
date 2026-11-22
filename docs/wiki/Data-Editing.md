@@ -50,6 +50,18 @@ Hidden columns never appear in copy, text view or ⌘A/Ctrl+A; they are used onl
 
 The edit box for a cell opens exactly where the cell text is drawn, and long text is shown from the beginning. Inside the box, double-click selects a word and triple-click selects everything (`editor.dblclick` · `editor.triple_click` · `editor.dblclick_underscore`).
 
+## Unapplied edits when you close (2026-11-22)
+
+Edits you have not applied yet are never thrown away silently:
+
+| You close | What happens |
+|---|---|
+| A result tab with unapplied edits | A small popup asks: **Close and discard edits** / **Cancel** |
+| An editor tab whose result tabs have unapplied edits | The first close is held and the status bar says how many result tabs have edits — close the tab **again** to discard them |
+| The app · the project · or you open another project | A popup asks: **Discard Edits and Continue** / **Cancel** |
+
+Without unapplied edits everything closes at once, as before.
+
 ## Display
 
 ![Column header card](images/detail-result-header-card.png)
