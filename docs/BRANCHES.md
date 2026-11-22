@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| `feat/log-search` | 2026-11-22(Windows · 8a7b9905 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-54 로그 창 검색 1차(필터형 · `log.search:` · `log.stat` `search=` · 9adada40) · 새 V1 `log-search` 12/0 · 문서 3(journal 11-22 §15) |
 | `feat/git-ahead-behind-cli-lic` | 2026-11-22(Windows · f44d0279 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | C-1 상태줄 ahead/behind(로컬 추적 ref만 · fetch 0) + T-37 `license remove` 문구 Msg 이관 + 판정용 `statusbar.dump` · 554268f5 · 새 V1 `git-ahead` 11/0 · 문서 6(journal 11-22 §15) |
 | `feat/git-revert-hunk` | 2026-11-22(Windows · 537e7691 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | C-1 덩어리 되돌리기 `git.revert_hunk`(캐럿 줄 명령 · 되돌리기 한 단계 · 디스크 불변 · 466e3a01) · 새 V1 `git-revert` 19/0 · 문서 4(journal 11-22 §15) |
 | `feat/history-pin` | 2026-11-22(Windows · 528f23e8 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | O-1 히스토리 시점 고정 `edit.history_pin` + git 감시 결함 수정(`statusbar.git` 끔에서도 거터·미니맵 감시 · 969cb472) · 새 V1 `history-pin` 16/0 · `git-watch` 9/0 · 문서 4(journal 11-22 §15) |
