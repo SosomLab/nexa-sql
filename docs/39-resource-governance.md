@@ -138,6 +138,7 @@
 | ClickHouse HTTP 드라이버(10-24 · T-415) | 상주 소켓 0 · 스레드 0(요청은 호출 스레드) · 요청마다 연결 | `db.statement_timeout`(공통 · 워커 취소 · 원안 표기 `db.query_timeout` = 없는 키 · 드라이버 자체 = 연결 15 s · 읽기 24 h 고정(설정 키 없음) · 11-01 정합) | — | — | — | `nsql-driver-clickhouse` |
 | ★ 메타 3층 L1/L2([85](85-metadata-layers.md) · [84](84-explorer-search-index.md)) | L1 접속 직후 스키마당 1 질의(250 ms 간격) · L2 현재 스키마 컬럼 ≤200(300 ms 간격) · L3 회수 30 s 점검(질의 0) | `explorer.search_index` · `explorer.index_prefetch` · `explorer.index_idle_ms` · `meta.warm_columns_max` · `meta.detail_max/detail_ttl_secs/cols_ttl_secs` | on | on | prefetch off · warm 0 | T-219·T-221 |
 | 드라이버 다운로드 직전 도달 게이트(11-10 · D-473) | 행위당 DNS 1 + TCP 1 · 스레드 = DNS 해석 1개(예산 뒤 방치 · 결과 버림) · 예산 1500 ms | `driver.net_check_ms`(0 = 끔) | 1500 | 1500 | 1500 | `ext::install::net_gate` · `nsql_net::probe_reachable` |
+| ★ O-1 서버 변경 확인(11-23 · D-499 · [26 §8](26-performance-architecture.md)) | 수동 명령 1회 · 자동 = 오브젝트 탭 활성화 순간 + 탭당 최소 간격 · 접속한 서버에만 · 재시도 없음(30초 뒤 버림) | `history.server_check_secs`(0 = 끔) | 0 | 0 | 0 | `app/history.rs` `history_auto_check` |
 
 ### 3-3. CPU(+ 디스크)
 

@@ -31,5 +31,34 @@ EXT=$(find "$V1_HOME/history" -name '*_external_*.sql' 2>/dev/null | head -1)
 expect "2-external-has-new-body" "$EXT" "SELECT 2 AS b"
 expect_not "5-no-panic" "$V1_OUT/hc.stderr" "panicked"
 echo "history files: $N1 · external: $(ext)"
+
+# ── 자동 확인(D-499 · `history.server_check_secs` · 오브젝트 탭이 활성화된 순간 + 간격이 지났을 때만 · 기본 0 = 끔) ──
+#   a1. 간격 1초 · 변경 없음 왕복(파일 탭 → 1.5초 뒤 오브젝트 탭) → 상태줄에 "unchanged" 없음(자동은 조용히) · external 0
+#   a2. 같은 홈 · 파일 탭에서 뷰를 다시 만든 뒤 오브젝트 탭으로 → "changed since" + external 1(수동과 같은 안내)
+#   a0. 대조 = 설정 없음(기본 0) · 같은 변경 왕복 → external 0 · 로그에 "server source changed" 없음
+fresh() { # [설정…] — 새 격리 홈 + 같은 DB 파일을 처음 뷰(SELECT 1 AS a)로 되돌림
+  [ -n "$V1_HOME" ] && rm -rf "$V1_HOME"; v1_home en; v1_set "session.autocommit=on"; for kv in "$@"; do v1_set "$kv"; done
+  v1_cli conn add lite "sqlite:$(v1_m "$WK")/d.sqlite" -d sqlite --no-prompt >/dev/null
+  printf 'DROP VIEW IF EXISTS v1;\nCREATE VIEW v1 AS SELECT 1 AS a;\n' > "$WK/reset.sql"
+  v1_cli run -c lite --no-prompt "$(v1_m "$WK/reset.sql")" >/dev/null
+}
+OPEN="${C}open:$W/c.sql,${C}@after:1500:explorer.expand:main,${C}@after:2500:explorer.expand:Views,${C}@after:3300:explorer.select:v1,${C}@after:3600:explorer.pick:source"
+rm -f "$V1_OUT"/ha-*.txt
+fresh "history.server_check_secs=1"
+v1_gui ha1 "$OPEN,${C}@after:6000:tab.prev,${C}@after:7500:tab.next,${C}@after:10000:status.dump:$O/ha-1.txt,${C}@after:10300:log.dump:$O/ha-1log.txt,${C}@after:10600:file.exit,${C}@after:11100:toolbar.pick:project.exit_skip" 30 lite
+expect_eq "a1-dump-ran" "$([ -f "$V1_OUT/ha-1.txt" ] && [ -f "$V1_OUT/ha-1log.txt" ] && echo y)" "y"
+expect_not "a1-auto-quiet-when-same" "$V1_OUT/ha-1.txt" "unchanged since"
+expect_not "a1-no-change-notice" "$V1_OUT/ha-1log.txt" "server source changed since"
+expect_eq "a1-no-external" "$(ext)" "0"
+v1_gui ha2 "$OPEN,${C}@after:6000:tab.prev,${C}@after:6300:run.all,${C}@after:9000:tab.next,${C}@after:11500:status.dump:$O/ha-2.txt,${C}@after:11800:log.dump:$O/ha-2log.txt,${C}@after:12100:file.exit,${C}@after:12600:toolbar.pick:project.exit_skip" 30 lite
+expect "a2-auto-changed" "$V1_OUT/ha-2.txt" "main.v1: server source changed since"
+expect "a2-log-line" "$V1_OUT/ha-2log.txt" "server source changed since"
+expect_eq "a2-one-external" "$(ext)" "1"
+fresh
+v1_gui ha0 "$OPEN,${C}@after:6000:tab.prev,${C}@after:6300:run.all,${C}@after:9000:tab.next,${C}@after:11500:status.dump:$O/ha-0.txt,${C}@after:11800:log.dump:$O/ha-0log.txt,${C}@after:12100:file.exit,${C}@after:12600:toolbar.pick:project.exit_skip" 30 lite
+expect_eq "a0-dump-ran" "$([ -f "$V1_OUT/ha-0log.txt" ] && echo y)" "y"
+expect_not "a0-off-no-notice" "$V1_OUT/ha-0log.txt" "server source changed since"
+expect_eq "a0-off-no-external" "$(ext)" "0"
+for t in ha1 ha2 ha0; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done
