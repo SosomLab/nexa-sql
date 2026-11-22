@@ -4,6 +4,8 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| `o1-history-check` | 2026-11-22(Windows · 9a52f216 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | O-1 서버 변경 확인 명령 `edit.history_check`(마지막 서버 본과 해시 대조 · 다르면 `external` 시점 + 상태줄·로그 · 수동 명령만) · 5f159344 · 새 V1 `history-check` 9/0 · 문서(journal 11-22 §19 · 19 §3) |
+| `t508-find-tips` | 2026-11-22(Windows · 4a7c0a04 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-508 찾기 막대·검색 패널·필터 막대 툴팁 = 지금 키맵의 단축키(`tip_from`/`tip_with`/`Keymap::publish_shown`) · 9a52f216 · V2 ✓ verify 20261122-232247 · 문서(journal 11-22 §19) |
 | `test/ext-effects-dump` | 2026-11-22(Windows · 41152906 위) | 2026-11-22 → main ff 병합·삭제(push = 사용자 지시 · nexa-ui 먼저) | 1 | 무지개 괄호 색 미표시 조사용 판정 덤프 `ext.effects:<파일>`(확장 효과 · 편집기 괄호 옵션 · 동작 변화 없음) + V1 `color-list` d 절 되살림(괄호 마젠타 픽셀 · 끔·확장 없음 대조) · bcde0e14 · V1 color-list 25/0(`on=377 rainbow_off=0 no_ext=0`) · 문서(journal 11-22 §17·§18 · TODO T-511) |
 | (nexa-ui) `fix/pair-marks-merge` | 2026-11-22(Windows · nexa-ui e5b9a97 위) | 2026-11-22 → nexa-ui main ff 병합·삭제 · **654a620** | 2 | **nexa-ui 저장소** · T-511 PairTable marks 병합 수정(`Option::min` None < Some → 한 열이 비면 끝 · 도입 5169a3f 11-03) · 4178c4b(시험 `marks_cover_every_bracket_without_unmatched`) + 654a620(CONSUMER-CHANGES 268) · nexa-ctl 486/0 · 무관 실패 2(nexa-font gdi_cleartype = e5b9a97에서도 같음 · dirwatch 단독 통과) · [journal 11-22 §17](journal/2026-11-22.md) |
 | `feat/txdump-txlog-count` | 2026-11-22(Windows · 8ef4cf71 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-107b 준비 조각 1 = `tx.dump`에 `txlog_updates=`(원천 교체 전 대조 · 8장면 중 그리드 셀 편집만 다름) · 6adf1e60 · 문서(journal 11-22 §16 #15 · §17) |
