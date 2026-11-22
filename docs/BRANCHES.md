@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| `t304-select-into-literal` | 2026-11-23(Windows · 5c590cf0 위) | 2026-11-23 → main ff 병합·삭제 · push ✓(9d3232d4..c81988e5 · 무인 진행 "중간 중간 push") | 3 | T-304 ③ FROM 없는 `SELECT <리터럴> INTO :V` = 로컬 대입(D-501 · 4e43bb46) · O-1 서버 변경 자동 확인(D-499 · `history.server_check_secs` 기본 끔 · 48ebaeab) · 협업 기록 c81988e5(V1 history-check 자동 확인 절 22/0 · 26 §8 · 39 §3-2) · [journal 11-23 §2](journal/2026-11-23.md) |
 | `t172-p3-vars` | 2026-11-22(Windows · 5f159344 위) | 2026-11-22 → main ff 병합·삭제 · main = ec87d865(push 안 함) | 3 | T-172 P3 1단계 경로 변수(`"vars"` + `${var:이름}/…` 앵커 · 변수를 쓰는 파일만 version 3) · c9355995 + 협업 기록 9bbcb2fe(묶음 6 · 새 V1 history-check) · ec87d865(묶음 7 · V1 project-paths j 절 119/0 · history-check 실행 비트) · 문서(journal 11-22 §19·§20 · 73 §4-2) |
 | `o1-history-check` | 2026-11-22(Windows · 9a52f216 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | O-1 서버 변경 확인 명령 `edit.history_check`(마지막 서버 본과 해시 대조 · 다르면 `external` 시점 + 상태줄·로그 · 수동 명령만) · 5f159344 · 새 V1 `history-check` 9/0 · 문서(journal 11-22 §19 · 19 §3) |
 | `t508-find-tips` | 2026-11-22(Windows · 4a7c0a04 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-508 찾기 막대·검색 패널·필터 막대 툴팁 = 지금 키맵의 단축키(`tip_from`/`tip_with`/`Keymap::publish_shown`) · 9a52f216 · V2 ✓ verify 20261122-232247 · 문서(journal 11-22 §19) |

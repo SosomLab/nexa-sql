@@ -11,6 +11,7 @@
 #   h. 절대 경로 알림(T-172 · D-188 · `project.warn_absolute`): 프로젝트 밖 탭이 절대 경로로 남으면 명시 저장마다 로그 한 줄 · 상대뿐이면 0 · 끄면 0
 #   i. 등록 폴더 이름(T-172 P2 `folders[].name`): leaf가 같은 두 폴더도 이름을 적으면 `${workspaceFolder:<이름>}` 앵커 · 다시 열면 복원 · 안 적으면 절대(종전)
 #   j. 경로 변수(T-172 P3 1단계): `"vars"` + `${var:이름}/…` 탭 = 열림 · 정의 없는 변수 = 자리 탭 · 저장 뒤 vars·version 3·글 그대로
+#   k. 변수의 이 PC 자리(T-172 P3 2단계): `project.var_set` → 자리 탭이 진짜 탭으로 · 대응표 `var:이름` · 다시 열면 적용 · 찾아보기 꼬리 일치로 추론
 #   종료: 프로젝트가 바뀐 채 `file.exit`면 "프로젝트 저장?" 물음이 뜬다 → 답 = `toolbar.pick:project.exit_skip`(물음 답은 indent_pick 길 · 직접 id는 menu_action이라 무시됨)
 #   임시 폴더 = OS 임시 `nsql-v1pp-*`(끝나면 삭제) · 쉼표가 든 경로는 기동 명령 구분자와 겹치므로 쓰지 않는다.
 . "$(dirname "$0")/../lib/v1.sh"
@@ -231,6 +232,38 @@ expect "j-var-anchor-kept" "$V1_OUT/pj.nsql-project" '"${var:DATA}/v.sql"'
 expect "j-undefined-var-kept" "$V1_OUT/pj.nsql-project" '"${var:NOPE}/x.sql"'
 expect_not "j-no-abs-tab" "$V1_OUT/pj.nsql-project" "\"path\": \"$DDM/v.sql\""
 
+# ── k. 변수의 이 PC 자리(T-172 P3 2단계 · `project.var_set:이름=폴더` · `project.pc_paths`의 `var:이름` · 1cb7443f · 협업 11-23) ─────────
+#   k1. vars 없는 `${var:NOPE}/sub/x.sql` · `${var:NOPE}/y.sql` → 자리 탭 2 → var_set → 진짜 탭 2 · 상태줄 · 대응표 `var:NOPE` · 파일엔 글 그대로
+#   k2. 같은 홈으로 다시 열기 → 자리 탭 0(대응표 적용)
+#   k3. 다른 변수 Q의 자리 탭에서 `project.missing_found:<폴더>/sub/x.sql` → 꼬리 일치로 자리 추론 · 같은 변수의 다른 탭도 열림
+KD="$WK/kd"; QD="$WK/qd"; mkdir -p "$KD/sub" "$QD/sub"
+for b in "$KD" "$QD"; do printf 'SELECT 11 AS x FROM dual;\n' > "$b/sub/x.sql"; printf 'SELECT 12 AS y FROM dual;\n' > "$b/y.sql"; done
+KDM=$(v1_m "$KD"); QDM=$(v1_m "$QD")
+mkk() { printf '{"version": 3, "folders": [{"path": "."}], "active": 0, "tabs": [{"path": "${var:%s}/sub/x.sql", "title": "x.sql", "id": 51}, {"path": "${var:%s}/y.sql", "title": "y.sql", "id": 52}]}\n' "$2" "$2" > "$P/$1"; }
+rm -f "$V1_OUT"/pk*-tabs.txt "$V1_OUT"/pk1-status.txt
+mkk k.nsql-project NOPE
+HOME="$IHM" v1_gui pk1 "project.load:$PM/k.nsql-project,@after:1800:tabs.dump:$O/pk0-tabs.txt,@after:2100:project.var_set:NOPE=$KDM,@after:2900:status.dump:$O/pk1-status.txt,@after:3200:tabs.dump:$O/pk1-tabs.txt,@after:3500:project.save,@after:4100:file.exit,@after:4700:toolbar.pick:project.exit_skip" 25
+cp "$P/k.nsql-project" "$V1_OUT/pk1.nsql-project" 2>/dev/null
+expect_re "k1-before-placeholder-x" "$V1_OUT/pk0-tabs.txt" '^\*?x\.sql\|.*view=true'
+expect_re "k1-before-placeholder-y" "$V1_OUT/pk0-tabs.txt" '^\*?y\.sql\|.*view=true'
+expect "k1-status" "$V1_OUT/pk1-status.txt" "Path variable NOPE on this PC"
+expect_re "k1-tab-x-real" "$V1_OUT/pk1-tabs.txt" '^\*?x\.sql\|.*view=false'
+expect_re "k1-tab-y-real" "$V1_OUT/pk1-tabs.txt" '^\*?y\.sql\|.*view=false'
+expect "k1-pc-paths-var" "$V1_HOME/settings.conf" "var:NOPE"
+expect "k1-file-keeps-var-x" "$V1_OUT/pk1.nsql-project" '"${var:NOPE}/sub/x.sql"'
+expect "k1-file-keeps-var-y" "$V1_OUT/pk1.nsql-project" '"${var:NOPE}/y.sql"'
+expect_not "k1-file-no-pc-path" "$V1_OUT/pk1.nsql-project" "$KDM"
+HOME="$IHM" v1_gui pk2 "project.load:$PM/k.nsql-project,@after:1800:tabs.dump:$O/pk2-tabs.txt,@after:2300:file.exit,@after:2900:toolbar.pick:project.exit_skip" 25
+expect_re "k2-reopen-x-real" "$V1_OUT/pk2-tabs.txt" '^\*?x\.sql\|.*view=false'
+expect_re "k2-reopen-y-real" "$V1_OUT/pk2-tabs.txt" '^\*?y\.sql\|.*view=false'
+expect_not_re "k2-no-placeholder" "$V1_OUT/pk2-tabs.txt" 'view=true'
+mkk q.nsql-project Q
+HOME="$IHM" v1_gui pk3 "project.load:$PM/q.nsql-project,@after:1800:tabs.dump:$O/pk3a-tabs.txt,@after:2100:project.missing_found:$QDM/sub/x.sql,@after:2900:tabs.dump:$O/pk3-tabs.txt,@after:3300:file.exit,@after:3900:toolbar.pick:project.exit_skip" 25
+expect_re "k3-before-placeholder" "$V1_OUT/pk3a-tabs.txt" '^\*?x\.sql\|.*view=true'
+expect_re "k3-found-x-real" "$V1_OUT/pk3-tabs.txt" '^\*?x\.sql\|.*view=false'
+expect_re "k3-inferred-y-real" "$V1_OUT/pk3-tabs.txt" '^\*?y\.sql\|.*view=false'
+expect "k3-pc-paths-var-q" "$V1_HOME/settings.conf" "var:Q"
+
 # ── h. 절대 경로 알림(T-172 · D-188 · project.warn_absolute · 협업 초안 11-22) ───────────
 #   OS 임시 폴더가 홈 아래(Windows %TEMP% = 사용자 폴더 · 맥 /var/folders는 홈 밖)라 그대로면 탭이 `${userHome}/…`으로 적혀 세지 않는다
 #   → 이 절의 기동만 HOME을 WK 안 빈 폴더로 바꿔 홈 앵커를 피한다(home_dir_str = HOME → USERPROFILE).
@@ -263,6 +296,6 @@ expect_eq "h2-dump-ran" "$([ -f "$V1_OUT/ph2-log.txt" ] && echo y)" "y"
 expect_not "h2-off-no-warn" "$V1_OUT/ph2-log.txt" "$ABSW"
 
 # 공통 — 모든 기동 panic 없음
-for t in pa pb pb2 pc pd pe pe2 pf1 pf2 pf3a pf3b pf4 pg1 pg2 pg3 pi1 pi2 pi0 pj ph1 ph0 ph2; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
+for t in pa pb pb2 pc pd pe pe2 pf1 pf2 pf3a pf3b pf4 pg1 pg2 pg3 pi1 pi2 pi0 pj pk1 pk2 pk3 ph1 ph0 ph2; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done
