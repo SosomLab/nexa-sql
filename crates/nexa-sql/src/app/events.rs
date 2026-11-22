@@ -1341,6 +1341,8 @@ impl App {
                 // ★ O-1 `server` 시점(19 §3 (c) · 11-10): 오브젝트 탭의 객체 F5가 **오류 없이** 끝나면 서버가 실제로 가진 소스를
                 //   다시 받아 히스토리에만 넣는다(탭 불변 · 응답은 meta.rs `OpenSql`에서 가로챈다). 오류가 있었으면 요청하지 않는다.
                 if std::mem::take(&mut self.sess.run_object) && !self.sess.run_had_err {
+                    // 컴파일 뒤 요청 = 저장용(앞서 걸어 둔 외부 변경 확인 깃발이 남아 있어도 저장으로 처리).
+                    self.history_server_check = false;
                     self.history_server_request(self.sess.run_editor);
                 }
             } else {

@@ -16,6 +16,7 @@ fn tag_label(tag: Tag) -> &'static str {
         Tag::Compile => Msg::HistTagCompile,
         Tag::Server => Msg::HistTagServer,
         Tag::Restore => Msg::HistTagRestore,
+        Tag::External => Msg::HistTagExternal,
     })
 }
 
@@ -106,6 +107,48 @@ impl App {
         self.history_server_wait = Some(o);
         self.explorer
             .reload_source_for(server.as_ref(), &info, kind);
+    }
+
+    /// ★ O-1 외부 변경 확인(명령 `edit.history_check` · 19 §3 · 11-22): 활성 오브젝트 탭의 객체 소스를 서버에서 다시 받아
+    ///   **마지막 서버 본**(열기 · 컴파일 뒤 서버 본 · 앞선 외부 변경)과 해시를 견준다 — 탭은 건드리지 않는다. 수동 명령뿐이다
+    ///   (주기 확인 = 지속 트래픽이라 사용자 결정 뒤 · 26 §8). 응답 = `history_check_done`(meta.rs `OpenSql`이 가로챔).
+    pub(crate) fn history_check(&mut self) {
+        if !self.settings.flag("history.enabled") {
+            self.sess.status = t(Msg::StHistoryOff).into();
+            return;
+        }
+        let tab = self.editors.active_id();
+        if !self.object_tabs.contains_key(&tab) {
+            self.sess.status = t(Msg::StHistoryCheckNoObject).into();
+            return;
+        }
+        self.history_server_check = true;
+        self.history_server_request(tab);
+    }
+
+    /// 외부 변경 확인의 응답 처리 — 달라졌으면 `external` 시점 저장 + 상태줄·로그 안내 · 같으면 상태줄만.
+    pub(crate) fn history_check_done(&mut self, o: &explorer::ObjectOrigin, text: &str) {
+        let Some(dir) = store::object_dir(&self.history_object_stem(o)) else {
+            return;
+        };
+        let verdict = store::server_check(&store::list_in(&dir), store::content_hash(text));
+        let name = format!("{}.{}", o.schema, o.name);
+        match verdict {
+            store::ServerCheck::Unchanged(when) => {
+                self.sess.status = tf(Msg::StHistoryCheckSame, &[&name, &when]);
+            }
+            store::ServerCheck::NoBaseline => {
+                self.history_store_in(&dir, Tag::Open, text);
+                self.sess.status = tf(Msg::StHistoryCheckFirst, &[&name]);
+            }
+            store::ServerCheck::Changed(when) => {
+                self.history_store_in(&dir, Tag::External, text);
+                let msg = tf(Msg::StHistoryCheckChanged, &[&name, &when]);
+                self.log_win
+                    .push(LogEntry::new(LogKind::Info, format!("history: {msg}")));
+                self.sess.status = msg;
+            }
+        }
     }
 
     /// 활성 탭의 히스토리 폴더 — 오브젝트 소스 탭(출처 있음)이면 객체 항목 · 아니면 파일 항목 · 둘 다 아니면 None.

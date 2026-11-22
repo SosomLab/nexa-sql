@@ -382,6 +382,11 @@ impl App {
                                 && o.name.eq_ignore_ascii_case(&w.name)
                                 && o.kind == w.kind
                         });
+                        if same && std::mem::take(&mut self.history_server_check) {
+                            // ★ O-1 외부 변경 확인(`edit.history_check`): 저장이 아니라 마지막 서버 본과 견준다.
+                            self.history_check_done(&w, &text);
+                            continue;
+                        }
                         if same {
                             self.history_object_store(&w, crate::history::Tag::Server, &text);
                             // 요청 때의 "소스 읽는 중…" 상태줄을 갈아 끼운다(협업 V1 11-10 "4초 잔류").

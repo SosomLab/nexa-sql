@@ -1245,6 +1245,7 @@ impl App {
             "edit.history" => self.history_pick(),
             "edit.history_restore" => self.history_restore_pick(),
             "edit.history_pin" => self.history_pin_pick(),
+            "edit.history_check" => self.history_check(),
             "git.next_hunk" => self.git_hunk_step(true),
             "git.prev_hunk" => self.git_hunk_step(false),
             "git.revert_hunk" => self.git_revert_hunk(),

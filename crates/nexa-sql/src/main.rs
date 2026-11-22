@@ -860,6 +860,8 @@ struct App {
     object_tabs: HashMap<u64, explorer::ObjectOrigin>,
     /// ★ O-1 `server` 시점(11-10): 컴파일 성공 뒤 다시 요청한 소스의 출처 — 같은 출처의 `OpenSql` 응답을 히스토리에만 넣고 소비.
     history_server_wait: Option<explorer::ObjectOrigin>,
+    /// 기다리는 서버 소스가 **외부 변경 확인**(`edit.history_check`)용인가 — 거짓 = 컴파일 뒤 `server` 시점 저장.
+    history_server_check: bool,
     /// ★ T-167 B5: 객체 북마크 재개 — 소스 조회를 보내 두고 탭이 열리면 이어서 이동할 (북마크 id, 정식 탭 여부).
     bm_goto_pending: Option<(u64, bool)>,
     /// `output.show=always` 갖춤을 탭 전환마다 한 번만(09-30).
@@ -2326,6 +2328,7 @@ fn main() {
         objlink_menu_force_closed_for_resync: false,
         object_tabs: HashMap::new(),
         history_server_wait: None,
+        history_server_check: false,
         bm_goto_pending: None,
         output_last_editor: 0,
         default_shared: SHARED,

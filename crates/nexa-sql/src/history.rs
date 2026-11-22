@@ -23,6 +23,8 @@ pub(crate) enum Tag {
     Server,
     /// 시점으로 되돌린 본(O-1 복원).
     Restore,
+    /// 서버 변경 확인(`edit.history_check`)에서 **마지막 서버 본과 달랐던** 서버 소스(O-1 외부 변경 · 19 §3).
+    External,
 }
 
 impl Tag {
@@ -33,6 +35,7 @@ impl Tag {
             Tag::Compile => "compile",
             Tag::Server => "server",
             Tag::Restore => "restore",
+            Tag::External => "external",
         }
     }
 
@@ -43,6 +46,7 @@ impl Tag {
             "compile" => Tag::Compile,
             "server" => Tag::Server,
             "restore" => Tag::Restore,
+            "external" => Tag::External,
             _ => return None,
         })
     }
@@ -140,6 +144,29 @@ pub(crate) fn store_in(
         })?;
     prune_item_in(dir, keep);
     Ok(Some(path))
+}
+
+/// 서버 변경 확인의 판정(O-1 외부 변경 · 19 §3) — 기준 = 시점 목록에서 **서버가 가졌던 본**(열기 · 컴파일 뒤 서버 본 · 앞선 외부 변경) 중 최신.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ServerCheck {
+    /// 견줄 서버 본이 없다(히스토리를 켜기 전에 연 탭 · 시점이 정리됨) — 지금 본을 기준으로 삼는다.
+    NoBaseline,
+    /// 기준 시점(표시용 시각)과 같다.
+    Unchanged(String),
+    /// 기준 시점(표시용 시각) 뒤로 서버 소스가 달라졌다.
+    Changed(String),
+}
+
+/// `list`(최신 먼저)와 방금 받은 서버 소스의 해시로 판정한다. 버퍼에서 나온 시점(컴파일 직전 · 복원 · 저장)은 기준이 아니다.
+pub(crate) fn server_check(list: &[Entry], hash: u64) -> ServerCheck {
+    let base = list
+        .iter()
+        .find(|e| matches!(e.tag, Tag::Open | Tag::Server | Tag::External));
+    match base {
+        None => ServerCheck::NoBaseline,
+        Some(e) if e.hash == hash => ServerCheck::Unchanged(e.when()),
+        Some(e) => ServerCheck::Changed(e.when()),
+    }
 }
 
 /// 파일 이름 → 시점(규칙에 맞지 않으면 None · 경로·크기는 비움).
@@ -268,6 +295,58 @@ mod tests {
         let d = std::env::temp_dir().join(format!("nsql-hist-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    /// O-1 외부 변경 판정: 기준 = 서버가 가졌던 본(open · server · external) 중 최신 — 버퍼에서 나온 시점은 건너뛴다.
+    #[test]
+    fn server_check_uses_latest_server_side_snapshot() {
+        let e = |stamp: &str, tag: Tag, hash: u64| Entry {
+            path: PathBuf::new(),
+            stamp: stamp.to_string(),
+            tag,
+            hash,
+            bytes: 0,
+            pinned: false,
+        };
+        assert_eq!(server_check(&[], 1), ServerCheck::NoBaseline);
+        // 버퍼 시점뿐 = 기준 없음.
+        let only_buf = [
+            e("20261122100000000", Tag::Compile, 1),
+            e("20261122090000000", Tag::Save, 1),
+        ];
+        assert_eq!(server_check(&only_buf, 1), ServerCheck::NoBaseline);
+        // 최신 먼저: compile(7) · server(5) · open(3) → 기준 = server(5).
+        let list = [
+            e("20261122120000000", Tag::Compile, 7),
+            e("20261122110000000", Tag::Server, 5),
+            e("20261122100000000", Tag::Open, 3),
+        ];
+        assert_eq!(
+            server_check(&list, 5),
+            ServerCheck::Unchanged("2026-11-22 11:00:00".into())
+        );
+        // 컴파일 직전 버퍼(7)와 같아도 서버 본(5)과 다르면 바뀐 것 · 옛 open(3)으로 돌아가도 바뀐 것.
+        assert_eq!(
+            server_check(&list, 7),
+            ServerCheck::Changed("2026-11-22 11:00:00".into())
+        );
+        assert_eq!(
+            server_check(&list, 3),
+            ServerCheck::Changed("2026-11-22 11:00:00".into())
+        );
+        // 앞선 외부 변경이 기준이 된다(같은 변경을 두 번 알리지 않는다).
+        let ext = [
+            e("20261122130000000", Tag::External, 9),
+            e("20261122110000000", Tag::Server, 5),
+        ];
+        assert_eq!(
+            server_check(&ext, 9),
+            ServerCheck::Unchanged("2026-11-22 13:00:00".into())
+        );
+        assert_eq!(
+            entry_of_name("20261122130000000_external_0000000000000009.sql").map(|x| x.tag),
+            Some(Tag::External)
+        );
     }
 
     #[test]
