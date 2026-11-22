@@ -207,7 +207,7 @@ mod tests {
         w.set_file(Some(PathBuf::from("a.sql")));
         assert_eq!(w.info().and_then(|g| g.head.as_deref()), Some("x\n"));
         w.set_file(Some(PathBuf::from("b.sql")));
-        let g = w.info().unwrap();
+        let g = w.info().expect("info kept");
         assert!(g.head.is_none() && g.branch == "main" && g.changed == 2);
     }
 
