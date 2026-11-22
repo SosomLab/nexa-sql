@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-22 낮 (Windows · 사용자 실기 확인 기록)** — T-134 ⓐ 끌어 붙이기 "모두 동작"(6항목) · "나머지는 동작 확인함"(T-507 · Oracle 역할 콤보 · T-250 분류 · T-462 ② · T-508 필터·F10) · T-102 #7 = 자동 측정 판정 · T-134 ⓑ 재확인 = 사용자 답 대기 · push nexa-ui e5b9a97 · nexa-sql 825295de(CI 진행 중) · [journal 11-22 §7](journal/2026-11-22.md)
+
 - **2026-11-22 오전 (Windows · 묶음 3 검증 · T-172 P1·P2 · T-134 ⓐ)** — verify v2(681/0/6 · 통합 48/0/1 · v1 TIMEOUT = 흐름 하한 고침 → 재실행 8 시나리오 41/0) · 새 V1 `project-paths` 22/2(결함 1 = 명시 저장 뒤 두 번째 저장에서 못 찾은 탭 유실 · project.rs:519) · 새 V1 `toolbar-float` 9/0 · nexa-ui 696/0/6 · D-492~494 · 73 §7 구현 상태 · 위키 경로 표기 · Debug 44080 · [journal 11-22 §6](journal/2026-11-22.md)
 
 - **2026-11-22 새벽 (Windows · 커서 닫기 · 줄바꿈 캐시 묶음 검증)** — verify v2 ✓(679/0/6 · V1 7시나리오) · nexa-ui 696/0/6 · T-93 ⓑ 실서버 Oracle `v$open_cursor` 결과 탭·편집기 탭 닫기 1→0 · 대조군 1→1(새 V1 `cursor-close`) · T-102 #7 Debug 2 MB 켬 224 → 21 ms · `verify.sh` 이력 결함 고침 · Debug 42896 · [journal 11-22](journal/2026-11-22.md)
