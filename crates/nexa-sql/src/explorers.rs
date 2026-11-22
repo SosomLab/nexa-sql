@@ -1286,6 +1286,20 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         (ex.source_ready(), ex.is_offline())
     }
 
+    /// 표식이 달린 소스 요청(T-513 · [`Explorer::reload_source_tok`]) — 그 서버 칸(없으면 지금 칸)으로. 반환 = 보냈는가.
+    pub(crate) fn reload_source_tok(
+        &mut self,
+        spec: Option<&ConnectSpec>,
+        o: &nsql_catalog::ObjectInfo,
+        kind: nsql_catalog::ObjectKind,
+        token: u64,
+    ) -> bool {
+        match spec.and_then(|s| self.find(s)) {
+            Some(i) => self.panes[i].ex.reload_source_tok(o, kind, token),
+            None => self.cur_mut().reload_source_tok(o, kind, token),
+        }
+    }
+
     pub(crate) fn reload_source_for(
         &mut self,
         spec: Option<&ConnectSpec>,
@@ -1915,6 +1929,7 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                         origin,
                         db,
                         took_ms,
+                        token,
                         ..
                     } => {
                         // 소스 탭 = 출처에 · SELECT 템플릿 탭 = `server`에 이 칸의 서버를(둘 다 그 서버 세션에 묶인다 · 10-08).
@@ -1929,6 +1944,7 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                             db,
                             server: p.key.clone(),
                             took_ms,
+                            token,
                         });
                     }
                     // ★ 코멘트 응답 = 이 칸에서 왔다(11-09) — 호스트가 **이 칸** 메타에 쓰고 패널 캐시도 이 서버 태그로(종전 = `shown`

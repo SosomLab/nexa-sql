@@ -497,6 +497,9 @@ enum Req {
         qualify: bool,
         /// 다른 DB의 객체(101).
         db: Option<String>,
+        /// ★ 요청 표식(T-513 · 0 = 보통 열기): 호스트가 "이 응답은 탭을 열지 말고 나에게"로 건 요청에 싣는다 — 응답·실패가
+        ///   그대로 들고 돌아온다(이름·시간으로 추측하지 않는다).
+        token: u64,
     },
     /// 라이브 로그 폴링(T-71) — 메타 세션으로 V$SESSION 또는 로그 테이블을 읽는다.
     Live {
@@ -767,6 +770,8 @@ enum Resp {
         /// ★ 객체가 속한 DB(SQL Server/MySQL 트리 · 요청의 `db` 그대로) — 호스트가 소스 탭의 작업 단위를 이 DB로 심는다(사용자 10-08
         ///   "PLANDB_MS 프로시저를 열면 탭이 master" · T-312는 행 조회 탭만이었다).
         db: Option<String>,
+        /// 요청의 표식 그대로(T-513 · 0 = 보통 열기).
+        token: u64,
     },
     Live {
         gen: u64,
@@ -870,12 +875,15 @@ pub(crate) enum ExplorerAction {
         server: Option<ConnectSpec>,
         /// 소스 조회 서버 왕복(ms · 요청→응답 · SELECT 템플릿 = 0) — 상태줄 "소스 열림(서버 N ms)"(협업 10-16: 편집기 적재 0 ms를 왕복으로 읽힘).
         took_ms: u128,
+        /// ★ 요청 표식(T-513 · 0 = 보통 열기 → 탭) — 0이 아니면 호스트가 건 요청의 답이다(탭을 열지 않고 그 요청의 주인에게).
+        token: u64,
     },
     /// 사용자가 알아야 하는 안내(상태줄 + 경고 토스트) — 예: 연결이 해제된 서버에서 새로 고침을 골랐다.
     Notice(String),
     /// ★ 소스 요청이 **실패로 끝났다**(응답이 오류 · 검토 11-23) — 호스트가 그 소스를 기다리던 상태(히스토리의 서버 변경 확인)를
-    ///   접는다. 타임아웃 안내(`Fail`만 · 요청은 살아 있고 늦게 올 수 있다)와 구별하려고 따로 둔다. `Fail`과 함께 나간다.
-    SourceError,
+    ///   접는다. 타임아웃 안내(`Fail`만 · 요청은 살아 있고 늦게 올 수 있다)와 구별하려고 따로 둔다. 값 = 그 요청의 표식
+    ///   (T-513 · 0 = 보통 열기 · 호스트는 0을 무시) · 응답 오류 · 세대 바뀜 · 끊김·재결합으로 버려진 요청에서 나간다.
+    SourceError(u64),
     /// ★ 실패 안내(docs/107 §5 · "상태줄 한 줄로 끝내지 않는다"): 제목 + 본문 → 오류 토스트 + 상태줄 + 로그 1줄.
     Fail {
         title: String,
@@ -1130,6 +1138,8 @@ pub(crate) struct Explorer {
     source_extra: String,
     /// ★ 소스 요청이 진행 중일 때 들어온 **최신** 요청 하나(덮어쓰기 · 10-16 사용자 "밀린 요청은 버리고 최신만") — 진행 중인 것이 끝나면 발행.
     source_queued: Option<(ObjectInfo, ObjectKind, String)>,
+    /// ★ 진행 중인 소스 요청의 표식(T-513 · 0 = 보통 열기) — 요청이 버려질 때(끊김 · 재결합) 호스트에 알리려고 기억한다.
+    source_token: u64,
     /// 마지막 페인트의 행 높이(글꼴 높이 + 여백 · 글꼴 크기를 따라간다 · 사용자 09-15).
     row_px: i32,
     /// 로딩 점 애니메이션(300ms 단계) — 로딩 중인 노드가 있을 때만 다시 그린다(nexa-dir2 "Loading…" 자리 · 사용자 09-15).
@@ -2142,6 +2152,7 @@ fn meta_thread(
                 origin,
                 qualify,
                 db,
+                token,
             } => {
                 if gen != cur_gen {
                     continue;
@@ -2163,6 +2174,7 @@ fn meta_thread(
                     r,
                     origin,
                     db,
+                    token,
                 }
             }
             Req::Args { gen, id, owner } => {
@@ -2681,6 +2693,7 @@ impl Explorer {
             source_name: String::new(),
             source_extra: String::new(),
             source_queued: None,
+            source_token: 0,
             row_px: 0,
             dots_step: 0,
             grouped: false,
@@ -3592,7 +3605,7 @@ impl Explorer {
         self.tx_bg = tx_bg;
         self.rx = rx;
         self.live_inflight = false;
-        self.source_pending = false;
+        self.source_abandon();
         for n in &mut self.nodes {
             if n.state == LoadState::Loading {
                 n.state = LoadState::Idle;
@@ -5129,8 +5142,7 @@ impl Explorer {
                     }
                     if !alive {
                         // 끊김 = 기다리던 소스는 오지 않는다(진행 표시 걷기 · 다시 고르면 재요청).
-                        self.source_pending = false;
-                        self.source_since = None;
+                        self.source_abandon();
                     }
                     self.actions
                         .push(ExplorerAction::Health { alive, ep, reason });
@@ -5182,12 +5194,18 @@ impl Explorer {
                     r,
                     origin,
                     db,
+                    token,
                 } => {
                     // 소요 시간 로그(10-16 사용자 "줄 클릭 뒤 0.5초 지연 원인" — 서버 왕복인지 보이게).
                     let took = self.source_since.map_or(0, |t0| t0.elapsed().as_millis());
                     self.source_pending = false;
                     self.source_since = None;
+                    self.source_token = 0;
                     if gen != self.gen {
+                        // 세대가 바뀐 뒤 온 답 = 버린다 — 표식이 달린 요청이었으면 호스트에 "오지 않는다"를 알린다(T-513).
+                        if token != 0 {
+                            self.actions.push(ExplorerAction::SourceError(token));
+                        }
                         continue;
                     }
                     self.actions.push(ExplorerAction::Log(format!(
@@ -5203,10 +5221,11 @@ impl Explorer {
                             db,
                             server: None,
                             took_ms: took,
+                            token,
                         }),
                         // 실패 = 상태줄 한 줄로 끝내지 않는다(docs/107 §5 · 사건 = "아무 메시지 없음").
                         Err(e) => {
-                            self.actions.push(ExplorerAction::SourceError);
+                            self.actions.push(ExplorerAction::SourceError(token));
                             self.actions.push(ExplorerAction::Fail {
                                 title: t(Msg::ExpSourceFailedTitle).to_string(),
                                 body: e,
@@ -5265,7 +5284,7 @@ impl Explorer {
         // 진행 중이던 소스 요청이 끝났으면(응답·끊김·시간 초과 어느 길이든) 대기하던 최신 요청 하나를 발행.
         if !self.source_pending {
             if let Some((o, k, title)) = self.source_queued.take() {
-                self.open_source_kind(&o, k, title);
+                self.open_source_kind(&o, k, title, 0);
                 changed = true;
             }
         }
@@ -6687,6 +6706,7 @@ impl Explorer {
                     db: self.unit_of(i, &o.schema),
                     server: None,
                     took_ms: 0,
+                    token: 0,
                 });
             }
             NodeKind::Object(o) if o.kind.has_source() => self.open_source(&o),
@@ -6909,7 +6929,7 @@ impl Explorer {
         self.soft_again.clear();
         self.size_want.clear();
         self.soft_redo.clear();
-        self.source_pending = false;
+        self.source_abandon();
         let _ = self.tx.send(Req::Open {
             gen: self.gen,
             spec: spec.clone(),
@@ -7165,13 +7185,39 @@ impl Explorer {
         if o.kind == ObjectKind::Package {
             self.open_source(o);
         } else {
-            self.open_source_kind(o, o.kind, format!("{}.sql", o.name));
+            self.open_source_kind(o, o.kind, format!("{}.sql", o.name), 0);
         }
     }
 
     /// ★ O-1 `server` 시점(11-10): 열린 탭 출처의 소스를 **다시** 받는다(패키지 본문은 종류만 `PackageBody` · 제목은 응답 가로채기라 안 쓰임).
     pub(crate) fn reload_source_of(&mut self, o: &ObjectInfo, kind: ObjectKind) {
-        self.open_source_kind(o, kind, format!("{}.sql", o.name));
+        self.open_source_kind(o, kind, format!("{}.sql", o.name), 0);
+    }
+
+    /// ★ 표식이 달린 소스 요청(T-513): 응답이 탭으로 열리지 않고 `OpenSql { token }`으로 호스트에 돌아간다. 호스트는
+    /// [`Explorer::source_ready`]일 때만 부른다(진행 중·대기 중이면 최신 의도 칸으로 밀려 표식을 잃는다) — 그래도 못 보내면
+    /// (오프라인 · 진행 중) `false`.
+    pub(crate) fn reload_source_tok(
+        &mut self,
+        o: &ObjectInfo,
+        kind: ObjectKind,
+        token: u64,
+    ) -> bool {
+        if !self.source_ready() {
+            return false;
+        }
+        self.open_source_kind(o, kind, format!("{}.sql", o.name), token);
+        true
+    }
+
+    /// 진행 중인 소스 요청을 버린다(끊김 · 재결합 · 오프라인 전환) — 표식이 달려 있었으면 호스트에 알린다(T-513).
+    fn source_abandon(&mut self) {
+        self.source_pending = false;
+        self.source_since = None;
+        let token = std::mem::take(&mut self.source_token);
+        if token != 0 {
+            self.actions.push(ExplorerAction::SourceError(token));
+        }
     }
 
     /// 객체 찾기 창에서 SELECT 생성(탐색기 Generate SQL ▸ SELECT와 한 길).
@@ -7205,15 +7251,20 @@ impl Explorer {
 
     /// 소스 열기(스펙) — 패키지 본문은 `open_body`(같은 길 · 종류만 `PackageBody`).
     fn open_source(&mut self, o: &ObjectInfo) {
-        self.open_source_kind(o, o.kind, format!("{}.sql", o.name));
+        self.open_source_kind(o, o.kind, format!("{}.sql", o.name), 0);
     }
 
     /// ★ 패키지 **본문** 열기(사용자 09-26 "Body는 어떻게 열고 수정하나") — `CREATE OR REPLACE PACKAGE BODY …`를 새 탭에 · 고쳐서 실행하면 컴파일.
     fn open_body(&mut self, o: &ObjectInfo) {
-        self.open_source_kind(o, ObjectKind::PackageBody, format!("{}.body.sql", o.name));
+        self.open_source_kind(
+            o,
+            ObjectKind::PackageBody,
+            format!("{}.body.sql", o.name),
+            0,
+        );
     }
 
-    fn open_source_kind(&mut self, o: &ObjectInfo, kind: ObjectKind, title: String) {
+    fn open_source_kind(&mut self, o: &ObjectInfo, kind: ObjectKind, title: String, token: u64) {
         if self.offline {
             self.actions
                 .push(ExplorerAction::Status(t(Msg::ExpNotConnected).to_string()));
@@ -7234,6 +7285,7 @@ impl Explorer {
         }
         self.source_pending = true;
         self.source_since = Some(Instant::now());
+        self.source_token = token;
         self.source_name = o.name.clone();
         self.source_extra = o.extra.clone();
         let name = if o.kind == ObjectKind::Function || o.kind == ObjectKind::Procedure {
@@ -7266,6 +7318,7 @@ impl Explorer {
             qualify: self.source_qualify,
             // 소스 탭의 작업 단위 = 객체의 DB(SQL Server/MySQL) 또는 스키마(Oracle · 사용자 10-08 "오라클도").
             db: self.unit_for(o),
+            token,
         });
     }
 

@@ -360,8 +360,6 @@ impl App {
         }
         self.sync_detail_target(false);
         let mut changed = false;
-        // 이번 묶음에 소스 실패가 있었나 — 묶음을 다 처리한 뒤에 죽은 대기를 걷는다(처리 중에는 방금 온 답이 아직 소비 전).
-        let mut source_failed = false;
         for a in self.explorer.take_actions() {
             changed = true;
             match a {
@@ -372,38 +370,17 @@ impl App {
                     db,
                     server,
                     took_ms,
+                    token,
                 } => {
+                    // ★ T-513: 표식이 달린 응답 = 히스토리가 건 요청의 답(서버 변경 확인 · 컴파일 뒤 `server` 시점) — 탭을 열지 않고
+                    //   그 요청의 주인에게(표식으로 찾는다 · 객체 이름·시간으로 추측하지 않는다). 보통 열기(표식 0)는 절대 가로채지 않는다.
+                    if token != 0 {
+                        self.history_response(token, &text);
+                        continue;
+                    }
                     // ★ AI 도구 `object_source`(11-14): 분석용으로 읽은 소스 = 도구 답으로만(탭을 열지 않는다).
                     if self.ai_source_take(origin.as_ref(), &text) {
                         continue;
-                    }
-                    // ★ O-1 `server` 시점(11-10): 컴파일 성공 뒤 다시 받은 소스 = 히스토리에만(탭 불변) · 기다리던 출처와 같은 응답만 소비.
-                    // 답이 오지 않은 옛 요청이 남아 있으면 먼저 버린다(같은 객체를 여는 지금 응답을 삼키지 않게 · 시간 만료만 —
-                    //   칸이 비었는지는 여기서 보지 않는다: 방금 온 답이 지금 소비되는 중이다).
-                    self.history_wait_expire();
-                    if let Some(w) = self.history_server_wait.take() {
-                        // 같은 객체 + (둘 다 서버를 알면) 같은 서버 — 다른 서버의 같은 이름 객체 응답을 삼키지 않는다(검토 11-23).
-                        let same = origin.as_ref().is_some_and(|o| {
-                            o.schema.eq_ignore_ascii_case(&w.schema)
-                                && o.name.eq_ignore_ascii_case(&w.name)
-                                && o.kind == w.kind
-                        }) && match (&server, &w.server) {
-                            (Some(a), Some(b)) => a == b,
-                            _ => true,
-                        };
-                        if same && std::mem::take(&mut self.history_server_check) {
-                            // ★ O-1 외부 변경 확인(`edit.history_check`): 저장이 아니라 마지막 서버 본과 견준다.
-                            self.history_check_done(&w, &text);
-                            continue;
-                        }
-                        if same {
-                            self.history_server_wait_at = None;
-                            self.history_object_store(&w, crate::history::Tag::Server, &text);
-                            // 요청 때의 "소스 읽는 중…" 상태줄을 갈아 끼운다(협업 V1 11-10 "4초 잔류").
-                            self.sess.status = t(Msg::StHistoryServerSaved).into();
-                            continue;
-                        }
-                        self.history_server_wait = Some(w);
                     }
                     // ★ 미리보기 요청이 더 새 객체로 바뀌었으면(↑/↓ 연타 · 10-16) 앞서 요청한 객체의 소스는 **버린다** — 뜻이 없어진 응답으로
                     //   미리보기 탭을 덮어쓰지 않게(최신 의도만 수행).
@@ -535,17 +512,18 @@ impl App {
                 // 상태줄은 놓치기 쉽다 → 경고 토스트도(예: 연결이 해제된 서버에서 새로 고침).
                 ExplorerAction::Fail { title, body } => {
                     self.ai_source_fail(&body);
-                    // (서버 소스 요청 대기는 여기서 접지 않는다 — 타임아웃 안내도 이 사건으로 오는데 그 요청은 살아 있어 늦게 올 수
-                    //   있다. 실패로 끝난 요청은 `SourceError`가 알린다 · 검토 11-23.)
                     self.log_win
                         .push(LogEntry::new(LogKind::Error, format!("{title} - {body}")));
                     self.toasts
                         .push(toast::ToastKind::Error, title, body.clone());
                     self.sess.status = body;
                 }
-                // 소스 요청이 오류로 끝났다 — **어느 칸의 것인지 모른다**(다른 서버 칸의 실패일 수 있다) → 묶음 끝에서
-                //   "대기 중인 칸에 진행 중인 요청이 없으면" 접는다(`history_wait_reap`).
-                ExplorerAction::SourceError => source_failed = true,
+                // 표식이 달린 소스 요청이 실패로 끝났다(T-513) — 그 요청 기록만 지운다(0 = 보통 열기의 실패 · 할 일 없음).
+                ExplorerAction::SourceError(token) => {
+                    if token != 0 {
+                        self.history_req_fail(token);
+                    }
+                }
                 ExplorerAction::Health { alive, ep, reason } => {
                     self.health_changed(&ep, alive, &reason);
                 }
@@ -706,9 +684,6 @@ impl App {
                     changed = true;
                 }
             }
-        }
-        if source_failed {
-            self.history_wait_reap();
         }
         changed
     }

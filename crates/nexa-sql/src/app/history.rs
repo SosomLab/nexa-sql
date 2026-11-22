@@ -6,7 +6,7 @@
 
 use crate::*;
 
-use crate::history::{self as store, Tag};
+use crate::history::{self as store, HistReq, Tag};
 
 /// 시점 종류 라벨.
 fn tag_label(tag: Tag) -> &'static str {
@@ -80,20 +80,19 @@ impl App {
         crate::backups::object_stem(&self.sess.profile, &info)
     }
 
-    /// ★ O-1 `server` 시점(19 §3 (c) · 11-10): 오브젝트 탭 `tab`의 객체 소스를 서버에서 다시 받아 **히스토리에만** 넣는다 —
-    ///   탭은 건드리지 않는다(응답은 meta.rs `OpenSql`이 `history_server_wait`로 가로챔 · 같은 해시면 저장 규칙대로 생략).
-    /// 반환 = 요청을 보냈는가. 탐색기가 오프라인이거나 다른 소스 요청이 진행 중이면 보내지 않고(대기도 세우지 않는다 —
-    /// 오지 않을 응답을 기다리며 다음 확인을 막지 않게 · 검토 11-23) `false`.
-    pub(crate) fn history_server_request(&mut self, tab: u64) -> bool {
+    /// ★ T-513(11-23) 서버 소스 요청: 오브젝트 탭 `tab`의 객체 소스를 서버에서 다시 받는다 — **표식(token)을 실어** 보내고 응답·실패가
+    ///   그 표식을 들고 돌아온다(`OpenSql { token }` · `SourceError(token)` → [`App::history_response`] · [`App::history_req_fail`]).
+    ///   종전 = 대기 칸 하나 + 객체 이름 비교 + 시간 만료로 "다음 소스 응답은 내 것"을 추측했다(독립 검토 4회 연속 지적:
+    ///   요청이 겹치면 덮어씀 · 답이 늦으면 중복 탭 · 실패하면 다음 열기를 삼킴 · 다른 서버의 같은 이름과 섞임).
+    ///   `check` = 서버 변경 확인(`edit.history_check` · 자동 확인) · 아니면 컴파일 뒤 `server` 시점 저장. 탭은 건드리지 않는다.
+    ///   반환 = 보냈는가(탐색기가 오프라인이거나 그 칸에 다른 소스 요청이 진행 중이면 `false` — 아무것도 남기지 않는다).
+    pub(crate) fn history_server_request(&mut self, tab: u64, check: bool, auto: bool) -> bool {
         if !self.settings.flag("history.enabled") {
             return false;
         }
         let Some(o) = self.object_tabs.get(&tab).cloned() else {
             return false;
         };
-        if !self.explorer.source_ready_for(o.server.as_ref()).0 {
-            return false;
-        }
         let info = nsql_catalog::ObjectInfo {
             db: String::new(),
             schema: o.schema.clone(),
@@ -107,20 +106,69 @@ impl App {
             modified: String::new(),
             extra: String::new(),
         };
-        let kind = o.kind;
-        let server = o.server.clone();
-        // 항목 폴더는 **지금** 정한다(요청을 건 탭의 세션 프로필) — 응답 때는 활성 탭이 달라져 있을 수 있다.
-        self.history_server_dir = store::object_dir(&self.history_object_stem(&o));
-        self.history_server_wait = Some(o);
-        self.history_server_wait_at = Some(Instant::now());
-        self.explorer
-            .reload_source_for(server.as_ref(), &info, kind);
+        self.history_reqs_expire();
+        self.history_token += 1;
+        let token = self.history_token;
+        if !self
+            .explorer
+            .reload_source_tok(o.server.as_ref(), &info, o.kind, token)
+        {
+            return false;
+        }
+        // 항목 폴더는 **지금** 정한다(요청을 건 순간의 세션 프로필) — 응답 때는 활성 탭이 달라져 있을 수 있다.
+        let dir = store::object_dir(&self.history_object_stem(&o));
+        self.history_reqs.push(HistReq {
+            token,
+            tab,
+            origin: o,
+            dir,
+            check,
+            auto,
+            at: Instant::now(),
+        });
         true
     }
 
+    /// 답이 오지 않은 요청 기록을 걷는다(탐색기 소스 타임아웃 + 여유 · 최소 30초). 걷힌 뒤 늦게 온 답은 표식을 못 찾아
+    /// **조용히 버려진다**(탭으로 열리지 않는다) — 기록이 남아 있어도 다른 요청을 막지 않는다(막는 것은 탐색기 칸의 상태뿐).
+    fn history_reqs_expire(&mut self) {
+        let limit = 30.max(self.settings.int("explorer.timeout").max(0) as u64 + 15);
+        self.history_reqs
+            .retain(|r| r.at.elapsed().as_secs() < limit);
+    }
+
+    /// 표식 `token`의 요청이 실패로 끝났다(응답 오류 · 끊김 · 재결합 · 세대 바뀜) — 기록을 지운다(안내는 탐색기의 `Fail`이 한다).
+    pub(crate) fn history_req_fail(&mut self, token: u64) {
+        self.history_reqs.retain(|r| r.token != token);
+    }
+
+    /// 표식이 달린 소스 응답(meta.rs `OpenSql { token != 0 }`) — 그 요청의 용도대로 처리한다. 모르는 표식(만료된 요청의 늦은 답)은
+    /// 버린다.
+    pub(crate) fn history_response(&mut self, token: u64, text: &str) {
+        let Some(i) = self.history_reqs.iter().position(|r| r.token == token) else {
+            self.log_win.push(LogEntry::new(
+                LogKind::Info,
+                format!("history: late source response dropped (request {token})"),
+            ));
+            return;
+        };
+        let req = self.history_reqs.remove(i);
+        if req.check {
+            self.history_check_done(&req, text);
+            return;
+        }
+        // 컴파일 뒤 `server` 시점: 같은 내용이면 저장이 생략되므로(최신과 같은 해시) 그 최신 버퍼 시점을 `server`로 다시
+        //   표시해 서버 기준을 남긴다.
+        if let Some(dir) = &req.dir {
+            self.history_store_in(dir, Tag::Server, text);
+            store::mark_newest_server_in(dir, store::content_hash(text));
+        }
+        // 요청 때의 "소스 읽는 중…" 상태줄을 갈아 끼운다(협업 V1 11-10 "4초 잔류").
+        self.sess.status = t(Msg::StHistoryServerSaved).into();
+    }
+
     /// ★ O-1 외부 변경 확인(명령 `edit.history_check` · 19 §3 · 11-22): 활성 오브젝트 탭의 객체 소스를 서버에서 다시 받아
-    ///   **마지막 서버 본**(열기 · 컴파일 뒤 서버 본 · 앞선 외부 변경)과 해시를 견준다 — 탭은 건드리지 않는다. 수동 명령뿐이다
-    ///   (주기 확인 = 지속 트래픽이라 사용자 결정 뒤 · 26 §8). 응답 = `history_check_done`(meta.rs `OpenSql`이 가로챔).
+    ///   **마지막 서버 본**(열기 · 컴파일 뒤 서버 본 · 앞선 외부 변경)과 해시를 견준다 — 탭은 건드리지 않는다.
     pub(crate) fn history_check(&mut self) {
         if !self.settings.flag("history.enabled") {
             self.sess.status = t(Msg::StHistoryOff).into();
@@ -131,18 +179,8 @@ impl App {
             self.sess.status = t(Msg::StHistoryCheckNoObject).into();
             return;
         }
-        // 앞선 서버 소스 요청(다른 탭의 확인 · 컴파일 뒤 저장)이 아직 답을 기다리면 덮어쓰지 않는다 — 덮으면 그 답이 일반
-        //   "소스 열기"로 흘러 중복 탭이 열린다(검토 11-23). 답이 오지 않은 옛 요청은 여기서 버린다.
-        self.history_wait_reap();
-        if self.history_server_wait.is_some() {
-            self.sess.status = t(Msg::StHistoryCheckBusy).into();
-            return;
-        }
-        self.history_server_check = true;
-        self.history_server_auto = false;
-        if !self.history_server_request(tab) {
-            // 보내지 못했다 = 탐색기가 오프라인이거나 다른 소스 요청이 진행 중.
-            self.history_server_check = false;
+        if !self.history_server_request(tab, true, false) {
+            // 보내지 못했다 = 탐색기가 오프라인이거나 그 칸에 다른 소스 요청이 진행 중.
             let offline = self
                 .object_tabs
                 .get(&tab)
@@ -156,70 +194,28 @@ impl App {
         }
     }
 
-    /// 답이 오지 않은 서버 소스 요청(오류 · 접속 끊김 · 객체가 사라짐)은 30초 뒤 버린다 — 남아 있으면 같은 객체를 탐색기에서
-    /// 열 때 그 응답이 "확인의 답"으로 삼켜져 탭이 열리지 않는다(검토 11-23). 수동 확인 · 자동 확인 · 응답 가로채기가 같이 쓴다.
-    pub(crate) fn history_wait_expire(&mut self) {
-        // 탐색기의 소스 타임아웃(`explorer.timeout` · 안내 뒤에도 요청은 살아 있다)보다 먼저 만료되지 않게 여유를 둔다.
-        let limit = 30.max(self.settings.int("explorer.timeout").max(0) as u64 + 15);
-        if self
-            .history_server_wait_at
-            .is_some_and(|t0| t0.elapsed().as_secs() >= limit)
-        {
-            self.history_wait_clear();
-        }
-    }
-
-    /// 죽은 대기 걷기(검토 11-23): 만료 + **그 서버 칸에 진행 중인 소스 요청이 없으면**(답이 이미 왔거나 · 끊김·재결합·세대
-    /// 바뀜으로 버려졌거나 · 오프라인) 대기를 접는다. 한 칸의 소스 요청은 한 번에 하나라, 칸이 비었는데 대기가 남아 있으면
-    /// 그 답은 오지 않는다. ★ 탐색기 사건을 처리하는 중(`meta.rs` 가로채기 자리)에는 쓰지 않는다 — 그때는 방금 온 답이 아직
-    /// 소비되기 전이라 칸이 비어 보인다.
-    pub(crate) fn history_wait_reap(&mut self) {
-        self.history_wait_expire();
-        let dead = self.history_server_wait.as_ref().is_some_and(|w| {
-            let (ready, offline) = self.explorer.source_ready_for(w.server.as_ref());
-            ready || offline
-        });
-        if dead {
-            self.history_wait_clear();
-        }
-    }
-
-    /// 서버 소스 요청 대기 상태를 지운다(만료 · 소스 읽기 실패).
-    pub(crate) fn history_wait_clear(&mut self) {
-        self.history_server_wait = None;
-        self.history_server_wait_at = None;
-        self.history_server_dir = None;
-        self.history_server_check = false;
-        self.history_server_auto = false;
-    }
-
     /// ★ O-1 자동 확인(D-499 · 사용자 11-23 "탭 활성화 때 최소 간격으로 · 기본 끔"): 오브젝트 탭이 **활성화될 때** 그 탭의 마지막
     ///   확인에서 `history.server_check_secs`초(0 = 끔 = 기본)가 지났으면 서버 변경 확인을 한 번 건다 — 주기 폴링이 아니다
-    ///   (보고 있지 않은 탭에는 조회가 나가지 않는다 · 26 §8). 처음 보는 탭(방금 연 것)은 시각만 적고 확인하지 않는다. 실행 중이거나
-    ///   다른 확인을 기다리는 중이면 건너뛴다. 바뀌지 않았으면 조용히 끝난다(상태줄을 비운다). `about_to_wait`마다 불리지만 활성
-    ///   탭이 바뀐 순간에만 일한다.
+    ///   (보고 있지 않은 탭에는 조회가 나가지 않는다 · 26 §8). 처음 보는 탭(방금 연 것)은 시각만 적고 확인하지 않는다. 실행 중이면
+    ///   건너뛴다. 바뀌지 않았으면 조용히 끝난다(상태줄을 비운다). `about_to_wait`마다 불리지만 활성 탭이 바뀐 순간에만 일한다.
     pub(crate) fn history_auto_check(&mut self) {
         let tab = self.editors.active_id();
         if tab == self.history_auto_tab {
             return;
         }
         self.history_auto_tab = tab;
-        // 답이 오지 않은 옛 요청 정리는 자동 확인이 꺼져 있어도 한다(수동 확인·컴파일 뒤 요청도 남을 수 있다).
-        self.history_wait_reap();
+        self.history_reqs_expire();
         let secs = self.settings.int("history.server_check_secs").max(0) as u64;
         if secs == 0 || !self.settings.flag("history.enabled") {
             return;
         }
-        if !self.object_tabs.contains_key(&tab)
-            || self.history_server_wait.is_some()
-            || self.sess.busy
-        {
+        if !self.object_tabs.contains_key(&tab) || self.sess.busy {
             return;
         }
         let now = Instant::now();
         self.history_auto_seen
             .retain(|(id, _)| self.object_tabs.contains_key(id));
-        match self.history_auto_seen.iter_mut().find(|(id, _)| *id == tab) {
+        match self.history_auto_seen.iter().find(|(id, _)| *id == tab) {
             None => {
                 self.history_auto_seen.push((tab, now));
                 return;
@@ -230,30 +226,18 @@ impl App {
                 }
             }
         }
-        self.history_server_check = true;
-        self.history_server_auto = true;
-        if self.history_server_request(tab) {
-            // 보냈을 때만 간격을 소비한다(못 보냈으면 다음 탭 활성화 때 다시 시도).
+        // 보냈을 때만 간격을 소비한다(못 보냈으면 — 오프라인 · 다른 소스 요청 중 — 다음 탭 활성화 때 다시 시도).
+        if self.history_server_request(tab, true, true) {
             if let Some((_, at)) = self.history_auto_seen.iter_mut().find(|(id, _)| *id == tab) {
                 *at = now;
             }
-        } else {
-            // 보내지 못했다(오프라인 · 다른 소스 요청 중) — 자동 확인은 조용히 다음 기회로.
-            self.history_server_check = false;
-            self.history_server_auto = false;
         }
     }
 
-    /// 외부 변경 확인의 응답 처리 — 달라졌으면 `external` 시점 저장 + 상태줄·로그 안내 · 같으면 상태줄만.
-    pub(crate) fn history_check_done(&mut self, o: &explorer::ObjectOrigin, text: &str) {
-        // 폴더 = 요청 때 정한 것(없으면 지금 계산 · 옛 길).
-        let dir = self
-            .history_server_dir
-            .take()
-            .or_else(|| store::object_dir(&self.history_object_stem(o)));
-        let Some(dir) = dir else {
-            self.history_server_wait_at = None;
-            self.history_server_auto = false;
+    /// 외부 변경 확인의 응답 처리 — 달라졌으면 `external` 시점 저장 + 상태줄·로그·알림 카드 · 같으면 상태줄만(자동 확인은 조용히).
+    fn history_check_done(&mut self, req: &HistReq, text: &str) {
+        let (o, auto) = (&req.origin, req.auto);
+        let Some(dir) = req.dir.clone() else {
             return;
         };
         // ★ 가장 최신 시점이 **버퍼 시점**(컴파일 직전 · 복원)이고 서버 글과 같으면 = 내가 컴파일한 것이 서버에 그대로 있다
@@ -263,10 +247,8 @@ impl App {
         store::mark_newest_in(&dir, hash, Tag::Server);
         let verdict = store::server_check(&store::list_in(&dir), hash);
         let name = format!("{}.{}", o.schema, o.name);
-        // 자동 확인(D-499)은 바뀌지 않았으면 조용히 — 요청 때의 "소스 읽는 중…" 상태줄만 비운다.
-        let auto = std::mem::take(&mut self.history_server_auto);
-        self.history_server_wait_at = None;
         match verdict {
+            // 자동 확인(D-499)은 바뀌지 않았으면 조용히 — 요청 때의 "소스 읽는 중…" 상태줄만 비운다.
             store::ServerCheck::Unchanged(_) if auto => self.sess.status = String::new(),
             store::ServerCheck::Unchanged(when) => {
                 self.sess.status = tf(Msg::StHistoryCheckSame, &[&name, &when]);
@@ -284,28 +266,17 @@ impl App {
                 let msg = tf(Msg::StHistoryCheckChanged, &[&name, &when]);
                 self.log_win
                     .push(LogEntry::new(LogKind::Info, format!("history: {msg}")));
-                // ★ 알림 카드(O-1 "변경 알림 + 비교 바로 열기"): 누르면 그 오브젝트 탭으로 가서 방금 저장한 서버 본과 편집기를 비교한다.
-                //   자동 확인은 상태줄만으로는 놓치기 쉽다(다른 일을 하다 돌아온 순간) · 수동 확인도 같은 카드.
-                // 방금 저장한 시점(같은 해시의 external) — 옛 external 시점을 가리키지 않게 해시까지 맞춘다.
-                let hash = store::content_hash(text);
+                // ★ 알림 카드(O-1 "변경 알림 + 비교 바로 열기"): 누르면 **요청을 건 그 탭**으로 가서 방금 저장한 서버 본과
+                //   편집기를 비교한다(같은 해시의 external 시점 · 탭이 그새 닫혔으면 카드 없이 상태줄·로그만).
                 let snap = store::list_in(&dir)
                     .into_iter()
                     .find(|e| e.tag == Tag::External && e.hash == hash);
-                let tab = self
-                    .object_tabs
-                    .iter()
-                    .find(|(_, x)| {
-                        x.kind == o.kind
-                            && x.schema.eq_ignore_ascii_case(&o.schema)
-                            && x.name.eq_ignore_ascii_case(&o.name)
-                    })
-                    .map(|(id, _)| *id);
-                if let (Some(e), Some(tab)) = (snap, tab) {
+                if let (Some(e), true) = (snap, self.object_tabs.contains_key(&req.tab)) {
                     self.toasts.push_action(
                         toast::ToastKind::Info,
                         name,
                         format!("{msg}\n{}", t(Msg::HistToastCompare)),
-                        &format!("histobj:{tab}|{}", e.path.to_string_lossy()),
+                        &format!("histobj:{}|{}", req.tab, e.path.to_string_lossy()),
                     );
                 }
                 self.sess.status = msg;
@@ -332,12 +303,7 @@ impl App {
         if !self.settings.flag("history.enabled") {
             return;
         }
-        // 서버 본 저장(컴파일 뒤 요청의 답)은 요청 때 정한 폴더로 — 그 밖(열기 · 컴파일 직전 · 복원)은 지금 활성 탭의 것.
-        let dir = (tag == Tag::Server)
-            .then(|| self.history_server_dir.take())
-            .flatten()
-            .or_else(|| store::object_dir(&self.history_object_stem(o)));
-        let Some(dir) = dir else {
+        let Some(dir) = store::object_dir(&self.history_object_stem(o)) else {
             return;
         };
         self.history_store_in(&dir, tag, text);

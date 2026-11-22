@@ -10,6 +10,22 @@ use std::path::{Path, PathBuf};
 
 use crate::backups::{fnv64, stamp17};
 
+/// ★ T-513: 표식을 실어 보낸 서버 소스 요청 한 건 — 응답(`OpenSql { token }`)·실패(`SourceError(token)`)가 표식으로 이 기록을
+/// 찾는다. 폴더·탭·용도를 **요청 때** 적어 두므로 응답 때 활성 탭·세션이 달라져도 섞이지 않는다.
+pub(crate) struct HistReq {
+    pub token: u64,
+    /// 요청을 건 오브젝트 탭(알림 카드가 이 탭으로 간다).
+    pub tab: u64,
+    pub origin: crate::explorer::ObjectOrigin,
+    /// 히스토리 항목 폴더(요청 때의 세션 프로필 기준 · 설정 폴더를 못 얻으면 None).
+    pub dir: Option<PathBuf>,
+    /// 서버 변경 확인인가(아니면 컴파일 뒤 `server` 시점 저장).
+    pub check: bool,
+    /// 자동 확인인가(바뀌지 않았으면 조용히).
+    pub auto: bool,
+    pub at: std::time::Instant,
+}
+
 /// 시점의 종류(파일 이름 둘째 조각).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Tag {

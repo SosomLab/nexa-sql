@@ -859,16 +859,9 @@ struct App {
     /// ★ 객체 소스 탭의 출처(편집기 탭 id → 서버·스키마·객체·종류 · 09-30): F5 = 본문 전체를 한 단위로 · 세션 = 그 서버.
     object_tabs: HashMap<u64, explorer::ObjectOrigin>,
     /// ★ O-1 `server` 시점(11-10): 컴파일 성공 뒤 다시 요청한 소스의 출처 — 같은 출처의 `OpenSql` 응답을 히스토리에만 넣고 소비.
-    history_server_wait: Option<explorer::ObjectOrigin>,
-    /// 그 요청을 건 순간의 히스토리 항목 폴더 — 응답 때 다시 계산하지 않는다(그 사이 활성 탭·세션이 바뀌면 다른 프로필의
-    /// 폴더가 된다 · 검토 11-23).
-    history_server_dir: Option<PathBuf>,
-    /// 기다리는 서버 소스가 **외부 변경 확인**(`edit.history_check`)용인가 — 거짓 = 컴파일 뒤 `server` 시점 저장.
-    history_server_check: bool,
-    /// 그 확인이 **자동**(탭 활성화 · D-499)인가 — 바뀌지 않았으면 상태줄에 알리지 않는다.
-    history_server_auto: bool,
-    /// 서버 소스 요청 시각(응답이 오지 않은 요청을 30초 뒤 버린다).
-    history_server_wait_at: Option<Instant>,
+    history_reqs: Vec<history::HistReq>,
+    /// 다음 요청 표식(1부터 · 0 = 보통 열기).
+    history_token: u64,
     /// 자동 확인: 마지막으로 본 활성 탭 · 탭별 마지막 확인 시각(오브젝트 탭만 · 닫힌 탭은 걷는다).
     history_auto_tab: u64,
     history_auto_seen: Vec<(u64, Instant)>,
@@ -2361,11 +2354,8 @@ fn main() {
         explorer_focus_key: None,
         objlink_menu_force_closed_for_resync: false,
         object_tabs: HashMap::new(),
-        history_server_wait: None,
-        history_server_dir: None,
-        history_server_check: false,
-        history_server_auto: false,
-        history_server_wait_at: None,
+        history_reqs: Vec::new(),
+        history_token: 0,
         history_auto_tab: 0,
         history_auto_seen: Vec::new(),
         bm_goto_pending: None,

@@ -1358,12 +1358,9 @@ impl App {
                 if std::mem::take(&mut self.sess.run_object) && !self.sess.run_had_err {
                     // 컴파일 뒤 요청 = 저장용. 다른 서버 소스 요청(다른 탭의 변경 확인)이 답을 기다리는 중이면 덮어쓰지 않고
                     //   이번 서버 본 저장을 건너뛴다(덮으면 그 답이 일반 소스 열기로 흘러 중복 탭이 열린다 · 검토 11-23).
-                    self.history_wait_reap();
-                    if self.history_server_wait.is_none() {
-                        self.history_server_check = false;
-                        self.history_server_auto = false;
-                        let _ = self.history_server_request(self.sess.run_editor);
-                    }
+                    //   못 보내면(오프라인 · 그 칸에 다른 소스 요청 중) 이번 서버 본 저장은 건너뛴다 — 다음 확인이 "최신 버퍼
+                    //   시점 == 서버 글"이면 그때 서버 기준으로 표시한다(`history_check_done`).
+                    let _ = self.history_server_request(self.sess.run_editor, false, false);
                 }
             } else {
                 self.sess.run_object = false;
