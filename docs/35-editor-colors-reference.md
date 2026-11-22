@@ -130,6 +130,6 @@
 | # | 질문 | 권장 |
 |---|---|---|
 | **D-53** ✅ D-380(10-28) | 기본 구문 팔레트를 어느 쪽에 맞출까 — ⓐ DBeaver 라이트(사용자가 매일 보는 값) ⓑ Golden(적갈색 굵은 키워드 · 파란 문자열) ⓒ 지금 값 유지 + **프리셋 3종**(`editor.color_preset = nexa|dbeaver|golden`)으로 전환 | **ⓒ** — 프리셋은 설정 키 하나 · 색 창(T-39)에서 개별 덮어쓰기 |
-| **T-78 ⓑ** | (🚧 11-22) 프리셋 위 구문 색 개별 덮어쓰기 = 설정 키 9 `editor.syntax_{keyword,string,comment,number,datatype,function,bind,delimiter,command}_color`(빈 값 = 프리셋 · 공용 한 벌 · 프리셋을 바꿔도 유지 · 설정 창 [고르기]로 색 창) · [journal 11-22 §17](journal/2026-11-22.md) | 키 이름·테마별 여부·프리셋 변경 때 유지 = 사용자 결정 후보 |
+| **T-78 ⓑ** | (🚧 11-22) 프리셋 위 구문 색 개별 덮어쓰기 = 설정 키 9 `editor.syntax_{keyword,string,comment,number,datatype,function,bind,delimiter,command}_color`(값 = `#RRGGBB` 또는 `#RRGGBBAA`(알파 무시) · 빈 값 = 프리셋 · 공용 한 벌 · 프리셋을 바꿔도 유지 · 설정 창 [고르기]로 색 창 · 11-22 결함 = 8자리 값이 적용되지 않던 것 수정) · [journal 11-22 §17](journal/2026-11-22.md) | 키 이름·테마별 여부·프리셋 변경 때 유지 = 사용자 결정 후보 |
 | **D-54** ✅ D-380(10-28) | 선택 렌더링 — 불투명(지금) / Golden식 반투명 워시(구문 색 유지 · `selection.opacity`) | 설정으로(기본 불투명) |
 | **T-78** | (🚧 11-22 방언별 자료형 = 접속 방언의 내장 자료형을 강조 스펙에 더함 · 여러 낱말 이름은 첫 낱말만 · [journal 11-22 §17](journal/2026-11-22.md)) 토큰 종류 확장 — 자료형·함수·바인드 파라미터·구분자·명령(`TokenKind` 5종 추가 · `.nexa-syntax` 팔레트 키) → 프리셋 표를 그대로 실을 수 있게 | ✅ 11-05([journal 11-05 §5](journal/2026-11-05.md) · nexa-ui 260차) · 프리셋 값 = §1·§2 표 그대로 · Golden 다크 함수 = 미확인 → 테마 기본 |

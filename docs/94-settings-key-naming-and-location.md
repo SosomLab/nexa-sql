@@ -386,15 +386,15 @@
 
 | 키 | 종류 | 기본 | 분류 | 뜻 |
 |---|---|---|---|---|
-| `editor.syntax_keyword_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — keyword · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
-| `editor.syntax_string_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — string · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
-| `editor.syntax_comment_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — comment · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
-| `editor.syntax_number_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — number · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
-| `editor.syntax_datatype_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — datatype · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
-| `editor.syntax_function_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — function · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
-| `editor.syntax_bind_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — bind · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
-| `editor.syntax_delimiter_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — delimiter · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
-| `editor.syntax_command_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — command · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` · 형식 오류 = 프리셋 색 |
+| `editor.syntax_keyword_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — keyword · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` 또는 `#RRGGBBAA`(알파 무시 · 색 창 [고르기]는 8자리로 저장) · 형식 오류 = 프리셋 색 |
+| `editor.syntax_string_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — string · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` 또는 `#RRGGBBAA`(알파 무시 · 색 창 [고르기]는 8자리로 저장) · 형식 오류 = 프리셋 색 |
+| `editor.syntax_comment_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — comment · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` 또는 `#RRGGBBAA`(알파 무시 · 색 창 [고르기]는 8자리로 저장) · 형식 오류 = 프리셋 색 |
+| `editor.syntax_number_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — number · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` 또는 `#RRGGBBAA`(알파 무시 · 색 창 [고르기]는 8자리로 저장) · 형식 오류 = 프리셋 색 |
+| `editor.syntax_datatype_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — datatype · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` 또는 `#RRGGBBAA`(알파 무시 · 색 창 [고르기]는 8자리로 저장) · 형식 오류 = 프리셋 색 |
+| `editor.syntax_function_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — function · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` 또는 `#RRGGBBAA`(알파 무시 · 색 창 [고르기]는 8자리로 저장) · 형식 오류 = 프리셋 색 |
+| `editor.syntax_bind_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — bind · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` 또는 `#RRGGBBAA`(알파 무시 · 색 창 [고르기]는 8자리로 저장) · 형식 오류 = 프리셋 색 |
+| `editor.syntax_delimiter_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — delimiter · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` 또는 `#RRGGBBAA`(알파 무시 · 색 창 [고르기]는 8자리로 저장) · 형식 오류 = 프리셋 색 |
+| `editor.syntax_command_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — command · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` 또는 `#RRGGBBAA`(알파 무시 · 색 창 [고르기]는 8자리로 저장) · 형식 오류 = 프리셋 색 |
 
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.

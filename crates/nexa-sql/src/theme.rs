@@ -158,7 +158,7 @@ pub(crate) fn is_syntax_color_key(key: &str) -> bool {
     SYNTAX_COLOR_KEYS.contains(&key)
 }
 
-/// 프리셋 위에 개별 색을 덮는다 — `get(키)`가 올바른 `#RRGGBB`를 줄 때만(빈 값·형식 오류 = 프리셋 값 그대로).
+/// 프리셋 위에 개별 색을 덮는다 — `get(키)`가 올바른 `#RRGGBB`를 줄 때만(`#RRGGBBAA`도 받는다 · 알파 무시 · 빈 값·형식 오류 = 프리셋 값 그대로).
 pub(crate) fn apply_syntax_overrides(th: &mut Theme, get: &dyn Fn(&str) -> Option<String>) {
     let slots: [&mut Color; 9] = [
         &mut th.syn_keyword,
@@ -172,11 +172,10 @@ pub(crate) fn apply_syntax_overrides(th: &mut Theme, get: &dyn Fn(&str) -> Optio
         &mut th.syn_command,
     ];
     for (key, slot) in SYNTAX_COLOR_KEYS.iter().zip(slots) {
-        if let Some(c) = get(key)
-            .as_deref()
-            .and_then(nexa_ctl::theme::color_from_hex)
-        {
-            *slot = c;
+        // 🔧 11-22: 색 창([고르기])은 `#RRGGBBAA`(8자리)로 저장한다 — 6자리만 받으면 고른 색이 무시된다. 다른 색 키와 같은
+        //   `rgba_from_hex`(6·8자리)로 읽고, 구문 색은 불투명으로 칠하므로 알파는 버린다.
+        if let Some(rgba) = get(key).as_deref().and_then(nexa_ctl::rgba_from_hex) {
+            *slot = Color(rgba >> 8);
         }
     }
 }
@@ -423,10 +422,15 @@ mod tests {
             "editor.syntax_string_color" => Some("".into()),
             "editor.syntax_comment_color" => Some("nope".into()),
             "editor.syntax_command_color" => Some("AABBCC".into()),
+            // 색 창이 저장하는 꼴(8자리 · 알파 포함) — 알파는 버리고 색만.
+            "editor.syntax_number_color" => Some("#10203080".into()),
+            "editor.syntax_bind_color" => Some("#12345".into()),
             _ => None,
         });
         assert_eq!(th.syn_keyword, Color(0x0011_2233));
         assert_eq!(th.syn_command, Color(0x00AA_BBCC));
+        assert_eq!(th.syn_number, Color(0x0010_2030), "8자리 = 색 창 저장 형식");
+        assert_eq!(th.syn_bind, base.syn_bind, "5자리 = 형식 오류");
         assert_eq!(th.syn_string, base.syn_string);
         assert_eq!(th.syn_comment, base.syn_comment);
         assert_eq!(th.syn_datatype, base.syn_datatype);
