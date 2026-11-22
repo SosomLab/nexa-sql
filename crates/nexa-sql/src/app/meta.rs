@@ -376,6 +376,8 @@ impl App {
                         continue;
                     }
                     // ★ O-1 `server` 시점(11-10): 컴파일 성공 뒤 다시 받은 소스 = 히스토리에만(탭 불변) · 기다리던 출처와 같은 응답만 소비.
+                    // 답이 오지 않은 옛 요청이 남아 있으면 먼저 버린다(같은 객체를 여는 지금 응답을 삼키지 않게).
+                    self.history_wait_expire();
                     if let Some(w) = self.history_server_wait.take() {
                         let same = origin.as_ref().is_some_and(|o| {
                             o.schema.eq_ignore_ascii_case(&w.schema)
@@ -525,6 +527,11 @@ impl App {
                 // 상태줄은 놓치기 쉽다 → 경고 토스트도(예: 연결이 해제된 서버에서 새로 고침).
                 ExplorerAction::Fail { title, body } => {
                     self.ai_source_fail(&body);
+                    // 서버 소스 요청을 기다리던 중의 실패 = 그 대기를 접는다(확인·컴파일 뒤 저장의 답은 오지 않는다 · 검토 11-23).
+                    //   다른 실패(새로 고침 등)는 건드리지 않는다 — 살아 있는 대기를 지우면 그 답이 새 탭으로 열린다.
+                    if title == t(Msg::ExpSourceFailedTitle) {
+                        self.history_wait_clear();
+                    }
                     self.log_win
                         .push(LogEntry::new(LogKind::Error, format!("{title} - {body}")));
                     self.toasts

@@ -761,6 +761,9 @@ impl App {
             .path
             .as_ref()
             .and_then(|old| self.project.var_of_path(old))
+            // 변수의 자리가 이 PC에 실제로 있으면(그 파일 하나만 없어진 것) 추론하지 않는다 — 같은 이름의 다른 파일을 골랐다고
+            //   변수 전체를 옮기면 멀쩡한 탭까지 끌려간다(검토 11-23 · `apply_pc_paths`와 같은 조건).
+            .filter(|(name, _)| self.project.var_missing_here(name))
             .filter(|(_, tail)| path.ends_with(tail));
         if let Some((name, tail)) = hint {
             let mut dir = path.to_path_buf();

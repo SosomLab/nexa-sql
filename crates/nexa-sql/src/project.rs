@@ -665,6 +665,11 @@ impl Project {
         Some(self.base()?.join(format!("{ANCHOR_VAR}{name}}}")))
     }
 
+    /// 변수 `name`의 지금 자리가 이 PC에 **없는가**(미정의 앵커 포함) — 이럴 때만 자리 탭 [찾아보기]가 변수 자리를 추론한다.
+    pub(crate) fn var_missing_here(&self, name: &str) -> bool {
+        !self.var_place(name).is_some_and(|d| d.is_dir())
+    }
+
     /// ★ 못 찾은 경로가 어느 경로 변수 아래인가 — `(이름, 변수 폴더 뒤의 꼬리)`. 정의된 변수(가장 깊게 맞는 것) 또는 미정의
     /// 앵커(`${var:이름}/…`가 글자 그대로 남은 경로). 꼬리가 비면(변수 폴더 자신) `None`.
     pub(crate) fn var_of_path(&self, p: &Path) -> Option<(String, PathBuf)> {

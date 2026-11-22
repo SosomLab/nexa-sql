@@ -123,9 +123,35 @@ impl App {
             self.sess.status = t(Msg::StHistoryCheckNoObject).into();
             return;
         }
+        // 앞선 서버 소스 요청(다른 탭의 확인 · 컴파일 뒤 저장)이 아직 답을 기다리면 덮어쓰지 않는다 — 덮으면 그 답이 일반
+        //   "소스 열기"로 흘러 중복 탭이 열린다(검토 11-23). 답이 오지 않은 옛 요청은 여기서 버린다.
+        self.history_wait_expire();
+        if self.history_server_wait.is_some() {
+            self.sess.status = t(Msg::StHistoryCheckBusy).into();
+            return;
+        }
         self.history_server_check = true;
         self.history_server_auto = false;
         self.history_server_request(tab);
+    }
+
+    /// 답이 오지 않은 서버 소스 요청(오류 · 접속 끊김 · 객체가 사라짐)은 30초 뒤 버린다 — 남아 있으면 같은 객체를 탐색기에서
+    /// 열 때 그 응답이 "확인의 답"으로 삼켜져 탭이 열리지 않는다(검토 11-23). 수동 확인 · 자동 확인 · 응답 가로채기가 같이 쓴다.
+    pub(crate) fn history_wait_expire(&mut self) {
+        if self
+            .history_server_wait_at
+            .is_some_and(|t0| t0.elapsed().as_secs() >= 30)
+        {
+            self.history_wait_clear();
+        }
+    }
+
+    /// 서버 소스 요청 대기 상태를 지운다(만료 · 소스 읽기 실패).
+    pub(crate) fn history_wait_clear(&mut self) {
+        self.history_server_wait = None;
+        self.history_server_wait_at = None;
+        self.history_server_check = false;
+        self.history_server_auto = false;
     }
 
     /// ★ O-1 자동 확인(D-499 · 사용자 11-23 "탭 활성화 때 최소 간격으로 · 기본 끔"): 오브젝트 탭이 **활성화될 때** 그 탭의 마지막
@@ -139,18 +165,11 @@ impl App {
             return;
         }
         self.history_auto_tab = tab;
+        // 답이 오지 않은 옛 요청 정리는 자동 확인이 꺼져 있어도 한다(수동 확인·컴파일 뒤 요청도 남을 수 있다).
+        self.history_wait_expire();
         let secs = self.settings.int("history.server_check_secs").max(0) as u64;
         if secs == 0 || !self.settings.flag("history.enabled") {
             return;
-        }
-        // 응답이 오지 않은 옛 요청(오류·접속 끊김)은 30초 뒤 버린다 — 남아 있으면 다음 확인이 영영 막힌다.
-        if self
-            .history_server_wait_at
-            .is_some_and(|t0| t0.elapsed().as_secs() >= 30)
-        {
-            self.history_server_wait = None;
-            self.history_server_wait_at = None;
-            self.history_server_check = false;
         }
         if !self.object_tabs.contains_key(&tab)
             || self.history_server_wait.is_some()
@@ -208,9 +227,11 @@ impl App {
                     .push(LogEntry::new(LogKind::Info, format!("history: {msg}")));
                 // ★ 알림 카드(O-1 "변경 알림 + 비교 바로 열기"): 누르면 그 오브젝트 탭으로 가서 방금 저장한 서버 본과 편집기를 비교한다.
                 //   자동 확인은 상태줄만으로는 놓치기 쉽다(다른 일을 하다 돌아온 순간) · 수동 확인도 같은 카드.
+                // 방금 저장한 시점(같은 해시의 external) — 옛 external 시점을 가리키지 않게 해시까지 맞춘다.
+                let hash = store::content_hash(text);
                 let snap = store::list_in(&dir)
                     .into_iter()
-                    .find(|e| e.tag == Tag::External);
+                    .find(|e| e.tag == Tag::External && e.hash == hash);
                 let tab = self
                     .object_tabs
                     .iter()

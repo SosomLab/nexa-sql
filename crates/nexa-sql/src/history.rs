@@ -159,6 +159,11 @@ pub(crate) enum ServerCheck {
 
 /// `list`(최신 먼저)와 방금 받은 서버 소스의 해시로 판정한다. 버퍼에서 나온 시점(컴파일 직전 · 복원 · 저장)은 기준이 아니다.
 pub(crate) fn server_check(list: &[Entry], hash: u64) -> ServerCheck {
+    // ★ 가장 최신 시점과 같으면 바뀌지 않은 것(검토 11-23): 컴파일 뒤 서버가 버퍼와 같은 글을 돌려주면 `server` 시점은 저장이
+    //   생략된다(`store_in` = 최신과 같은 해시는 안 쓴다) → 기준이 옛 `open`으로 떨어져 **자기 컴파일을 외부 변경으로** 알렸다.
+    if let Some(e) = list.first().filter(|e| e.hash == hash) {
+        return ServerCheck::Unchanged(e.when());
+    }
     let base = list
         .iter()
         .find(|e| matches!(e.tag, Tag::Open | Tag::Server | Tag::External));
@@ -314,7 +319,12 @@ mod tests {
             e("20261122100000000", Tag::Compile, 1),
             e("20261122090000000", Tag::Save, 1),
         ];
-        assert_eq!(server_check(&only_buf, 1), ServerCheck::NoBaseline);
+        assert_eq!(server_check(&only_buf, 2), ServerCheck::NoBaseline);
+        // 버퍼 시점뿐이어도 가장 최신과 같으면 바뀌지 않은 것(컴파일한 그대로 서버에 있다).
+        assert_eq!(
+            server_check(&only_buf, 1),
+            ServerCheck::Unchanged("2026-11-22 10:00:00".into())
+        );
         // 최신 먼저: compile(7) · server(5) · open(3) → 기준 = server(5).
         let list = [
             e("20261122120000000", Tag::Compile, 7),
@@ -328,7 +338,18 @@ mod tests {
         // 컴파일 직전 버퍼(7)와 같아도 서버 본(5)과 다르면 바뀐 것 · 옛 open(3)으로 돌아가도 바뀐 것.
         assert_eq!(
             server_check(&list, 7),
-            ServerCheck::Changed("2026-11-22 11:00:00".into())
+            ServerCheck::Unchanged("2026-11-22 12:00:00".into()),
+            "가장 최신 시점(컴파일 직전 버퍼)과 같다 = 자기 컴파일 — 외부 변경으로 알리지 않는다"
+        );
+        // 최신이 다른 시점이고 서버 본 기준(open 3)과 다르면 바뀐 것.
+        let older = [
+            e("20261122130000000", Tag::Save, 8),
+            e("20261122120000000", Tag::Compile, 7),
+            e("20261122100000000", Tag::Open, 3),
+        ];
+        assert_eq!(
+            server_check(&older, 7),
+            ServerCheck::Changed("2026-11-22 10:00:00".into())
         );
         assert_eq!(
             server_check(&list, 3),
