@@ -624,8 +624,12 @@ impl App {
         self.sess.status = msg;
         // ★ 트랜잭션 로그(44 · 사용자 09-26 "적용해도 로그 창에 안 보임 · 3번이 1줄"): 실행한 문장마다 한 줄 —
         //   사전 검사 = Util(전체 보기에서만) · 실행문 = User · 수동 모드에서 실제로 남은 것만 열린 트랜잭션에 붙인다(pending 수).
+        // ★ T-107b 1단계(D-500 · 사용자 11-23 "행마다 1건"): 열린 트랜잭션에 붙인 문장 = 미커밋 변경 수에 **문장마다 1건** —
+        //   종전엔 적용 1회 = 1건이라 배지 수(`tx_pending`)와 트랜잭션 로그의 변경 문장 수가 달랐다(11-22 대조 s8).
+        let mut attached: Vec<(String, nsql_core::TxClass)> = Vec::new();
         {
             let attach = rep.tx_left_open && (rep.error.is_none() || rep.rollback_needed);
+            let dialect = self.sess.dialect;
             let editor = self.sess.run_editor;
             let log = self.txlog.select_session(self.sess.id);
             log.begin_batch();
@@ -644,6 +648,10 @@ impl App {
                         log.done(i, it.rows, it.elapsed, "");
                         if attach && !it.guard {
                             log.attach_tx(i, stamp, true);
+                            attached.push((
+                                one_line(&it.sql, 60),
+                                nsql_core::TxClass::of_sql_in(&it.sql, Some(dialect)),
+                            ));
                         }
                     }
                 }
@@ -662,15 +670,22 @@ impl App {
             );
         }
         if rep.tx_left_open {
-            // 수동 모드: 커밋/롤백 표식(34 UX) — 트랜잭션 로그의 한 줄로.
+            // 수동 모드: 커밋/롤백 표식(34 UX) — 붙인 문장마다 한 건(D-500). 붙인 문장이 없는데 트랜잭션이 열려 있으면
+            //   (오류 → 세이브포인트로 이번 적용분만 되돌림) 종전대로 "적용" 표식 한 건을 둔다(커밋/롤백 버튼이 살아 있게).
             let stamp = nsql_log::now_local().stamp();
-            self.sess.tx_pending.push(TxItem {
-                editor: self.sess.run_editor,
-                at: Instant::now(),
-                when: stamp.get(11..16).unwrap_or("").to_string(),
-                summary: t(Msg::MnGeApply).to_string(),
-                class: nsql_core::TxClass::Update,
-            });
+            let when = stamp.get(11..16).unwrap_or("").to_string();
+            if attached.is_empty() {
+                attached.push((t(Msg::MnGeApply).to_string(), nsql_core::TxClass::Update));
+            }
+            for (summary, class) in attached {
+                self.sess.tx_pending.push(TxItem {
+                    editor: self.sess.run_editor,
+                    at: Instant::now(),
+                    when: when.clone(),
+                    summary,
+                    class,
+                });
+            }
             self.sess.tx_dirty = true;
             self.sess.tx_stale_logged = false;
             self.sync_tx_ui();
