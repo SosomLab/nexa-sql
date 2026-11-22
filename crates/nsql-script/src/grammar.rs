@@ -726,6 +726,57 @@ next = SELECT
         assert_eq!(for_dialect(None).name, "ansi");
     }
 
+    /// T-326(108 §9 #9~#13): 방언별 누락 절 — Oracle `INSERT ALL`·flashback·`MATCH_RECOGNIZE` · SQL Server `FOR XML/JSON`·`WAITFOR` ·
+    /// PostgreSQL `CALL`·`COMMENT ON`·`DISTINCT ON`(SELECT 바로 뒤 자리에만). 다른 방언에는 새지 않는다.
+    #[test]
+    fn dialect_specific_clauses_added_and_do_not_leak() {
+        let has = |v: &[String], k: &str| v.iter().any(|x| x.eq_ignore_ascii_case(k));
+        let (ora, ms, pg, lite) = (
+            for_dialect(Some(Dialect::Oracle)),
+            for_dialect(Some(Dialect::Mssql)),
+            for_dialect(Some(Dialect::Postgres)),
+            for_dialect(Some(Dialect::Sqlite)),
+        );
+        for k in ["INSERT ALL", "INSERT FIRST", "FLASHBACK TABLE"] {
+            assert!(has(ora.start(), k), "{k}");
+            assert!(!has(pg.start(), k) && !has(ms.start(), k), "{k}");
+        }
+        for k in [
+            "MATCH_RECOGNIZE",
+            "AS OF TIMESTAMP",
+            "AS OF SCN",
+            "VERSIONS BETWEEN",
+        ] {
+            assert!(has(ora.next("FROM").unwrap(), k), "{k}");
+            assert!(!has(lite.next("FROM").unwrap(), k), "{k}");
+        }
+        for k in ["WAITFOR DELAY", "WAITFOR TIME"] {
+            assert!(has(ms.start(), k) && !has(ora.start(), k), "{k}");
+        }
+        for clause in ["FROM", "WHERE", "ORDER BY"] {
+            for k in ["FOR XML", "FOR JSON"] {
+                assert!(has(ms.next(clause).unwrap(), k), "{clause} {k}");
+                assert!(!has(pg.next(clause).unwrap(), k), "{clause} {k}");
+            }
+        }
+        for k in ["CALL", "COMMENT ON"] {
+            assert!(has(pg.start(), k), "{k}");
+        }
+        // DISTINCT ON = SELECT 바로 뒤 자리에만(쉼표 뒤·그 밖에는 안 나온다).
+        assert!(has(
+            &pg.next_at("SELECT", ClausePos::First).unwrap(),
+            "DISTINCT ON"
+        ));
+        assert!(!has(
+            &pg.next_at("SELECT", ClausePos::AfterComma).unwrap(),
+            "DISTINCT ON"
+        ));
+        assert!(!has(
+            &ora.next_at("SELECT", ClausePos::First).unwrap(),
+            "DISTINCT ON"
+        ));
+    }
+
     #[test]
     fn override_replaces_builtin_and_new_dialect_extends_ansi() {
         let txt = "dialect = tibero\nextends = oracle\n[clause SELECT]\nnext += PSM_ONLY\n";
