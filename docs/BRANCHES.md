@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| `feat/dialect-types-var-check` | 2026-11-22(Windows · deebee06 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-78 ⓐ 방언별 자료형 강조(`sql_for` + `datatype_words`) + T-304 ② 리터럴 대입 타입 검사(숫자 타입 + 비숫자 문자열 = 오류) · 41c1f140 · golden 양 방언 diff 0 · 문서(journal 11-22 §17) |
 | `feat/var-tail-comment` | 2026-11-22(Windows · 599ea7fb 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-304 ① 변수 선언 꼬리 주석(`strip_tail_comment`) + 비교 탭 상태줄 문구(객체 비교 아닌 탭 = "between the two sides") · 3f57d991 · golden 양 방언 diff 0 · 문서(journal 11-22 §17) |
 | `feat/small-bundle-1122` | 2026-11-22(Windows · 622aa198 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | 잔여 순차 첫 묶음 = T-98 단축키 2단 코드 캡처(`ui.key_capture_chord_ms`) · T-140 외부 변경 [차이 보기] → 비교 탭 · T-276 tab_unit 정리 · T-148 SQLite 열기 실패 분류 · T-510 verify 이력 = 통과 단계만 · 599ea7fb · 새 V1 `ext-diff` 7/0 · 문서 7(journal 11-22 §17) |
 | `feat/log-search` | 2026-11-22(Windows · 8a7b9905 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-54 로그 창 검색 1차(필터형 · `log.search:` · `log.stat` `search=` · 9adada40) · 새 V1 `log-search` 12/0 · 문서 3(journal 11-22 §15) |
