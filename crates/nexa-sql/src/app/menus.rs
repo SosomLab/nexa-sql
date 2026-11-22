@@ -680,6 +680,19 @@ impl App {
                 let id = id.to_string();
                 self.history_open(&id);
             }
+            // ★ O-1 서버 변경 알림 카드: `histobj:<탭 id>|<시점 경로>` = 그 오브젝트 탭으로 간 뒤 시점 ↔ 편집기 비교.
+            id if id.starts_with("histobj:") => {
+                if let Some((tab, path)) = id["histobj:".len()..].split_once('|') {
+                    let path = path.to_string();
+                    if let Ok(tab) = tab.parse::<u64>() {
+                        if self.editors.index_of_id(tab).is_some() {
+                            self.editors.switch_to_id(tab);
+                            self.sync_grid_tab();
+                            self.history_open(&format!("hist:{path}"));
+                        }
+                    }
+                }
+            }
             id if id.starts_with("hrst:") => {
                 let id = id.to_string();
                 self.history_restore(&id);

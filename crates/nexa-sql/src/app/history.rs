@@ -206,6 +206,28 @@ impl App {
                 let msg = tf(Msg::StHistoryCheckChanged, &[&name, &when]);
                 self.log_win
                     .push(LogEntry::new(LogKind::Info, format!("history: {msg}")));
+                // ★ 알림 카드(O-1 "변경 알림 + 비교 바로 열기"): 누르면 그 오브젝트 탭으로 가서 방금 저장한 서버 본과 편집기를 비교한다.
+                //   자동 확인은 상태줄만으로는 놓치기 쉽다(다른 일을 하다 돌아온 순간) · 수동 확인도 같은 카드.
+                let snap = store::list_in(&dir)
+                    .into_iter()
+                    .find(|e| e.tag == Tag::External);
+                let tab = self
+                    .object_tabs
+                    .iter()
+                    .find(|(_, x)| {
+                        x.kind == o.kind
+                            && x.schema.eq_ignore_ascii_case(&o.schema)
+                            && x.name.eq_ignore_ascii_case(&o.name)
+                    })
+                    .map(|(id, _)| *id);
+                if let (Some(e), Some(tab)) = (snap, tab) {
+                    self.toasts.push_action(
+                        toast::ToastKind::Info,
+                        name,
+                        format!("{msg}\n{}", t(Msg::HistToastCompare)),
+                        &format!("histobj:{tab}|{}", e.path.to_string_lossy()),
+                    );
+                }
                 self.sess.status = msg;
             }
         }
