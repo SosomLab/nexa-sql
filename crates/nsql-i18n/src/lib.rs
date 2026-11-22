@@ -3533,6 +3533,7 @@ pub enum Msg {
     HlpOtherClientList,
     CliErrForeignPassword,
     CliErrForeignDialect,
+    CliWarnFieldsIgnored,
     HlpOptPassword,
     HlpOptPasswordStdin,
     CliErrPasswordStdin,
@@ -9076,6 +9077,7 @@ impl Msg {
                 "psql    -U <user>                 = --user          (-h는 여기서 도움말: --host 사용 · -p는 비밀번호: --port 사용 · -d는 방언: --db 사용)\nmysql   -D <db>  -P <port>  -e <sql> = --db  --port  --query\nsqlcmd  -S <host[,port]>  -Q <sql>  -i <file> = --host/--port  --query  <file>\n비밀번호  -W는 받습니다(프롬프트는 자동) · sqlcmd의 -P <비밀번호>는 거절 - -p · NSQL_PASSWORD · --password-stdin 사용",
             ],
             Msg::CliErrForeignPassword => ["-P: expects a port number here (mysql style). To give a password use -p <password>, the NSQL_PASSWORD environment variable or --password-stdin (sqlcmd's -P <password> is not accepted)", "-P: 여기서는 포트 번호입니다(mysql 방식). 비밀번호는 -p <비밀번호> · 환경 변수 NSQL_PASSWORD · --password-stdin으로 주세요(sqlcmd의 -P <비밀번호>는 받지 않습니다)"],
+            Msg::CliWarnFieldsIgnored => ["note: -c {0} is used; --host/--port/--db/--user (-S -P -D -U) are ignored when -c is given", "참고: -c {0}을(를) 씁니다. -c를 주면 --host/--port/--db/--user(-S -P -D -U)는 쓰이지 않습니다"],
             Msg::CliErrForeignDialect => ["-T: use -d <dialect> to choose the SQL dialect (oracle, mssql, postgres, mysql, sqlite, ...)", "-T: SQL 방언은 -d <방언>으로 고릅니다(oracle · mssql · postgres · mysql · sqlite …)"],
             Msg::HlpOptPasswordStdin => [
                 "Read the password from the first line of standard input (keeps it out of the command line, shell history and process list): echo $PW | nsql run --password-stdin -c user@host script.sql. Cannot be combined with a script read from stdin (-)",
@@ -14139,6 +14141,7 @@ impl Msg {
         Msg::HlpOtherClientList,
         Msg::CliErrForeignPassword,
         Msg::CliErrForeignDialect,
+        Msg::CliWarnFieldsIgnored,
         Msg::HlpOptPassword,
         Msg::HlpOptPasswordStdin,
         Msg::CliErrPasswordStdin,

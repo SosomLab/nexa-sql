@@ -377,7 +377,38 @@ fn parse_opts() -> Opts {
             _ => o.positional.push(a),
         }
     }
+    // ★ T-51 후속(11-23 · 협업 V1 지적): `-c` 없이 필드(`--host`/`-S` · `--port` · `--db` · `-u`)로 준 접속 대상 = 접속 문자열로
+    //   조립한다(sqlcmd식 `nsql run -d mssql -S host,1433 -U sa -Q …`) — 종전엔 필드가 `conn add`에서만 쓰여 run·export·shell은
+    //   "-c required"였다. 비밀번호는 문자열에 넣지 않는다(환경 변수 → 프롬프트의 기존 길). `-c`와 필드를 같이 주면 `-c`가 이기고
+    //   필드는 쓰이지 않는다는 것을 알린다(조용히 다른 서버로 가지 않게). `conn`은 자기 길(`spec_from_opts`)을 그대로 쓴다.
+    if o.cmd != "conn" && help::takes_connection(&o.cmd) {
+        match &o.target {
+            // 호스트(또는 파일 기반 방언의 DB 경로)가 있으면 조립 — 둘 다 없으면 종전대로 각 명령이 "-c 필요"를 낸다.
+            None if o.host.is_some() || o.database.is_some() => match fields_target(&o) {
+                Ok(t) => o.target = Some(t),
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(2);
+                }
+            },
+            Some(t) if o.host.is_some() => eprintln!("{}", tf(Msg::CliWarnFieldsIgnored, &[t])),
+            _ => {}
+        }
+    }
     o
+}
+
+/// 필드 옵션 → 접속 문자열(`방언://사용자@호스트:포트/DB` · 비밀번호 없음 · `conn add`와 같은 검증 `ConnectSpec::from_parts`).
+fn fields_target(o: &Opts) -> Result<String, String> {
+    nsql_script::ConnectSpec::from_parts(
+        o.dialect,
+        o.host.as_deref().unwrap_or(""),
+        o.port,
+        o.database.as_deref().unwrap_or(""),
+        o.user.as_deref().unwrap_or(""),
+        "",
+    )
+    .map(|s| s.connection_string())
 }
 
 fn read_source(path: &str) -> String {
