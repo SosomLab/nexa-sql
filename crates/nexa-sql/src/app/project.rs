@@ -1153,6 +1153,12 @@ impl App {
             applied += 1;
             self.project_changed(false);
         }
+        // 경로 변수(T-172 P3)도 합치기만 한다(우리 것 먼저 · 저쪽에만 있는 이름 추가 — 지금은 파일을 직접 고칠 때만 생긴다).
+        for (n, v) in &theirs.path_vars {
+            if !self.project.path_vars.iter().any(|(x, _)| x == n) {
+                self.project.path_vars.push((n.clone(), v.clone()));
+            }
+        }
         if plan.settings != self.project.settings {
             self.project.settings = plan.settings;
             self.apply_project_settings();
