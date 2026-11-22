@@ -540,6 +540,8 @@ fn parse_accept(rest: &str) -> Result<Command, String> {
 
 /// `VARIABLE [name [type [= value]]]`.
 fn parse_variable(rest: &str) -> Result<Command, String> {
+    // ★ T-304(11-22): 명령 줄 꼬리 주석 `VAR x NUMBER = 10 -- 설명` — 따옴표 밖의 `--`부터는 버린다(종전 = 타입·값 글에 섞여 오류).
+    let rest = strip_tail_comment(rest).trim();
     if rest.is_empty() {
         return Ok(Command::Variable {
             name: None,
@@ -661,6 +663,23 @@ fn parse_variable(rest: &str) -> Result<Command, String> {
         ty: Some(ty),
         init,
     })
+}
+
+/// 명령 줄의 꼬리 주석을 뗀다: **작은따옴표 밖**의 첫 `--`부터 끝까지(`''`는 따옴표 안의 따옴표라 상태가 두 번 바뀌어 그대로다).
+/// `--`가 없거나 전부 따옴표 안이면 그대로.
+fn strip_tail_comment(s: &str) -> &str {
+    let b = s.as_bytes();
+    let mut in_str = false;
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'\'' => in_str = !in_str,
+            b'-' if !in_str && b.get(i + 1) == Some(&b'-') => return &s[..i],
+            _ => {}
+        }
+        i += 1;
+    }
+    s
 }
 
 /// 선언 글의 **첫 낱말 또는 마지막 낱말**이 층 이름(GLOBAL · SHARE/SHARED · LOCAL/TAB)이면 떼어 돌려준다 — 리터럴 안의 낱말(`= 'GLOBAL'`)은
@@ -1212,6 +1231,35 @@ mod tests {
             })
         );
         assert!(parse_command("VAR x BLOB").is_err());
+        // ★ T-304: 꼬리 주석 — 주석이 있어도 없는 것과 같은 결과 · 따옴표 안의 `--`는 값이다 · 주석만 남으면 목록 보기.
+        for (with, without) in [
+            ("VAR n NUMBER = 10 -- 건수", "VAR n NUMBER = 10"),
+            ("var v_cnt number --note", "var v_cnt number"),
+            (
+                "VAR s VARCHAR2(10) = 'a''b' -- it's",
+                "VAR s VARCHAR2(10) = 'a''b'",
+            ),
+            ("VAR g GLOBAL = 1 -- g", "VAR g GLOBAL = 1"),
+            ("VAR x DROP -- bye", "VAR x DROP"),
+            ("VARIABLE -- list", "VARIABLE"),
+        ] {
+            assert_eq!(
+                parse_command(with).unwrap(),
+                parse_command(without).unwrap(),
+                "{with}"
+            );
+        }
+        assert_eq!(
+            parse_command("VAR d VARCHAR2(20) = 'a -- b' -- tail").unwrap(),
+            Some(Command::Variable {
+                name: Some("d".into()),
+                ty: Some(VarType::Varchar2(20)),
+                init: Some(Value::Str("a -- b".into()))
+            })
+        );
+        assert_eq!(strip_tail_comment("x = 'a--b'"), "x = 'a--b'");
+        assert_eq!(strip_tail_comment("x - 1"), "x - 1");
+        assert_eq!(strip_tail_comment("한글 = '가' -- 주석"), "한글 = '가' ");
     }
 
     #[test]

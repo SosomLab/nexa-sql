@@ -21,6 +21,9 @@ expect_re "xd1-compare-hunks" "$V1_OUT/xd1-cmp.txt" ' hunks=[1-9]'
 expect_re "xd1-disk-change-replace" "$V1_OUT/xd1-cmp.txt" ' replace=[1-9]'
 expect_re "xd1-local-edit-left" "$V1_OUT/xd1-cmp.txt" ' editor_only=[1-9]'
 expect_re "xd1-tab-title-disk" "$V1_OUT/xd1-tabs.txt" '⇄ x\.sql \(disk\)\|.*view=true\|ro=true'
+# 상태줄 = 객체 비교가 아닌 탭은 "양쪽" 문구(11-22 · 종전 = "server object")
+expect "xd1-status-sides" "$V1_OUT/xd1-st.txt" "between the two sides"
+expect_not "xd1-status-not-server" "$V1_OUT/xd1-st.txt" "server object"
 # (대조 없음) 띠가 없어도 `ext.banner:diff` 기동 명령은 디스크와의 비교 탭을 연다(띠 버튼 자체는 띠가 있을 때만 화면에 있음 · 종전 안내 탭 길도 같았음)
 #   → "띠 없음 = 뷰 탭 없음" 대조는 성립하지 않아 뺐다(xd1-no-view-before가 변경 감지 전 상태를 대신 본다).
 for t in xd1; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done

@@ -52,6 +52,8 @@ Bind variables (tab layer · connection-shared layer) and substitution variables
 
 > **Cursor result tab names** (10-08): REF CURSOR variables (`:R1` · `:R2` · a procedure's OUT cursors) and multiple result sets from one statement open as numbered tabs **Result 1 · Result 2 …**. Running again in the same tab reuses the same numbers. To see the variable name (`R1`) as the tab name, set `grid.result_tab_title` to `table`.
 
+> **Trailing comments on variable commands** (11-22): a `--` comment at the end of a `VAR`/`VARIABLE` line is ignored, for example `VAR n NUMBER = 10 -- row count` is the same as `VAR n NUMBER = 10`. A `--` inside single quotes stays part of the value (`VAR s VARCHAR2(20) = 'a--b'`).
+
 ## Removing variables (10-07)
 
 | Command | What it removes |

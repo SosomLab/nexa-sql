@@ -471,10 +471,16 @@ impl App {
         let i = self.editors.active();
         self.editors.set_read_only(i, true);
         let hunks = self.diff_view.hunk_count();
-        self.sess.status = if hunks == 0 {
-            t(Msg::StCompareSame).into()
-        } else {
-            tf(Msg::StCompareDiff2, &[&hunks.to_string()])
+        // 🔧 11-22(협업 관찰): 두 버퍼·히스토리 시점·외부 변경 비교에도 "서버 객체와 …"로 안내하던 것 → 객체 비교가 아닌 탭은
+        //   양쪽을 가리키는 문구로(뷰 탭 열쇠의 접두로 가른다 · 객체 비교 = `compare:<종류 이름>`).
+        let object = !["compare:buf:", "compare:hist:", "compare:ext:"]
+            .iter()
+            .any(|p| key.starts_with(p));
+        self.sess.status = match (hunks, object) {
+            (0, true) => t(Msg::StCompareSame).into(),
+            (0, false) => t(Msg::StCompareSameSides).into(),
+            (n, true) => tf(Msg::StCompareDiff2, &[&n.to_string()]),
+            (n, false) => tf(Msg::StCompareDiffSides, &[&n.to_string()]),
         };
         self.set_focus(Focus::Editor);
         self.diff_view.set_focused(true);
