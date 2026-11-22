@@ -126,3 +126,4 @@
 | 배포판 | **배포판(설치본만·목적별 exe·macOS) [33](33-distribution-and-packaging.md)** | 배포 규칙 = [claude-release-rules](claude-release-rules.md) |
 | 라이선스 | 정품 인증·기능 게이트 [23](23-license-activation.md) · 라이선스 종류·인증 서버·저장소 분리 [25](25-license-tiers-and-server.md) | [13 라이선스(PolyForm NC 1.0.0)](13-licensing.md)(11-01 정합) · [91 라이선스 루트 키 운영 지침](91-license-root-key-operations.md)(11-01 정합) |
 | 자산 보호 | 📐 ★ **디지털 자산 보호(자산·공격자·보호 층 · 분석 지연 기법 효과 검토 = 하지 않음 · R1~R4 · D-227~D-230) [92](92-digital-asset-protection.md)** | — |
+| 빌드 속도 · 크레이트 분할 | 📐 **GUI 크레이트 시범 분할 설계안(확장 · AI · 의존 방향 · 끊을 참조 · 추정 이득 · D-490 ③) [128](128-gui-crate-split-pilot.md)**(11-23 초안 · 결정 전) | [93 코드 정리 절차](93-code-health-and-refactoring.md) |
