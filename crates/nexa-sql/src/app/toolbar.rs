@@ -254,6 +254,8 @@ impl App {
             }
             self.tool_dock.set_group_visible(&gid, vis);
         }
+        // 옆 띠의 그룹을 숨기거나 보이면 띠 폭이 달라진다(도크가 `Resized`로 알림 · T-105) → 창을 다시 배치.
+        self.drain_dock_actions();
         self.sync_toolbar_tips();
         for f in &self.tool_floats {
             f.redraw();
