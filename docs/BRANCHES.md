@@ -4,6 +4,7 @@
 
 | 브랜치 | 생성 | 병합 | 커밋 | 요약 |
 |---|---|---|---|---|
+| `t172-p3-vars` | 2026-11-22(Windows · 5f159344 위) | 2026-11-22 → main ff 병합·삭제 · main = ec87d865(push 안 함) | 3 | T-172 P3 1단계 경로 변수(`"vars"` + `${var:이름}/…` 앵커 · 변수를 쓰는 파일만 version 3) · c9355995 + 협업 기록 9bbcb2fe(묶음 6 · 새 V1 history-check) · ec87d865(묶음 7 · V1 project-paths j 절 119/0 · history-check 실행 비트) · 문서(journal 11-22 §19·§20 · 73 §4-2) |
 | `o1-history-check` | 2026-11-22(Windows · 9a52f216 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | O-1 서버 변경 확인 명령 `edit.history_check`(마지막 서버 본과 해시 대조 · 다르면 `external` 시점 + 상태줄·로그 · 수동 명령만) · 5f159344 · 새 V1 `history-check` 9/0 · 문서(journal 11-22 §19 · 19 §3) |
 | `t508-find-tips` | 2026-11-22(Windows · 4a7c0a04 위) | 2026-11-22 → main ff 병합·삭제(push 안 함) | 1 | T-508 찾기 막대·검색 패널·필터 막대 툴팁 = 지금 키맵의 단축키(`tip_from`/`tip_with`/`Keymap::publish_shown`) · 9a52f216 · V2 ✓ verify 20261122-232247 · 문서(journal 11-22 §19) |
 | `test/ext-effects-dump` | 2026-11-22(Windows · 41152906 위) | 2026-11-22 → main ff 병합·삭제(push = 사용자 지시 · nexa-ui 먼저) | 1 | 무지개 괄호 색 미표시 조사용 판정 덤프 `ext.effects:<파일>`(확장 효과 · 편집기 괄호 옵션 · 동작 변화 없음) + V1 `color-list` d 절 되살림(괄호 마젠타 픽셀 · 끔·확장 없음 대조) · bcde0e14 · V1 color-list 25/0(`on=377 rainbow_off=0 no_ext=0`) · 문서(journal 11-22 §17·§18 · TODO T-511) |
