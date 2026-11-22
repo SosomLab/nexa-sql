@@ -390,6 +390,7 @@ impl App {
                             continue;
                         }
                         if same {
+                            self.history_server_wait_at = None;
                             self.history_object_store(&w, crate::history::Tag::Server, &text);
                             // 요청 때의 "소스 읽는 중…" 상태줄을 갈아 끼운다(협업 V1 11-10 "4초 잔류").
                             self.sess.status = t(Msg::StHistoryServerSaved).into();
@@ -527,17 +528,16 @@ impl App {
                 // 상태줄은 놓치기 쉽다 → 경고 토스트도(예: 연결이 해제된 서버에서 새로 고침).
                 ExplorerAction::Fail { title, body } => {
                     self.ai_source_fail(&body);
-                    // 서버 소스 요청을 기다리던 중의 실패 = 그 대기를 접는다(확인·컴파일 뒤 저장의 답은 오지 않는다 · 검토 11-23).
-                    //   다른 실패(새로 고침 등)는 건드리지 않는다 — 살아 있는 대기를 지우면 그 답이 새 탭으로 열린다.
-                    if title == t(Msg::ExpSourceFailedTitle) {
-                        self.history_wait_clear();
-                    }
+                    // (서버 소스 요청 대기는 여기서 접지 않는다 — 타임아웃 안내도 이 사건으로 오는데 그 요청은 살아 있어 늦게 올 수
+                    //   있다. 실패로 끝난 요청은 `SourceError`가 알린다 · 검토 11-23.)
                     self.log_win
                         .push(LogEntry::new(LogKind::Error, format!("{title} - {body}")));
                     self.toasts
                         .push(toast::ToastKind::Error, title, body.clone());
                     self.sess.status = body;
                 }
+                // 소스 요청이 오류로 끝났다 = 그 응답을 기다리던 서버 변경 확인·컴파일 뒤 저장을 접는다(답은 오지 않는다).
+                ExplorerAction::SourceError => self.history_wait_clear(),
                 ExplorerAction::Health { alive, ep, reason } => {
                     self.health_changed(&ep, alive, &reason);
                 }

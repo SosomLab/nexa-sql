@@ -30,6 +30,9 @@ pub(crate) struct GitWatch {
     rx: Option<mpsc::Receiver<Option<GitInfo>>>,
     last: Option<Instant>,
     pub interval: Duration,
+    /// 감시 파일이 바뀐 뒤 첫 결과는 내용이 같아 보여도 "바뀜"으로 알린다(호스트가 탭의 git 기준선을 새 파일 것으로 —
+    /// HEAD가 없는 파일이면 지움 — 다시 맞추게 · 검토 11-23).
+    file_changed: bool,
 }
 
 impl GitWatch {
@@ -41,6 +44,7 @@ impl GitWatch {
             rx: None,
             last: None,
             interval: Duration::from_secs(15),
+            file_changed: false,
         }
     }
 
@@ -65,6 +69,7 @@ impl GitWatch {
             if let Some(i) = self.info.as_mut() {
                 i.head = None;
             }
+            self.file_changed = true;
         }
     }
 
@@ -104,7 +109,7 @@ impl GitWatch {
         match rx.try_recv() {
             Ok(info) => {
                 self.rx = None;
-                let changed = self.info != info;
+                let changed = self.info != info || std::mem::take(&mut self.file_changed);
                 self.info = info;
                 changed
             }

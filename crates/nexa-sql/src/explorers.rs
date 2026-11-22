@@ -1277,6 +1277,15 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
     }
 
     /// ★ O-1 `server` 시점(11-10): 그 서버 칸(없으면 활성 칸)에서 소스를 다시 받는다 — 응답은 호스트가 히스토리로 가로챈다.
+    /// 그 서버 칸(없으면 지금 칸)이 소스 요청을 바로 보낼 수 있는가 · 오프라인인가([`Explorer::source_ready`]).
+    pub(crate) fn source_ready_for(&self, spec: Option<&ConnectSpec>) -> (bool, bool) {
+        let ex = match spec.and_then(|s| self.find(s)) {
+            Some(i) => &self.panes[i].ex,
+            None => &self.panes[self.shown].ex,
+        };
+        (ex.source_ready(), ex.is_offline())
+    }
+
     pub(crate) fn reload_source_for(
         &mut self,
         spec: Option<&ConnectSpec>,

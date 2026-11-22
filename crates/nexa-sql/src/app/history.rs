@@ -82,13 +82,18 @@ impl App {
 
     /// ★ O-1 `server` 시점(19 §3 (c) · 11-10): 오브젝트 탭 `tab`의 객체 소스를 서버에서 다시 받아 **히스토리에만** 넣는다 —
     ///   탭은 건드리지 않는다(응답은 meta.rs `OpenSql`이 `history_server_wait`로 가로챔 · 같은 해시면 저장 규칙대로 생략).
-    pub(crate) fn history_server_request(&mut self, tab: u64) {
+    /// 반환 = 요청을 보냈는가. 탐색기가 오프라인이거나 다른 소스 요청이 진행 중이면 보내지 않고(대기도 세우지 않는다 —
+    /// 오지 않을 응답을 기다리며 다음 확인을 막지 않게 · 검토 11-23) `false`.
+    pub(crate) fn history_server_request(&mut self, tab: u64) -> bool {
         if !self.settings.flag("history.enabled") {
-            return;
+            return false;
         }
         let Some(o) = self.object_tabs.get(&tab).cloned() else {
-            return;
+            return false;
         };
+        if !self.explorer.source_ready_for(o.server.as_ref()).0 {
+            return false;
+        }
         let info = nsql_catalog::ObjectInfo {
             db: String::new(),
             schema: o.schema.clone(),
@@ -108,6 +113,7 @@ impl App {
         self.history_server_wait_at = Some(Instant::now());
         self.explorer
             .reload_source_for(server.as_ref(), &info, kind);
+        true
     }
 
     /// ★ O-1 외부 변경 확인(명령 `edit.history_check` · 19 §3 · 11-22): 활성 오브젝트 탭의 객체 소스를 서버에서 다시 받아
@@ -132,7 +138,20 @@ impl App {
         }
         self.history_server_check = true;
         self.history_server_auto = false;
-        self.history_server_request(tab);
+        if !self.history_server_request(tab) {
+            // 보내지 못했다 = 탐색기가 오프라인이거나 다른 소스 요청이 진행 중.
+            self.history_server_check = false;
+            let offline = self
+                .object_tabs
+                .get(&tab)
+                .is_some_and(|o| self.explorer.source_ready_for(o.server.as_ref()).1);
+            self.sess.status = t(if offline {
+                Msg::ExpNotConnected
+            } else {
+                Msg::StHistoryCheckBusy
+            })
+            .into();
+        }
     }
 
     /// 답이 오지 않은 서버 소스 요청(오류 · 접속 끊김 · 객체가 사라짐)은 30초 뒤 버린다 — 남아 있으면 같은 객체를 탐색기에서
@@ -194,7 +213,11 @@ impl App {
         }
         self.history_server_check = true;
         self.history_server_auto = true;
-        self.history_server_request(tab);
+        if !self.history_server_request(tab) {
+            // 보내지 못했다(오프라인 · 다른 소스 요청 중) — 자동 확인은 조용히 다음 기회로.
+            self.history_server_check = false;
+            self.history_server_auto = false;
+        }
     }
 
     /// 외부 변경 확인의 응답 처리 — 달라졌으면 `external` 시점 저장 + 상태줄·로그 안내 · 같으면 상태줄만.
@@ -277,6 +300,11 @@ impl App {
             return;
         };
         self.history_store_in(&dir, tag, text);
+        // ★ 컴파일 뒤 서버 본이 직전 버퍼 시점과 같으면 저장이 생략된다(같은 내용은 안 쓴다) → 그 최신 시점을 `server`로
+        //   다시 표시해 **서버 기준**을 남긴다(검토 11-23): 안 남기면 다음 확인이 옛 `open`과 견줘 자기 컴파일을 외부 변경으로 알린다.
+        if tag == Tag::Server {
+            store::mark_newest_server_in(&dir, store::content_hash(text));
+        }
     }
 
     /// 시점 하나 기록(공용): 같은 해시면 안 쓰고 · 새로 썼으면 전체 상한 · 실패는 로그 한 줄.

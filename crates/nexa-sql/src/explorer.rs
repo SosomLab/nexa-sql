@@ -873,6 +873,9 @@ pub(crate) enum ExplorerAction {
     },
     /// 사용자가 알아야 하는 안내(상태줄 + 경고 토스트) — 예: 연결이 해제된 서버에서 새로 고침을 골랐다.
     Notice(String),
+    /// ★ 소스 요청이 **실패로 끝났다**(응답이 오류 · 검토 11-23) — 호스트가 그 소스를 기다리던 상태(히스토리의 서버 변경 확인)를
+    ///   접는다. 타임아웃 안내(`Fail`만 · 요청은 살아 있고 늦게 올 수 있다)와 구별하려고 따로 둔다. `Fail`과 함께 나간다.
+    SourceError,
     /// ★ 실패 안내(docs/107 §5 · "상태줄 한 줄로 끝내지 않는다"): 제목 + 본문 → 오류 토스트 + 상태줄 + 로그 1줄.
     Fail {
         title: String,
@@ -3545,6 +3548,13 @@ impl Explorer {
         self.offline
     }
 
+    /// 소스 요청을 **지금 바로** 보낼 수 있는가 — 접속돼 있고 진행 중·대기 중인 소스 요청이 없다. 호스트가 "응답을 가로챌"
+    /// 요청(히스토리의 서버 본 다시 받기)을 걸기 전에 본다: 오프라인이면 요청이 나가지 않고, 진행 중이면 최신 의도 하나만 남는
+    /// 대기 칸으로 들어가 밀려날 수 있어 응답이 온다는 보장이 없다(검토 11-23).
+    pub(crate) fn source_ready(&self) -> bool {
+        !self.offline && !self.source_pending && self.source_queued.is_none()
+    }
+
     /// ★ T-121 (b)(10-30): 이 칸 메타의 대략 바이트(LRU 상한 판정).
     pub(crate) fn meta_bytes(&self) -> usize {
         self.meta.approx_bytes()
@@ -5195,10 +5205,13 @@ impl Explorer {
                             took_ms: took,
                         }),
                         // 실패 = 상태줄 한 줄로 끝내지 않는다(docs/107 §5 · 사건 = "아무 메시지 없음").
-                        Err(e) => self.actions.push(ExplorerAction::Fail {
-                            title: t(Msg::ExpSourceFailedTitle).to_string(),
-                            body: e,
-                        }),
+                        Err(e) => {
+                            self.actions.push(ExplorerAction::SourceError);
+                            self.actions.push(ExplorerAction::Fail {
+                                title: t(Msg::ExpSourceFailedTitle).to_string(),
+                                body: e,
+                            });
+                        }
                     }
                 }
             }

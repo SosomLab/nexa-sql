@@ -700,6 +700,11 @@ impl App {
             self.sess.status = t(Msg::StLoadTabBusy).into();
             return;
         }
+        // 실행 중인 탭의 본문은 바꾸지 않는다(실행 범위·오류 줄이 어긋난다 — 외부 변경 반영과 같은 규칙).
+        if self.editors.is_running(self.editors.active_id()) {
+            self.sess.status = t(Msg::StLoadTabBusy).into();
+            return;
+        }
         if self.editors.is_dirty(i) {
             self.sess.status = t(Msg::StEncReopenDirty).into();
             return;
@@ -716,6 +721,8 @@ impl App {
                 let (eol, body) = eol::detect_owned(text);
                 self.editors
                     .apply_external(i, Some(&body), &body, Some(eol), Some(used));
+                // 방금 디스크를 읽었다 = 외부 변경 추적의 서명을 맞추고 대기 중이던 띠(옛 인코딩으로 풀어 둔 본문)를 지운다.
+                self.ext_track_active();
                 let label = enc::label(used);
                 self.sess.status = tf(
                     if lossy {

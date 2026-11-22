@@ -159,11 +159,6 @@ pub(crate) enum ServerCheck {
 
 /// `list`(최신 먼저)와 방금 받은 서버 소스의 해시로 판정한다. 버퍼에서 나온 시점(컴파일 직전 · 복원 · 저장)은 기준이 아니다.
 pub(crate) fn server_check(list: &[Entry], hash: u64) -> ServerCheck {
-    // ★ 가장 최신 시점과 같으면 바뀌지 않은 것(검토 11-23): 컴파일 뒤 서버가 버퍼와 같은 글을 돌려주면 `server` 시점은 저장이
-    //   생략된다(`store_in` = 최신과 같은 해시는 안 쓴다) → 기준이 옛 `open`으로 떨어져 **자기 컴파일을 외부 변경으로** 알렸다.
-    if let Some(e) = list.first().filter(|e| e.hash == hash) {
-        return ServerCheck::Unchanged(e.when());
-    }
     let base = list
         .iter()
         .find(|e| matches!(e.tag, Tag::Open | Tag::Server | Tag::External));
@@ -172,6 +167,26 @@ pub(crate) fn server_check(list: &[Entry], hash: u64) -> ServerCheck {
         Some(e) if e.hash == hash => ServerCheck::Unchanged(e.when()),
         Some(e) => ServerCheck::Changed(e.when()),
     }
+}
+
+/// ★ 가장 최신 시점이 `hash`와 같은 **버퍼 시점**(compile · restore · save)이면 `server`로 다시 표시한다(파일 이름의 종류 조각만
+/// 바꾼다 · 본문·시각·고정 그대로) — 컴파일 뒤 서버 본이 그 버퍼와 같아 따로 저장되지 않았을 때 서버 기준을 남기는 길(검토 11-23).
+/// 이미 서버 쪽 시점이거나 해시가 다르면 아무것도 하지 않는다. 반환 = 바꿨는가.
+pub(crate) fn mark_newest_server_in(dir: &Path, hash: u64) -> bool {
+    let Some(e) = list_in(dir).into_iter().next() else {
+        return false;
+    };
+    if e.hash != hash || matches!(e.tag, Tag::Open | Tag::Server | Tag::External) {
+        return false;
+    }
+    let pin = if e.pinned { "_pin" } else { "" };
+    let name = format!(
+        "{}_{}_{:016x}{pin}.sql",
+        e.stamp,
+        Tag::Server.as_str(),
+        e.hash
+    );
+    std::fs::rename(&e.path, e.path.with_file_name(name)).is_ok()
 }
 
 /// 파일 이름 → 시점(규칙에 맞지 않으면 None · 경로·크기는 비움).
@@ -320,11 +335,7 @@ mod tests {
             e("20261122090000000", Tag::Save, 1),
         ];
         assert_eq!(server_check(&only_buf, 2), ServerCheck::NoBaseline);
-        // 버퍼 시점뿐이어도 가장 최신과 같으면 바뀌지 않은 것(컴파일한 그대로 서버에 있다).
-        assert_eq!(
-            server_check(&only_buf, 1),
-            ServerCheck::Unchanged("2026-11-22 10:00:00".into())
-        );
+        assert_eq!(server_check(&only_buf, 1), ServerCheck::NoBaseline);
         // 최신 먼저: compile(7) · server(5) · open(3) → 기준 = server(5).
         let list = [
             e("20261122120000000", Tag::Compile, 7),
@@ -338,18 +349,19 @@ mod tests {
         // 컴파일 직전 버퍼(7)와 같아도 서버 본(5)과 다르면 바뀐 것 · 옛 open(3)으로 돌아가도 바뀐 것.
         assert_eq!(
             server_check(&list, 7),
-            ServerCheck::Unchanged("2026-11-22 12:00:00".into()),
-            "가장 최신 시점(컴파일 직전 버퍼)과 같다 = 자기 컴파일 — 외부 변경으로 알리지 않는다"
+            ServerCheck::Changed("2026-11-22 11:00:00".into())
         );
-        // 최신이 다른 시점이고 서버 본 기준(open 3)과 다르면 바뀐 것.
-        let older = [
-            e("20261122130000000", Tag::Save, 8),
-            e("20261122120000000", Tag::Compile, 7),
+        // ★ 자기 컴파일(검토 11-23): 컴파일 성공 뒤 서버 본이 버퍼와 같으면 그 버퍼 시점이 `server`로 다시 표시돼 기준이 된다
+        //   (`mark_newest_server_in`) → 그 뒤에 버퍼 시점(복원·실패한 컴파일)이 더 쌓여도 "바뀌지 않음".
+        let own = [
+            e("20261122140000000", Tag::Restore, 9),
+            e("20261122130000000", Tag::Compile, 8),
+            e("20261122120000000", Tag::Server, 7),
             e("20261122100000000", Tag::Open, 3),
         ];
         assert_eq!(
-            server_check(&older, 7),
-            ServerCheck::Changed("2026-11-22 10:00:00".into())
+            server_check(&own, 7),
+            ServerCheck::Unchanged("2026-11-22 12:00:00".into())
         );
         assert_eq!(
             server_check(&list, 3),
@@ -368,6 +380,44 @@ mod tests {
             entry_of_name("20261122130000000_external_0000000000000009.sql").map(|x| x.tag),
             Some(Tag::External)
         );
+    }
+
+    /// 컴파일 뒤 서버 본이 직전 버퍼 시점과 같을 때: 새 파일을 만들지 않고 그 시점을 `server`로 다시 표시한다(본문·시각·고정 그대로) ·
+    /// 해시가 다르거나 이미 서버 쪽 시점이면 그대로.
+    #[test]
+    fn mark_newest_server_retags_matching_buffer_snapshot() {
+        let dir = tmp("mark-server");
+        store_in(&dir, "open text", Tag::Open, 50).unwrap();
+        store_in(&dir, "compiled text", Tag::Compile, 50).unwrap();
+        let h = content_hash("compiled text");
+        // 같은 내용의 server 저장은 생략된다(최신과 같은 해시).
+        assert!(store_in(&dir, "compiled text", Tag::Server, 50)
+            .unwrap()
+            .is_none());
+        assert!(!mark_newest_server_in(&dir, content_hash("other")));
+        assert!(mark_newest_server_in(&dir, h));
+        let list = list_in(&dir);
+        assert_eq!(list.len(), 2);
+        assert_eq!((list[0].tag, list[0].hash), (Tag::Server, h));
+        assert_eq!(
+            std::fs::read_to_string(&list[0].path).unwrap(),
+            "compiled text"
+        );
+        assert_eq!(
+            server_check(&list, h),
+            ServerCheck::Unchanged(list[0].when())
+        );
+        // 이미 서버 쪽 시점이면 다시 바꾸지 않는다 · 고정 꼬리는 지킨다.
+        assert!(!mark_newest_server_in(&dir, h));
+        store_in(&dir, "restored", Tag::Restore, 50).unwrap();
+        let newest = list_in(&dir)[0].path.clone();
+        let (pinned, on) = toggle_pin(&newest).unwrap();
+        assert!(on);
+        assert!(mark_newest_server_in(&dir, content_hash("restored")));
+        let top = &list_in(&dir)[0];
+        assert!(top.pinned && top.tag == Tag::Server);
+        let _ = pinned;
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
