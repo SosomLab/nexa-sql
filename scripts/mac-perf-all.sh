@@ -15,6 +15,7 @@ while getopts "H:D:o:p:" o; do case $o in H) H=$OPTARG;; D) D=$OPTARG;; o) OUT=$
 mkdir -p "$D" "$OUT"; R="$OUT/perf.txt"; : > "$R"
 NSQL="$ROOT/target/release/nsql"; APP="$ROOT/target/release/nexa-sql"; SC="$ROOT/scripts"
 say() { echo "$@" | tee -a "$R"; }
+. "$SC/lib/license_warn.sh"; lic_warn "$NSQL" "$H" say   # T-244: 무료판이면 경고 한 줄(중단 안 함)
 if [ ! -f "$D/big65m.sql" ]; then
 python3 - "$D" <<'PY'
 import random, sys; random.seed(7); D=sys.argv[1]

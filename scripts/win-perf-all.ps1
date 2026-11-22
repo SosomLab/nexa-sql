@@ -40,6 +40,7 @@ $env:NSQL_NO_ACTIVATE = "1"   # 시험 창이 사용자의 전경 포커스를 �
 
 Say ("== win-perf-all " + (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "  commit=" + (& git -C $root rev-parse --short HEAD 2>$null))
 Say ("exe=" + $Exe + "  home=" + $HomeDir + "  data=" + $DataDir)
+. (Join-Path $PSScriptRoot "lib\license_warn.ps1"); Write-LicenseWarning -Cli $Cli -HomeDir $HomeDir -Sink { param($s) Say $s }   # T-244: 무료판이면 경고 한 줄(중단 안 함)
 
 # ── 시험 자료(없으면 만든다) ─────────────────────────────────────────────────
 $sql2m = Join-Path $DataDir "big2m.sql"

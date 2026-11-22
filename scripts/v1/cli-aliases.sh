@@ -32,7 +32,8 @@ cp "$V1_OUT/rc.txt" "$V1_OUT/t.txt"
 expect "run-T-msg" "$V1_OUT/t.txt" "-T: use -d <dialect>"
 expect_eq "run-no-path-no-q-errors" "$(rc run -c "$M" -d sqlite)" "2"
 # ── 접속 문자열 조립(-S host,port · -U · -D · -P 숫자) ──
-#   필드 형식(--host · --port · --db · --user)은 `conn add`에서 접속 대상이 된다(run·export는 -c <target> 필수 · 11-23 첫 판 = "-c <target> is required")
+#   필드 형식(--host · --port · --db · --user = -S · -P · -D · -U)은 `conn add`에서 프로필이 되고, 11-23 4082a752부터 -c가 없으면
+#   모든 접속 명령에서 대상으로 조립된다(`ConnectSpec::from_parts` · 비밀번호는 문자열에 안 넣음 · -c와 같이 주면 note + -c 우선).
 o s1 "$(v1_cli conn add ms1 -d mssql -S db.invalid,1433 -U sa -D appdb --no-prompt; v1_cli conn show ms1)"
 expect "S-host-in-profile" "$V1_OUT/s1.txt" "db.invalid"
 expect "S-port-in-profile" "$V1_OUT/s1.txt" "1433"
@@ -43,7 +44,25 @@ expect "S-tcp-prefix-host" "$V1_OUT/s2.txt" "db.invalid"
 expect_not "S-tcp-prefix-stripped" "$V1_OUT/s2.txt" "tcp:"
 expect "P-number-is-port" "$V1_OUT/s2.txt" "3399"
 expect_not "P-number-not-password-refusal" "$V1_OUT/s2.txt" "is not accepted"
-expect_eq "run-S-without-c-needs-target" "$(rc run -d mysql -S db.invalid -Q "select 1" --no-prompt)" "2"
+# run에서 -c 없이 필드 = 대상 조립(접속 시도 주소에 host·port가 보이면 PASS · 익명 호스트 · 서버 쓰기 0)
+o f1 "$(NSQL_PASSWORD=x v1_cli run -d mysql -S db.invalid -P 3399 -U app -D appdb -Q "select 1" --no-prompt)"
+expect "fields-run-assembles-host-port" "$V1_OUT/f1.txt" "db.invalid:3399"
+expect_not "fields-run-no-need-target" "$V1_OUT/f1.txt" "-c <target> is required"
+o f2 "$(v1_cli run -d sqlite -D ":memory:" -f csv -Q "select 9 as n")"
+expect "fields-sqlite-db-only" "$V1_OUT/f2.txt" "9"
+expect_eq "fields-no-host-rc2" "$(rc run -d mssql -D appdb -Q "select 1" --no-prompt)" "2"
+cp "$V1_OUT/rc.txt" "$V1_OUT/f3.txt"
+expect "fields-no-host-msg" "$V1_OUT/f3.txt" "a host is required"
+expect_eq "no-target-at-all-rc2" "$(rc run -Q "select 1")" "2"
+cp "$V1_OUT/rc.txt" "$V1_OUT/f4.txt"
+expect "no-target-at-all-msg" "$V1_OUT/f4.txt" "-c <target> is required"
+o f5 "$(v1_cli run -c "$M" -d sqlite -S other.invalid -f csv -Q "select 3 as n")"
+expect "c-wins-note" "$V1_OUT/f5.txt" "are ignored when -c is given"
+expect "c-wins-still-runs" "$V1_OUT/f5.txt" "3"
+o f6 "$(v1_cli export -d sqlite -D ":memory:" -Q "select 4 as n")"
+expect "fields-export-assembles" "$V1_OUT/f6.txt" "4"
+o f7 "$(printf 'select 5 as n;\n' | "$V1_NSQL" shell -d sqlite -D ":memory:" 2>&1)"
+expect "fields-shell-assembles" "$V1_OUT/f7.txt" "5"
 # ── export · shell에서도 같은 별칭 ──
 o e1 "$(v1_cli export -c "$M" -d sqlite -Q "select 8 as v")"
 expect "export-Q-alias" "$V1_OUT/e1.txt" "8"
@@ -68,5 +87,8 @@ rm -rf "$V1_HOME"; v1_home ko
 expect_eq "ko-P-password-rc2" "$(rc run -c "$M" -P secret "$(v1_m "$WK/q.sql")")" "2"
 cp "$V1_OUT/rc.txt" "$V1_OUT/p-ko.txt"
 if LC_ALL=C grep -q $'[\xea-\xed]' "$V1_OUT/p-ko.txt"; then v1_pass "ko-P-message-korean"; else v1_failmsg "ko-P-message-korean" "$(head -c 200 "$V1_OUT/p-ko.txt")"; fi
+o kn "$(v1_cli run -c "$M" -d sqlite -S other.invalid -f csv -Q "select 3 as n")"
+expect_not "ko-note-not-english" "$V1_OUT/kn.txt" "are ignored when -c is given"
+if LC_ALL=C grep -q $'[\xea-\xed]' "$V1_OUT/kn.txt"; then v1_pass "ko-note-korean"; else v1_failmsg "ko-note-korean" "$(head -c 200 "$V1_OUT/kn.txt")"; fi
 rm -rf "$WK"
 v1_done

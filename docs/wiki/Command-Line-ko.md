@@ -33,4 +33,4 @@ nsql run -c <대상> -q "select 1 as a; select 2 as b"
 
 `nsql` 자신의 짧은 옵션은 뜻이 그대로입니다: `-d` = 방언 · `-p` = 비밀번호 · `-u` = 사용자 · `-h` = 도움말. `nsql grep`의 `-e`(정규식) · `-i`(대소문자 무시)도 그대로입니다.
 
-호스트 · 포트 · DB · 사용자 옵션은 프로필을 저장할 때 접속이 됩니다(`nsql conn add <이름> -d mssql -S db.example.com,1433 -U sa -D appdb`). `run` · `export`는 여전히 `-c <대상>`(프로필 이름 또는 접속 문자열)이 필요합니다.
+`-c`가 없으면 호스트 · 포트 · DB · 사용자 옵션으로 접속하는 모든 명령의 대상을 만듭니다(`nsql run -d mssql -S db.example.com,1433 -U sa -D appdb -Q "select 1"`) — 비밀번호는 `NSQL_PASSWORD`나 질문으로 받고 명령줄에서는 받지 않습니다. `nsql conn add <이름> …`은 같은 옵션을 프로필로 저장합니다. `-c`를 함께 주면 `-c`를 쓰고, 옵션은 쓰이지 않았다는 참고 한 줄이 나옵니다.

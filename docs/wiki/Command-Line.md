@@ -33,4 +33,4 @@ Two are refused with a short explanation (exit code 2), because they would mean 
 
 `nsql`'s own short options keep their meaning: `-d` = dialect · `-p` = password · `-u` = user · `-h` = help. `nsql grep` keeps its own `-e` (regex) and `-i` (ignore case).
 
-The host · port · database · user options build a connection when you save a profile (`nsql conn add <name> -d mssql -S db.example.com,1433 -U sa -D appdb`). `run` and `export` still need `-c <target>` (a profile name or a connection string).
+Without `-c`, the host · port · database · user options build the connection for any command that connects (`nsql run -d mssql -S db.example.com,1433 -U sa -D appdb -Q "select 1"`) — the password comes from `NSQL_PASSWORD` or a prompt, never from the command line. `nsql conn add <name> …` saves the same fields as a profile. If you give `-c` too, `-c` is used and a note says the field options were ignored.

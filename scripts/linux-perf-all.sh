@@ -19,6 +19,7 @@ while getopts "H:D:o:p:P:S:M" o; do case $o in H) H=$OPTARG;; D) D=$OPTARG;; o) 
 mkdir -p "$H" "$D" "$OUT"; R="$OUT/perf.txt"; : > "$R"
 NSQL="$ROOT/target/release/nsql"; APP="$ROOT/target/release/nexa-sql"; SC="$ROOT/scripts"
 say() { echo "$@" | tee -a "$R"; }
+. "$SC/lib/license_warn.sh"; lic_warn "$NSQL" "$H" say   # T-244: 무료판이면 경고 한 줄(중단 안 함)
 # ── 격리 홈 준비: Local(SQLite) 프로필 + 실서버 프로필·기기 키 복사(실서버 변수가 있을 때만 · 10-11 119차) ──
 if ! NSQL_HOME="$H" "$NSQL" conn list 2>/dev/null | grep -qE "^$PROF[[:space:]]"; then
   NSQL_HOME="$H" "$NSQL" conn add "$PROF" "sqlite:$H/local.sqlite" -d sqlite --no-prompt >/dev/null 2>&1 || { echo "Local 프로필 생성 실패($PROF)"; exit 2; }
