@@ -139,7 +139,12 @@ impl App {
 
     /// 표식 `token`의 요청이 실패로 끝났다(응답 오류 · 끊김 · 재결합 · 세대 바뀜) — 기록을 지운다(안내는 탐색기의 `Fail`이 한다).
     pub(crate) fn history_req_fail(&mut self, token: u64) {
+        let before = self.history_reqs.len();
         self.history_reqs.retain(|r| r.token != token);
+        // 요청 때 뜬 "소스 읽는 중…" 상태줄을 남기지 않는다(응답 오류면 곧 `Fail`이 그 안내로 덮는다).
+        if self.history_reqs.len() != before {
+            self.sess.status.clear();
+        }
     }
 
     /// 표식이 달린 소스 응답(meta.rs `OpenSql { token != 0 }`) — 그 요청의 용도대로 처리한다. 모르는 표식(만료된 요청의 늦은 답)은

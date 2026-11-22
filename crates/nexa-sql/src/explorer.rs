@@ -3641,6 +3641,8 @@ impl Explorer {
         self.suspended = false;
         self.last_used = Instant::now();
         self.gen += 1;
+        // 세대가 바뀌면 진행 중이던 소스 요청은 워커가 답 없이 버린다 → 여기서 접는다(표식이 달렸으면 호스트에 알림 · 검토 11-23).
+        self.source_abandon();
         self.detail_cache.clear();
         self.pending_cols.clear();
         self.missing_cols.clear();
@@ -5198,9 +5200,13 @@ impl Explorer {
                 } => {
                     // 소요 시간 로그(10-16 사용자 "줄 클릭 뒤 0.5초 지연 원인" — 서버 왕복인지 보이게).
                     let took = self.source_since.map_or(0, |t0| t0.elapsed().as_millis());
-                    self.source_pending = false;
-                    self.source_since = None;
-                    self.source_token = 0;
+                    // 진행 중인 요청의 답일 때만 진행 표시를 내린다 — 타임아웃 뒤 늦게 온 **앞 요청**의 답(표식이 다르다)이
+                    //   지금 진행 중인 요청의 상태까지 지우지 않게(검토 11-23 · 표식 없는 요청끼리는 종전대로).
+                    if token == self.source_token {
+                        self.source_pending = false;
+                        self.source_since = None;
+                        self.source_token = 0;
+                    }
                     if gen != self.gen {
                         // 세대가 바뀐 뒤 온 답 = 버린다 — 표식이 달린 요청이었으면 호스트에 "오지 않는다"를 알린다(T-513).
                         if token != 0 {
@@ -7276,7 +7282,12 @@ impl Explorer {
             // 진행 중이면 **최신 요청만** 기억(앞서 쌓인 것은 버림 · 99 LatestIntent 사상) → 응답이 오면 `drain` 끝에서 발행.
             //   단 진행 중인 것과 **같은 객체**면 중복(같은 응답이 올 것) — 넣지 않는다(10-16 ↓ 연타 1행 결함).
             //   ★ 같은 객체 = 이름 **+ 서명**(PG 오버로드는 이름이 같고 `extra`가 다르다 · 11-06).
-            if self.source_name.eq_ignore_ascii_case(&o.name) && self.source_extra == o.extra {
+            //   ★ 표식이 달린 요청(히스토리의 서버 본 다시 받기 · T-513)이 진행 중일 때는 중복으로 보지 않는다 — 그 답은
+            //   히스토리로만 가고 탭을 열지 않는다(같은 이름이어도 이 열기는 대기 칸에 넣어 그 뒤에 따로 보낸다 · 검토 11-23).
+            if self.source_token == 0
+                && self.source_name.eq_ignore_ascii_case(&o.name)
+                && self.source_extra == o.extra
+            {
                 self.source_queued = None;
             } else {
                 self.source_queued = Some((o.clone(), kind, title));

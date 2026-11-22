@@ -1294,8 +1294,13 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         kind: nsql_catalog::ObjectKind,
         token: u64,
     ) -> bool {
-        match spec.and_then(|s| self.find(s)) {
-            Some(i) => self.panes[i].ex.reload_source_tok(o, kind, token),
+        // 출처 서버를 아는데 그 칸이 없으면(닫혔다) 보내지 않는다 — 지금 보이는 **다른 서버** 칸에 물으면 같은 이름의 다른
+        //   객체와 견주게 된다(검토 11-23). 출처 서버를 모르는 탭(활성 세션 것)만 지금 칸으로.
+        match spec {
+            Some(s) => match self.find(s) {
+                Some(i) => self.panes[i].ex.reload_source_tok(o, kind, token),
+                None => false,
+            },
             None => self.cur_mut().reload_source_tok(o, kind, token),
         }
     }
