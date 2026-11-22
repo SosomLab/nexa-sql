@@ -110,6 +110,27 @@ v1_gui hr7 "$OPEN,${C}@after:6000:edit.history_check,${C}@after:6100:file.close_
 expect_not "r7-tab-closed-first" "$V1_OUT/hr-7a.txt" "v1.sql"
 expect "r7-reopened-tab" "$V1_OUT/hr-7b.txt" "v1.sql"
 expect_eq "r7-one-v1-tab" "$(grep -c 'v1\.sql' "$V1_OUT/hr-7b.txt" 2>/dev/null)" "1"
-for t in hr5 hr7; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
+# ── T-513 서버 소스 요청 전용 통로(요청마다 표식 · 11-23 브랜치 t513-source-token) ──
+#   r8 확인을 건 직후(답이 오기 전 30 ms) 같은 객체를 탐색기에서 다시 열기 → 탭 수 = 확인 없이 같은 순서를 돈 대조와 같음(확인 응답이 새 탭으로 새지 않음)
+#   r9 다른 객체 v2를 탐색기에서 연 직후(요청 진행 중) v1 탭에서 확인 → "still in progress" 또는 정상 · v2 탭은 반드시 열림
+#   둘 다 로그에 "late source response dropped" 0줄(평상시 늦은 답 없음)
+mkv2() { printf 'DROP VIEW IF EXISTS v2;
+CREATE VIEW v2 AS SELECT 9 AS z;
+' > "$WK/v2.sql"; v1_cli run -c lite --no-prompt "$(v1_m "$WK/v2.sql")" >/dev/null; }
+fresh; mkv2
+v1_gui hr8 "$OPEN,${C}@after:6000:tabs.dump:$O/hr-8a.txt,${C}@after:6200:edit.history_check,${C}@after:6230:explorer.select:v1,${C}@after:6260:explorer.pick:source,${C}@after:10000:tabs.dump:$O/hr-8b.txt,${C}@after:10200:status.dump:$O/hr-8s.txt,${C}@after:10400:log.dump:$O/hr-8log.txt,${C}@after:10700:file.exit,${C}@after:11200:toolbar.pick:project.exit_skip" 25 lite
+# 이미 열린 객체를 탐색기에서 다시 열면 원래 탭이 하나 더 열린다(앱 동작 · 11-23 첫 판에서 확인) → 같은 순서를 확인 없이 돈 대조(hr8c)와 탭 수가 같아야 한다
+v1_gui hr8c "$OPEN,${C}@after:6000:tabs.dump:$O/hr-8ca.txt,${C}@after:6230:explorer.select:v1,${C}@after:6260:explorer.pick:source,${C}@after:10000:tabs.dump:$O/hr-8cb.txt,${C}@after:10700:file.exit,${C}@after:11200:toolbar.pick:project.exit_skip" 25 lite
+expect_eq "r8-tab-count-same-as-control" "$(grep -c '' "$V1_OUT/hr-8b.txt" 2>/dev/null)" "$(grep -c '' "$V1_OUT/hr-8cb.txt" 2>/dev/null)"
+expect_eq "r8-v1-tabs-same-as-control" "$(grep -c 'v1[.]sql' "$V1_OUT/hr-8b.txt" 2>/dev/null)" "$(grep -c 'v1[.]sql' "$V1_OUT/hr-8cb.txt" 2>/dev/null)"
+expect_eq "r8-log-dump-ran" "$([ -f "$V1_OUT/hr-8log.txt" ] && echo y)" "y"
+expect_not "r8-no-late-drop" "$V1_OUT/hr-8log.txt" "late source response dropped"
+fresh; mkv2
+v1_gui hr9 "$OPEN,${C}@after:6000:explorer.select:v2,${C}@after:6100:explorer.pick:source,${C}@after:6150:edit.history_check,${C}@after:6400:status.dump:$O/hr-9s.txt,${C}@after:10000:tabs.dump:$O/hr-9t.txt,${C}@after:10300:log.dump:$O/hr-9log.txt,${C}@after:10600:file.exit,${C}@after:11100:toolbar.pick:project.exit_skip" 25 lite
+if grep -qE 'still in progress|server source (unchanged|changed) since|no earlier server version' "$V1_OUT/hr-9s.txt" 2>/dev/null; then v1_pass "r9-check-busy-or-ok"; else v1_failmsg "r9-check-busy-or-ok" "$(head -c 200 "$V1_OUT/hr-9s.txt" 2>/dev/null)"; fi
+expect "r9-v2-tab-opened" "$V1_OUT/hr-9t.txt" "v2.sql"
+expect_eq "r9-one-v1-tab" "$(grep -c 'v1[.]sql' "$V1_OUT/hr-9t.txt" 2>/dev/null)" "1"
+expect_not "r9-no-late-drop" "$V1_OUT/hr-9log.txt" "late source response dropped"
+for t in hr5 hr7 hr8 hr8c hr9; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done

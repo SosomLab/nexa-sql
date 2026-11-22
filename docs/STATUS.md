@@ -176,6 +176,7 @@
 >
 > ★ **11-11 AI(Claude · Codex) 탭 1·2차 완료 · push**([journal 11-11 §2·§3](journal/2026-11-11.md) · D-481 · 1차 be20dc72 · 2d8adfaa · 8c13ea52 · f8d2ccd5 · 2차 742fb7b2 · ed6f43a2 · 40153854 · 33f43021) = API · 다중 프로필 · CLI 모드 · Codex 어댑터(스키마 확정) · 제공자 선택 · 도구 16 · MCP · `/grid` · 클립보드 이미지 · 모델 목록 조회 · 비용 표 설정화 · 마크다운 렌더 · 붙여넣기 칩 · WIF · 설정 20 · 헤드리스 V1(모의) ✓ · 통합 46/0 · CI 전부 ✅(중간 빨강 1 = bin dead_code → 40153854) · 남은 것 = 사용자 실기(T-475)
 >
+> ★ **11-23 T-513 브랜치 검증**(`t513-source-token` = 73e3b88a · **병합 보류** = 독립 검토 뒤) = O-1 서버 소스 요청 전용 통로(요청마다 token) · 협업 = 전체 V1 24시나리오 553/0 · Debug PID 20008 · [journal 11-23 §18](journal/2026-11-23.md)
 > ★ **11-23 묶음 21**(브랜치 `review-fixes-4` · 병합·push 대기 · 개발 = 이 묶음으로 소스 마감) = 넷째 독립 검토 지적 8 중 6 수정(b129e8c2) · 구조 한계 2 = **새 TODO T-513**(O-1 서버 소스 요청 전용 통로 재설계 · 결정 후보 D8) · V2 ✓ verify 20261123-040947(history-check 44/0) · Debug PID 500 · 묶음 20 CI ✓ · [journal 11-23 §17](journal/2026-11-23.md)
 > ★ **11-23 묶음 20**(브랜치 `review-fixes-3` · 병합·push 대기) = 셋째 독립 검토 지적 6 수정(서버 변경 확인 기준·대기 구조 · 다시 열기 뒤 외부 변경 띠 · git 감시 기준선 · 1273b9f0) · V2 = test 701/0/6 · history-check 40/0 · enc-reopen 25/0 · git-watch 13/0 · Debug PID 9756 · 묶음 19 CI ✓ · [journal 11-23 §16](journal/2026-11-23.md)
 > ★ **11-23 묶음 19**(브랜치 `t512-enc-reopen` · 병합·push 대기) = T-512 인코딩으로 다시 열기 고침(311be71f · 미저장 편집이면 거부) · 새 V1 enc-reopen 21/0 · git-revert 31/0 · Debug PID 23880 · 묶음 18 CI ✓ · [journal 11-23 §15](journal/2026-11-23.md)
