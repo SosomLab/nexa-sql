@@ -396,6 +396,10 @@
 | `editor.syntax_delimiter_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — delimiter · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` 또는 `#RRGGBBAA`(알파 무시 · 색 창 [고르기]는 8자리로 저장) · 형식 오류 = 프리셋 색 |
 | `editor.syntax_command_color` | Text | "" | 편집기 | 구문 색 개별 덮어쓰기 — command · 빈 값 = 프리셋(`editor.color_preset`) 색 · `#RRGGBB` 또는 `#RRGGBBAA`(알파 무시 · 색 창 [고르기]는 8자리로 저장) · 형식 오류 = 프리셋 색 |
 
+### 6-42. 11-22 값 형식 보충(기존 키 · T-119)
+
+- `ext.rainbow_pairs.colors` = `#RRGGBB` 쉼표 목록(최대 8 · 형식 오류 항목 건너뜀 · `#RRGGBBAA`는 알파 버림 · 빈 값 = 테마 기본 6색) · 설정 창 카드 [선택…] → 색 창 목록 모드가 같은 꼴로 저장(브랜치 `feat/color-list-editor` · [journal 11-22 §17](journal/2026-11-22.md)).
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).

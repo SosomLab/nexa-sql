@@ -258,6 +258,11 @@ fn is_color_key(k: &str) -> bool {
     k.ends_with("_color")
 }
 
+/// 카드에 [선택…] 버튼을 두는 키 — 색 하나(`*_color`) 또는 색 목록(T-119 · `colors_win::is_color_list_key`). 스와치는 색 하나만.
+fn has_pick_button(k: &str) -> bool {
+    is_color_key(k) || crate::colors_win::is_color_list_key(k)
+}
+
 fn is_key_key(k: &str) -> bool {
     k.starts_with("key.")
 }
@@ -303,7 +308,7 @@ impl PrefsWin {
             c.reset.set_label(t(Msg::BtnReset));
             if let Some(b) = &mut c.aux {
                 let k = c.entry.key;
-                b.set_label(if is_color_key(k) {
+                b.set_label(if has_pick_button(k) {
                     t(Msg::BtnPick)
                 } else if is_key_key(k) {
                     t(Msg::BtnCapture)
@@ -913,7 +918,7 @@ impl PrefsWin {
                         CardCtl::Text(Box::new(tb))
                     }
                 };
-                let aux = if is_color_key(sn.entry.key) {
+                let aux = if has_pick_button(sn.entry.key) {
                     Some(Button::new(t(Msg::BtnPick)))
                 } else if is_key_key(sn.entry.key) {
                     Some(Button::new(t(Msg::BtnCapture)))
@@ -2144,7 +2149,7 @@ impl PrefsWin {
             }
             if let Some(b) = &mut c.aux {
                 if b.take_clicked() {
-                    return if is_color_key(&key) {
+                    return if has_pick_button(&key) {
                         PrefsAction::OpenColors(key)
                     } else if is_default_formatter_key(&key) {
                         PrefsAction::OpenExtSettings(c.value.clone())

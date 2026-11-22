@@ -20,6 +20,21 @@ impl App {
             self.prefs_win.redraw();
             return;
         }
+        // 자체 시험(11-22 · T-119): 색 창 — `colors.open:<설정 키>`(설정 창 [선택…]과 같은 길 · 색 목록 키면 목록 모드) ·
+        //   `colors.op:<add|del|up|down|sel:N|set:#hex>`(목록 버튼·패널과 같은 길 → 설정 저장·적용) · `colors.dump:<파일>`.
+        if let Some(key) = id.strip_prefix("colors.open:") {
+            self.colors_open_for(key);
+            return;
+        }
+        if let Some(op) = id.strip_prefix("colors.op:") {
+            let act = self.colors_win.list_op(op, &self.theme);
+            self.colors_apply(act);
+            return;
+        }
+        if let Some(path) = id.strip_prefix("colors.dump:") {
+            let _ = std::fs::write(path, self.colors_win.dump());
+            return;
+        }
         if let Some(path) = id.strip_prefix("prefs.dump:") {
             let _ = std::fs::write(path, self.prefs_win.dump_text());
             return;

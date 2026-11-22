@@ -9662,7 +9662,7 @@ impl Msg {
             Msg::LblSyntaxBindColor => ["Syntax color: bind variables", "구문 색: 바인드 변수"],
             Msg::LblSyntaxDelimiterColor => ["Syntax color: statement delimiters", "구문 색: 문장 구분자"],
             Msg::LblSyntaxCommandColor => ["Syntax color: client commands", "구문 색: 클라이언트 명령"],
-            Msg::DescSyntaxColor => ["Overrides this one syntax color on top of the color preset (#RRGGBB). Empty = use the preset's color. The same value is used in light and dark themes.", "색 프리셋 위에 이 구문 색 하나만 덮어쓴다(#RRGGBB). 비우면 프리셋의 색을 쓴다. 라이트·다크 테마에 같은 값이 쓰인다."],
+            Msg::DescSyntaxColor => ["Overrides this one syntax color on top of the color preset (#RRGGBB or #RRGGBBAA; alpha is ignored). Empty = use the preset's color. The same value is used in light and dark themes.", "색 프리셋 위에 이 구문 색 하나만 덮어쓴다(#RRGGBB 또는 #RRGGBBAA · 알파는 무시). 비우면 프리셋의 색을 쓴다. 라이트·다크 테마에 같은 값이 쓰인다."],
             Msg::LblEditorColorPreset => ["Syntax color preset", "구문 색 프리셋"],
             Msg::DescEditorColorPreset => [
                 "nexa = this app's palette (default) · dbeaver / golden = the token colors of those tools as installed (light and dark each). Changes keyword, string, comment, number, data type, function, bind, delimiter and command colors; selection and background stay.",

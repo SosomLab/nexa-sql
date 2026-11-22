@@ -21,7 +21,7 @@ run sc0
 run scx "editor.syntax_keyword_color=#ZZZ"
 run sc8 "editor.syntax_keyword_color=#FF00FFFF"   # 색 창([고르기])이 저장하는 8자리 꼴(11-22 결함: 6자리만 받아 무시됨)
 N1=$(mag "$V1_OUT/sc1.png"); N0=$(mag "$V1_OUT/sc0.png"); NX=$(mag "$V1_OUT/scx.png"); N8=$(mag "$V1_OUT/sc8.png")
-echo "magenta px: sc1=$N1 sc0=$N0 scx=$NX"
+echo "magenta px: sc1=$N1 sc0=$N0 scx=$NX sc8=$N8"
 expect_eq "png-exists" "$([ -s "$V1_OUT/sc1.png" ] && [ -s "$V1_OUT/sc0.png" ] && [ -s "$V1_OUT/scx.png" ] && echo y)" "y"
 expect_eq "sc1-magenta-present" "$([ "${N1:-0}" != ERR ] && [ "${N1:-0}" -gt 50 ] && echo y)" "y"
 expect_eq "sc0-no-magenta" "$N0" "0"

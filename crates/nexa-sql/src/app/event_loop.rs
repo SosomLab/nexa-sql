@@ -1576,17 +1576,7 @@ impl App {
                     self.prefs_win.refresh(&self.settings);
                     self.prefs_win.redraw();
                 }
-                PrefsAction::OpenColors(key) => {
-                    // hover/pressed는 기본 모드 · 그 밖의 `*_color` 키는 그 키 하나를 고르는 모드(09-17).
-                    match nsql_settings::entry(&key) {
-                        Some(e) if !matches!(e.key, "ui.hover_color" | "ui.pressed_color") => {
-                            let v = color_setting(&self.settings, e.key);
-                            self.colors_win.set_key_mode(e.key, v, &self.theme);
-                        }
-                        _ => self.colors_win.set_default_mode(&self.theme),
-                    }
-                    self.open_colors = true;
-                }
+                PrefsAction::OpenColors(key) => self.colors_open_for(&key),
                 PrefsAction::OpenKeys => self.open_keys = true,
                 PrefsAction::OpenDrivers => {
                     self.open_drivers = true;
@@ -1656,43 +1646,7 @@ impl App {
             let ui_px = self.settings.font_px("ui.font_size");
             match self.colors_win.handle(event, &self.theme) {
                 ColorsAction::Paint => self.colors_win.paint(&self.ui_font, &self.theme, ui_px),
-                ColorsAction::Changed { target, hex } => {
-                    apply_color(target, Some(&hex));
-                    let _ = self.settings.set(target.key(), &hex);
-                    if let ColorTarget::Key(k) = target {
-                        self.apply_setting(k);
-                        self.prefs_win.refresh(&self.settings);
-                        self.prefs_win.redraw();
-                    }
-                    let recent = self
-                        .colors_win
-                        .recent()
-                        .iter()
-                        .map(|c| format!("#{c:08X}"))
-                        .collect::<Vec<_>>()
-                        .join(",");
-                    let _ = self.settings.set("ui.color_recent", &recent);
-                    let _ = self.settings.save();
-                    self.redraw();
-                    self.conn_win.redraw();
-                }
-                ColorsAction::Reset => {
-                    if let Some(k) = self.colors_win.key_mode_key() {
-                        let _ = self.settings.reset(k);
-                        self.apply_setting(k);
-                        self.prefs_win.refresh(&self.settings);
-                        self.prefs_win.redraw();
-                    } else {
-                        for tg in ColorTarget::ALL {
-                            apply_color(tg, None);
-                            let _ = self.settings.reset(tg.key());
-                        }
-                    }
-                    let _ = self.settings.save();
-                    self.redraw();
-                    self.conn_win.redraw();
-                }
-                ColorsAction::None => {}
+                act => self.colors_apply(act),
             }
             return true;
         }
@@ -2302,6 +2256,65 @@ impl App {
 
 impl App {
     /// 단축키 창 열기 본체(사건 경로와 펌프 `pump_window_requests`가 같이 쓴다 · 174차) — 설정 창에서 열면 설정 창을 소유자로(색 창과 같은 이유).
+    /// 설정 창 [선택…] → 색 창: hover/pressed = 기본 모드 · 색 목록 키(T-119) = 목록 모드 · 그 밖의 `*_color` = 그 키 하나(09-17).
+    pub(crate) fn colors_open_for(&mut self, key: &str) {
+        match nsql_settings::entry(key) {
+            Some(e) if crate::colors_win::is_color_list_key(e.key) => {
+                let spec = self.settings.get(e.key).unwrap_or("").to_string();
+                self.colors_win.set_list_mode(e.key, &spec, &self.theme);
+            }
+            Some(e) if !matches!(e.key, "ui.hover_color" | "ui.pressed_color") => {
+                let v = color_setting(&self.settings, e.key);
+                self.colors_win.set_key_mode(e.key, v, &self.theme);
+            }
+            _ => self.colors_win.set_default_mode(&self.theme),
+        }
+        self.open_colors = true;
+    }
+
+    /// 색 창이 낸 변경·초기화를 설정에 쓰고 적용한다(창 사건 · 자체 시험 `colors.op:` 공용 · 그리기·없음은 여기서 하지 않는다).
+    pub(crate) fn colors_apply(&mut self, act: ColorsAction) {
+        match act {
+            ColorsAction::Changed { target, hex } => {
+                apply_color(target, Some(&hex));
+                let _ = self.settings.set(target.key(), &hex);
+                if let ColorTarget::Key(k) = target {
+                    self.apply_setting(k);
+                    self.prefs_win.refresh(&self.settings);
+                    self.prefs_win.redraw();
+                }
+                let recent = self
+                    .colors_win
+                    .recent()
+                    .iter()
+                    .map(|c| format!("#{c:08X}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let _ = self.settings.set("ui.color_recent", &recent);
+                let _ = self.settings.save();
+                self.redraw();
+                self.conn_win.redraw();
+            }
+            ColorsAction::Reset => {
+                if let Some(k) = self.colors_win.key_mode_key() {
+                    let _ = self.settings.reset(k);
+                    self.apply_setting(k);
+                    self.prefs_win.refresh(&self.settings);
+                    self.prefs_win.redraw();
+                } else {
+                    for tg in ColorTarget::ALL {
+                        apply_color(tg, None);
+                        let _ = self.settings.reset(tg.key());
+                    }
+                }
+                let _ = self.settings.save();
+                self.redraw();
+                self.conn_win.redraw();
+            }
+            ColorsAction::Paint | ColorsAction::None => {}
+        }
+    }
+
     /// 단축키 창이 낸 변경(명령 id · 코드)을 설정에 쓰고 키맵·메뉴 표시를 다시 맞춘다(창 사건 · tick 확정 공용).
     fn keys_apply_change(&mut self, id: &str, code: &str) {
         let _ = self.settings.set(&keymap::setting_key(id), code);
