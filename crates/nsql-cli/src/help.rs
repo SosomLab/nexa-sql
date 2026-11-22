@@ -313,14 +313,15 @@ const CONN_OPTS: &[&str] = &[
 const CMDS: &[Cmd] = &[
     Cmd {
         name: "run",
-        usage: "nsql run -c <target> [options] <script|-> [args...]",
+        usage: "nsql run -c <target> [options] <script|-> [args...]   |   nsql run -c <target> -q <sql>",
         brief: Msg::HlpCmdRun,
         detail: Msg::HlpCmdRunDetail,
         args: &[("<script|->", Msg::HlpArgScript), ("[args...]", Msg::HlpArgScriptArgs)],
-        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--password-stdin", "--no-prompt", "-v", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--perf", "--log", "--live"],
+        opts: &["-c", "-d", "--host", "--port", "--db", "-u", "-p", "--password-stdin", "--no-prompt", "-q", "-v", "-f", "--max-rows", "--width", "--max-col-width", "--overflow", "-x", "--timing", "--perf", "--log", "--live"],
         notes: &[],
         examples: &[
             "nsql run -c prod report.sql",
+            "nsql run -c prod -q \"SELECT COUNT(*) FROM orders\"",
             "nsql run -c prod long_job.sql --live=table:APP_LOG,longops",
             "nsql run -c oracle://scott:tiger@db:1521/orcl -f csv query.sql > out.csv",
             "echo \"SELECT 1 FROM dual;\" | nsql run -c prod -",
@@ -575,6 +576,60 @@ const CMDS: &[Cmd] = &[
     },
 ];
 
+/// 명령 `cmd`가 접속 옵션(`-c`)을 받는가 — 다른 CLI의 옵션 별칭(T-51)은 이런 명령에서만 푼다(`grep -i`·`-e`처럼 같은 글자를
+/// 제 뜻으로 쓰는 명령을 건드리지 않게).
+pub(crate) fn takes_connection(cmd: &str) -> bool {
+    CMDS.iter().any(|c| c.name == cmd && c.opts.contains(&"-c"))
+}
+
+/// ★ T-51(D-379 범위 · 27 §3): 다른 CLI에서 온 짧은 옵션의 뜻 — 순수 판정(파서와 시험이 같이 쓴다).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Foreign {
+    /// psql `-U` = 사용자.
+    User,
+    /// mysql `-D` = 데이터베이스.
+    Database,
+    /// sqlcmd `-Q` · mysql `-e` = 질의.
+    Query,
+    /// sqlcmd `-i` = 입력 파일(여기서는 자리 인자).
+    File,
+    /// sqlcmd `-S host[,port]` = 서버.
+    Server,
+    /// mysql `-P <숫자>` = 포트 · 숫자가 아니면 sqlcmd의 비밀번호라 **거절**(조용히 받지 않는다).
+    PortOrPassword,
+    /// psql `-W` = 비밀번호 묻기(여기서는 자동이라 받고 넘긴다 · 값 없음).
+    PromptPassword,
+    /// psql류 방언 지정 `-T`(27 §3 ⓐ안의 표기) = 여기서는 `-d`.
+    DialectHint,
+}
+
+pub(crate) fn foreign_flag(flag: &str) -> Option<Foreign> {
+    Some(match flag {
+        "-U" => Foreign::User,
+        "-D" => Foreign::Database,
+        "-Q" | "-e" => Foreign::Query,
+        "-i" => Foreign::File,
+        "-S" => Foreign::Server,
+        "-P" => Foreign::PortOrPassword,
+        "-W" => Foreign::PromptPassword,
+        "-T" => Foreign::DialectHint,
+        _ => return None,
+    })
+}
+
+/// sqlcmd `-S` 값 = `host` · `host,port` · `tcp:host,port`(접두는 뗀다) → (호스트, 포트).
+pub(crate) fn split_server(v: &str) -> (String, Option<u16>) {
+    let v = v.trim();
+    let v = v.strip_prefix("tcp:").unwrap_or(v);
+    match v.rsplit_once(',') {
+        Some((h, p)) => match p.trim().parse() {
+            Ok(p) => (h.trim().to_string(), Some(p)),
+            Err(_) => (v.to_string(), None),
+        },
+        None => (v.to_string(), None),
+    }
+}
+
 fn opt_by_flag(flag: &str) -> Option<&'static Opt> {
     OPTS.iter().find(|o| o.flags.split(", ").any(|f| f == flag))
 }
@@ -666,6 +721,11 @@ fn overview(drivers: &str) -> String {
         &["-c", "-d", "-f", "--width", "-x", "-h", "-V"],
         &[],
     );
+    // T-51: 다른 CLI(psql · mysql · sqlcmd)에서 온 사람을 위한 옵션 대응.
+    o.push_str(&format!("\n{}\n", t(Msg::HlpOtherClients)));
+    for line in t(Msg::HlpOtherClientList).split('\n') {
+        o.push_str(&format!("  {line}\n"));
+    }
     o.push_str(&format!("\n  {}: {drivers}\n", t(Msg::HlpDrivers)));
     o.push_str(&format!("\n{}\n", t(Msg::HlpMoreHelp)));
     o
@@ -769,6 +829,20 @@ mod tests {
             }
         }
         assert!(overview("sqlite").contains("nsql"));
+        // T-51: 다른 CLI 대응 절 · 별칭은 접속 명령에서만(grep의 -i·-e는 제 뜻).
+        assert!(overview("sqlite").contains("sqlcmd") && overview("sqlite").contains("psql"));
+        assert!(takes_connection("run") && takes_connection("shell") && !takes_connection("grep"));
+        assert!(!takes_connection("nope"));
+        assert_eq!(foreign_flag("-U"), Some(Foreign::User));
+        assert_eq!(foreign_flag("-e"), Some(Foreign::Query));
+        assert_eq!(foreign_flag("-P"), Some(Foreign::PortOrPassword));
+        assert_eq!(foreign_flag("-u"), None);
+        assert_eq!(foreign_flag("-p"), None);
+        assert_eq!(split_server("db1,1433"), ("db1".into(), Some(1433)));
+        assert_eq!(split_server("tcp:db1 , 1433"), ("db1".into(), Some(1433)));
+        assert_eq!(split_server("db1"), ("db1".into(), None));
+        assert_eq!(split_server("db1\\inst"), ("db1\\inst".into(), None));
+        assert_eq!(split_server("a,b"), ("a,b".into(), None));
         for c in CMDS {
             let d = detail(c);
             assert!(d.contains(c.usage), "{}", c.name);

@@ -206,6 +206,8 @@ fn parse_opts() -> Opts {
         overflow: None,
         positional: Vec::new(),
     };
+    // ★ T-51: 다른 CLI의 짧은 옵션(psql · mysql · sqlcmd)은 접속 옵션을 받는 명령에서만 별칭으로 푼다.
+    let foreign_on = help::takes_connection(&o.cmd);
     let mut it = args.peekable();
     while let Some(a) = it.next() {
         let mut val = |name: &str| -> String {
@@ -218,6 +220,38 @@ fn parse_opts() -> Opts {
             }
         };
         match a.as_str() {
+            f if foreign_on && help::foreign_flag(f).is_some() => {
+                use help::Foreign;
+                match help::foreign_flag(f).unwrap_or(Foreign::PromptPassword) {
+                    Foreign::User => o.user = Some(val(f)),
+                    Foreign::Database => o.database = Some(val(f)),
+                    Foreign::Query => o.query = Some(val(f)),
+                    Foreign::File => {
+                        let v = val(f);
+                        o.positional.push(v);
+                    }
+                    Foreign::Server => {
+                        let (h, p) = help::split_server(&val(f));
+                        o.host = Some(h);
+                        if p.is_some() {
+                            o.port = p;
+                        }
+                    }
+                    // mysql `-P 3306` = 포트 · sqlcmd `-P 비밀번호` = 받지 않는다(명령줄에 남는 비밀번호를 조용히 삼키지 않는다).
+                    Foreign::PortOrPassword => match val(f).parse() {
+                        Ok(p) => o.port = Some(p),
+                        Err(_) => {
+                            eprintln!("{}", t(Msg::CliErrForeignPassword));
+                            std::process::exit(2);
+                        }
+                    },
+                    Foreign::PromptPassword => {}
+                    Foreign::DialectHint => {
+                        eprintln!("{}", t(Msg::CliErrForeignDialect));
+                        std::process::exit(2);
+                    }
+                }
+            }
             "-c" | "--connect" => o.target = Some(val("-c")),
             "-d" | "--dialect" => {
                 let v = val("-d");
@@ -1917,11 +1951,32 @@ fn cmd_run(o: &Opts) -> i32 {
         eprintln!("{}", t(Msg::CliErrNeedTarget));
         return 2;
     };
-    let Some(path) = o.positional.first() else {
-        eprintln!("{}", t(Msg::CliErrNeedScript));
-        return 2;
+    // ★ T-51: 스크립트 경로가 없으면 `-q`/`--query`(별칭 sqlcmd `-Q` · mysql `-e`)의 글을 스크립트로 실행한다 — 문장 끝 표시가
+    //   없으면 `;`를 붙인다(한 줄 질의를 그대로 넘기는 다른 CLI의 습관).
+    let src = match (o.positional.first(), &o.query) {
+        (Some(path), _) => read_source(path),
+        (None, Some(q)) => {
+            let q = q.trim_end();
+            if q.ends_with(';') || q.ends_with('/') {
+                format!(
+                    "{q}
+"
+                )
+            } else {
+                format!(
+                    "{q};
+"
+                )
+            }
+        }
+        (None, None) => {
+            eprintln!("{}", t(Msg::CliErrNeedScript));
+            return 2;
+        }
     };
-    let src = read_source(path);
+    // 질의 글로 실행할 때의 "경로" = `-`(표준 입력 스크립트와 같은 취급 — 파일 기준 변수·경로 없음 · 프롬프트 없음).
+    let dash = "-".to_string();
+    let path = o.positional.first().unwrap_or(&dash);
     let mut printer = Printer::new(o, o.format.clone(), true);
     // run = 무제한(D-68 · `--max-rows`면 그 값) · 커서 유지 없음(배치는 이어 받을 일이 없다).
     let mut runner = Runner::new(o.dialect, opener(o.dialect, o.no_prompt))
@@ -1953,7 +2008,8 @@ fn cmd_run(o: &Opts) -> i32 {
         marks.push(("connect", std::time::Instant::now()));
         printer.err(&startup_line(&marks));
     }
-    runner.engine.set_args(&o.positional[1..]);
+    // 스크립트 인자(&1 …) = 경로 뒤의 자리 인자(질의 글로 실행하면 없다).
+    runner.engine.set_args(o.positional.get(1..).unwrap_or(&[]));
     for (n, v) in &o.defines {
         runner.engine.define(n, v);
     }
