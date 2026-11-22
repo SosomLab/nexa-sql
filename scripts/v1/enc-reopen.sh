@@ -45,6 +45,17 @@ expect "e4-status-reopened" "$V1_OUT/er-4s.txt" "Reopened as"
 mkk
 run er5 ko "open:$KM,@after:1500:$RE:euckr,@after:2300:status.dump:$O/er-5s.txt,@after:2700:file.exit,@after:3200:toolbar.pick:project.exit_skip"
 expect "e5-ko-status" "$V1_OUT/er-5s.txt" "다시 열었습니다"
-for t in er1 er2 er3 er4 er5; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
+# e6 D(셋째 독립 검토 후속 · 11-23 묶음 20): `file.external_change=ask` · 깨끗한 탭 · 디스크를 밖에서 바꿔 대기 띠가 뜬 상태 → 다시 열기(euckr)
+#    → 본문 = 새 디스크 내용(한글) → 띠의 [다시 읽기](`ext.banner:reload`)를 눌러도 방금 연 본문이 뒤집히지 않음(대체 문자 없음 · 띠가 걷혔음)
+mkk
+( sleep 4; printf "SELECT '새 내용 한글' FROM dual;\n" | iconv -f UTF-8 -t CP949 > "$WK/k.sql" ) &
+BGW=$!
+[ -n "$V1_HOME" ] && rm -rf "$V1_HOME"; v1_home en; v1_set "file.external_change=ask"
+v1_gui er6 "open:$KM,@after:6500:$RE:euckr,@after:7300:editor.dump:$O/er-6a.txt,@after:7500:ext.banner:reload,@after:8300:editor.dump:$O/er-6b.txt,@after:8700:file.exit,@after:9200:toolbar.pick:project.exit_skip" 25
+wait "$BGW" 2>/dev/null
+expect "e6-reopened-new-disk-korean" "$V1_OUT/er-6a.txt" "새 내용 한글"
+expect "e6-after-reload-still-korean" "$V1_OUT/er-6b.txt" "새 내용 한글"
+if hasrep "$V1_OUT/er-6b.txt"; then v1_failmsg "e6-reload-not-reverting" "다시 읽기 뒤 대체 문자(방금 연 본문이 뒤집힘)"; else v1_pass "e6-reload-not-reverting"; fi
+for t in er1 er2 er3 er4 er5 er6; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done

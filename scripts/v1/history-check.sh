@@ -85,5 +85,24 @@ v1_gui hr4 "$OPENR,${C}@after:6000:tab.prev,${C}@after:6300:run.all,${C}@after:8
 expect_not "r4-check-not-unchanged" "$V1_OUT/hr-4a.txt" "unchanged since"
 expect "r4-other-view-opens" "$V1_OUT/hr-4.txt" "v2.sql"
 for t in hr1 hr4; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
+
+# ── 셋째 독립 검토 후속(11-23 묶음 20) ──
+#   r5 A: 컴파일 성공 뒤 서버 본 = 직전 버퍼 시점이면 그 시점 파일이 `server`로 다시 표시된다(같은 해시의 `compile` 파일이 남지 않음)
+#         → 그 위에 실패한 컴파일 시점이 하나 더 쌓여도 확인 = "unchanged"(종전 = 기준이 옛 open으로 떨어져 "changed") · external 0
+#   r6 F(오프라인이면 대기를 세우지 않음) = 미판정(아래 이유)
+#   C(컴파일 뒤 저장 요청이 대기 중 확인을 덮음) = 미판정 — 두 요청을 같은 순간에 겹치게 할 기동 명령 타이밍을 잡을 수 없음(단위 시험이 덮음)
+printf 'CREATE VIEW v1 AS SELEC 2 AS b;' > "$WK/bad.sql"
+fresh
+v1_gui hr5 "$OPENR,${C}@after:6000:tab.prev,${C}@after:6300:run.all,${C}@after:8500:tab.next,${C}@after:8800:edit.select_all,${C}@after:9000:editor.paste:$W/new.sql,${C}@after:9400:run.all,${C}@after:13000:edit.select_all,${C}@after:13200:editor.paste:$W/bad.sql,${C}@after:13600:run.all,${C}@after:16000:edit.history_check,${C}@after:18500:status.dump:$O/hr-5.txt,${C}@after:19000:file.exit,${C}@after:19500:toolbar.pick:project.exit_skip" 35 lite
+SRV=$(find "$V1_HOME/history" -name '*_server_*.sql' 2>/dev/null | head -1); SH=$(basename "$SRV" .sql 2>/dev/null | sed 's/.*_server_//')
+echo "r5 history: $(find "$V1_HOME/history" -name '*.sql' 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/^[0-9]*_//' | tr '\n' ' ')"
+expect_eq "r5-server-snapshot-exists" "$([ -n "$SRV" ] && echo y)" "y"
+expect_eq "r5-no-compile-with-server-hash" "$(find "$V1_HOME/history" -name "*_compile_${SH}.sql" 2>/dev/null | wc -l | tr -d ' ')" "0"
+expect "r5-server-has-new-body" "$SRV" "SELECT 2 AS b"
+expect "r5-unchanged-after-failed-compile" "$V1_OUT/hr-5.txt" "main.v1: server source unchanged since"
+expect_eq "r5-no-external" "$(ext)" "0"
+# r6(F) = 미판정 — 툴바 `conn.disconnect`는 편집기 탭 세션만 끊고 오브젝트 소스를 읽는 탐색기 연결은 남아(11-23 첫 판 = 끊은 뒤에도 "unchanged") 오프라인
+#   조건을 기동 명령으로 만들 수 없다 · 단위 시험(`source_ready_for`)이 덮는다.
+for t in hr5; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done
