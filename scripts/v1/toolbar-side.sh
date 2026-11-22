@@ -78,6 +78,18 @@ expect_eq "s8-old-file-top" "$(side "$V1_OUT/ts8.txt" file)" "top"
 expect_eq "s8-old-run-float" "$(side "$V1_OUT/ts8.txt" run)" "float"
 expect_not "s8-old-no-side" "$V1_OUT/ts8.txt" "vertical=true"
 
-for t in ts1 ts4 tm ts8; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; expect_eq "$t-exit-0" "$(cat "$V1_OUT/$t.exit" 2>/dev/null)" "0"; done
+# ── s9 옆 띠 그룹 숨김/표시 = 본문 폭 회복(T-105 후속 · nexa-ui 3295bcb Resized 보고 + `drain_dock_actions` · 11-23) ──
+#   그룹 숨김 = 설정 `toolbar.items`의 순서/표시 문법 `블록:vis`(`edit:0`) · `config.set:` = 설정 창에서 바꾼 것과 같은 길 · 빈 값 = 기본(전부 표시)
+v1_home en
+v1_gui ts9 "@after:2000:toolbar.dump:$O/ts9a.txt,@after:2300:toolbar.side:edit=left,@after:2900:toolbar.dump:$O/ts9b.txt,@after:3200:config.set:toolbar.items=edit:0,@after:3900:toolbar.dump:$O/ts9c.txt,@after:4200:config.set:toolbar.items=,@after:4900:toolbar.dump:$O/ts9d.txt,@after:5400:file.exit" 25
+X9A=$(fld "$(ed "$V1_OUT/ts9a.txt")" 1); X9B=$(fld "$(ed "$V1_OUT/ts9b.txt")" 1); X9C=$(fld "$(ed "$V1_OUT/ts9c.txt")" 1); X9D=$(fld "$(ed "$V1_OUT/ts9d.txt")" 1)
+echo "s9 editor.x: base=$X9A left=$X9B hidden=$X9C shown=$X9D"
+expect_eq "s9-left-band-shifts" "$([ -n "$X9B" ] && [ -n "$X9A" ] && [ "$X9B" -gt "$X9A" ] && echo y)" "y"
+expect_eq "s9-hidden-back-to-base" "$X9C" "$X9A"
+expect_eq "s9-edit-hidden-place" "$(side "$V1_OUT/ts9c.txt" edit)" "hidden"
+expect_eq "s9-shown-shifts-again" "$X9D" "$X9B"
+expect_eq "s9-shown-still-left" "$(side "$V1_OUT/ts9d.txt" edit)" "left"
+
+for t in ts1 ts4 tm ts8 ts9; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; expect_eq "$t-exit-0" "$(cat "$V1_OUT/$t.exit" 2>/dev/null)" "0"; done
 [ "${V1_KEEP_CAPTURE:-0}" = 1 ] || rm -f "$V1_OUT"/ts*.png
 v1_done

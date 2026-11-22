@@ -176,6 +176,7 @@
 >
 > ★ **11-11 AI(Claude · Codex) 탭 1·2차 완료 · push**([journal 11-11 §2·§3](journal/2026-11-11.md) · D-481 · 1차 be20dc72 · 2d8adfaa · 8c13ea52 · f8d2ccd5 · 2차 742fb7b2 · ed6f43a2 · 40153854 · 33f43021) = API · 다중 프로필 · CLI 모드 · Codex 어댑터(스키마 확정) · 제공자 선택 · 도구 16 · MCP · `/grid` · 클립보드 이미지 · 모델 목록 조회 · 비용 표 설정화 · 마크다운 렌더 · 붙여넣기 칩 · WIF · 설정 20 · 헤드리스 V1(모의) ✓ · 통합 46/0 · CI 전부 ✅(중간 빨강 1 = bin dead_code → 40153854) · 남은 것 = 사용자 실기(T-475)
 >
+> ★ **11-23 묶음 16**(두 저장소 · nexa-ui `t105-esc-side` · nexa-sql `t105-side-followup` · 병합·push 대기) = T-105 후속(Esc 취소 = 원래 띠 · 띠 그룹 숨김 = 본문 폭 회복 · nexa-ui 3295bcb · 0aa65b61) · **밤 마감 전 전체 V1 23시나리오 469/0**(verify 20261123-024013) · Debug PID 16740 · 묶음 15 CI ✓
 > ★ **11-23 묶음 15**(브랜치 `t51-fields-target` · 병합·push 대기) = T-51 `-c` 없이 필드로 대상 조립(4082a752) · V1 cli-aliases 42/0 · T-244 성능 스크립트 무료판 경고(공용 조각 2 · perf-all 3) · Debug PID 23288 · 묶음 14 CI ✓
 > ★ **11-23 묶음 14**(브랜치 `t51-cli-aliases` · 병합·push 대기) = T-51 다른 CLI 짧은 옵션 별칭 · `run -q` · `editor.key:Enter` · V2 = test 699/0/6 · 새 V1 cli-aliases 30/0 · indent-strings 9/0(T-115 화면 판정 되살림) · 첫 판 v1 FAIL 4 = 협업 시나리오 가정 오류(소스 결함 아님) · 위키 Command-Line 새 쪽 · Debug PID 26432 · 묶음 13 CI ✓
 > ★ **11-23 묶음 13**(두 저장소 · nexa-sql `t326-grammar-missing` · nexa-ui `t115-indent-strings` · 병합·push 대기) = T-326 방언 문법 누락 절(de2cdcd1) · T-115 자동 들여쓰기 문자열·주석 안 괄호 제외(0bb6bf3) · nexa-ui 702/1(기존) · nexa-sql V2 ✓ verify 20261123-021221 · 화면 판정 2 = 미판정(접속·Enter 수단 없음 · 아침 확인 목록) · Debug PID 19484 · 묶음 12 CI ✓
