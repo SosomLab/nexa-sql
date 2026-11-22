@@ -1,7 +1,7 @@
 //! App — git 덩어리 diff 팝업(C-1 후속 · docs/19 §2 M3 "hunk diff 팝업" · 11-10 1차): 거터 git 띠의 덩어리를 **좌클릭**하면 그
 //! 덩어리의 HEAD/작업본 조각(문맥 `editor.git_context`줄)을 편집기 위 팝업(2-pane [`diff_view::DiffView`])으로 보인다.
 //! 설정 `editor.git_popup`(기본 on) · Esc·바깥 클릭 = 닫기(팝업 비트 512 · 배타 규칙 61 §2-2-b) · 팝업 안 포인터·휠은 뷰어가 받는다.
-//! 되돌리기(revert hunk) 버튼 · 상태줄 ahead/behind는 2차(19 §2 나머지).
+//! 되돌리기 = 캐럿 줄 명령 `git.revert_hunk`(`gitgutter.rs` · 11-22 · 팝업 안 버튼은 없다) · 상태줄 ahead/behind는 2차(19 §2 나머지).
 
 use crate::*;
 use nexa_ctl::diff;
@@ -80,9 +80,7 @@ pub(crate) fn hunk_rows_at(
 ) -> Option<Range<usize>> {
     // 덩어리 판정: 작업본 줄이 든 것 · 또는 그 줄 **바로 위에서 끝나며 지운 줄을 가진** 것(쐐기 = 삭제만인 덩어리 · 변경 뒤에 이어진
     //   삭제가 한 덩어리로 묶인 경우 둘 다 · 3차).
-    let h = hunks.iter().find(|h| {
-        (h.b.start <= line && line < h.b.end) || (h.b.end == line && h.a.len() > h.b.len())
-    })?;
+    let h = hunk_at(hunks, line)?;
     let eq = |i: usize| rows[i].kind == diff::RowKind::Equal;
     let mut start = h.rows.start.min(rows.len());
     let mut n = 0;
@@ -101,6 +99,14 @@ pub(crate) fn hunk_rows_at(
         end += 1;
     }
     Some(start..end)
+}
+
+/// 작업본 줄 `line`의 덩어리: 그 줄이 든 것 · 또는 그 줄 **바로 위에서 끝나며 지운 줄을 가진** 것(거터 쐐기 = 삭제만인 덩어리 ·
+/// 변경 뒤에 이어진 삭제). 팝업(`hunk_rows_at`)과 되돌리기(`gitgutter::revert_edit`)가 같은 판정을 쓴다.
+pub(crate) fn hunk_at(hunks: &[diff::Hunk], line: usize) -> Option<&diff::Hunk> {
+    hunks.iter().find(|h| {
+        (h.b.start <= line && line < h.b.end) || (h.b.end == line && h.a.len() > h.b.len())
+    })
 }
 
 /// 행의 a↔b를 맞바꾼다(팝업은 왼쪽 = 편집기 · 오른쪽 = HEAD인데 전체 정렬은 a = HEAD · b = 편집기로 했다).

@@ -143,6 +143,7 @@ pub(crate) const PALETTE: &[PalCmd] = &[
     p("edit.history_pin", Msg::MnFile, Msg::MnHistoryPin),
     p("git.next_hunk", Msg::MnEdit, Msg::MnGitNextHunk),
     p("git.prev_hunk", Msg::MnEdit, Msg::MnGitPrevHunk),
+    p("git.revert_hunk", Msg::MnEdit, Msg::MnGitRevertHunk),
     p("obj.menu", Msg::MnExplorer, Msg::MnObjMenu),
     p("obj.select_rows", Msg::MnExplorer, Msg::ExpSelectRows),
     p("obj.source", Msg::MnExplorer, Msg::ExpOpenSource),

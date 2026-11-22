@@ -1247,6 +1247,7 @@ impl App {
             "edit.history_pin" => self.history_pin_pick(),
             "git.next_hunk" => self.git_hunk_step(true),
             "git.prev_hunk" => self.git_hunk_step(false),
+            "git.revert_hunk" => self.git_revert_hunk(),
             // ★ `obj.*` = 탐색기 선택 노드의 메뉴 동작을 팔레트·키로(T-180 ④ · 묻는 동작(삭제·서버 해제)은 메뉴에서만).
             "obj.menu" => self.obj_act(None),
             "obj.select_rows" => self.obj_act(Some("select")),
