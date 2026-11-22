@@ -9,6 +9,7 @@
 #      (미저장 본문이 있으면 한 번 더 닫아야) · `project.missing_found:<경로>`로 되살림
 #   g. 자리 탭이 보관된 본문을 읽기 전용으로 보여 줌(이중 저장 없음) · 못 찾은 등록 폴더 알림(로그·토스트) · `file.close_tab`(Ctrl+W) 길도 재확인(11-22 묶음 4)
 #   h. 절대 경로 알림(T-172 · D-188 · `project.warn_absolute`): 프로젝트 밖 탭이 절대 경로로 남으면 명시 저장마다 로그 한 줄 · 상대뿐이면 0 · 끄면 0
+#   i. 등록 폴더 이름(T-172 P2 `folders[].name`): leaf가 같은 두 폴더도 이름을 적으면 `${workspaceFolder:<이름>}` 앵커 · 다시 열면 복원 · 안 적으면 절대(종전)
 #   종료: 프로젝트가 바뀐 채 `file.exit`면 "프로젝트 저장?" 물음이 뜬다 → 답 = `toolbar.pick:project.exit_skip`(물음 답은 indent_pick 길 · 직접 id는 menu_action이라 무시됨)
 #   임시 폴더 = OS 임시 `nsql-v1pp-*`(끝나면 삭제) · 쉼표가 든 경로는 기동 명령 구분자와 겹치므로 쓰지 않는다.
 . "$(dirname "$0")/../lib/v1.sh"
@@ -179,6 +180,39 @@ LASTC=$(tail -c 1 "$V1_OUT/pg3-status.txt" 2>/dev/null | od -An -c | tr -d ' ')
 if [ -s "$V1_OUT/pg3-status.txt" ] && [ "$LASTC" != "" ] && [ "$LASTC" != '\n' ]; then v1_pass "g-notice-no-trailing-space"
 else v1_failmsg "g-notice-no-trailing-space" "끝 글자='$LASTC' · $(head -c 200 "$V1_OUT/pg3-status.txt" 2>/dev/null)"; fi
 
+# ── i. 등록 폴더 이름(T-172 P2 `folders[].name` · D-187 · 협업 초안 11-22 · h2가 settings를 바꾸므로 h 앞) ───────────────────────────
+#   leaf가 같은 두 등록 폴더(x/lib · y/lib) — 이름을 적으면 `${workspaceFolder:<이름>}` 앵커 · 안 적으면 둘 다 절대(종전).
+#   h 절과 같은 이유로 HOME을 WK 안 빈 폴더로(%TEMP%가 홈 아래면 대조군이 `${userHome}/…`이 되어 "절대" 판정이 안 선다).
+LX="$WK/x/lib"; LY="$WK/y/lib"; IH="$WK/ih"; mkdir -p "$LX" "$LY" "$IH"
+printf 'SELECT 7 AS x FROM dual;\n' > "$LX/x.sql"; printf 'SELECT 8 AS y FROM dual;\n' > "$LY/y.sql"
+LXM=$(v1_m "$LX"); LYM=$(v1_m "$LY"); IHM=$(v1_m "$IH")
+rm -f "$V1_OUT"/pi1-tabs.txt "$V1_OUT"/pi2-tabs.txt
+# i1. 이름 적음 → 저장: 이름 보존 · 두 앵커 · 절대 탭 없음
+printf '{"version": 2, "folders": [{"path": "."}, {"path": "%s", "name": "lib-x"}, {"path": "%s", "name": "lib-y"}]}\n' "$LXM" "$LYM" > "$P/i1.nsql-project"
+HOME="$IHM" v1_gui pi1 "project.load:$PM/i1.nsql-project,@after:1500:open:$LXM/x.sql,@after:2200:open:$LYM/y.sql,@after:3000:project.save,@after:3600:file.exit,@after:4200:toolbar.pick:project.exit_skip" 25
+cp "$P/i1.nsql-project" "$V1_OUT/pi1.nsql-project" 2>/dev/null
+expect "i1-name-x-kept" "$V1_OUT/pi1.nsql-project" '"name": "lib-x"'
+expect "i1-name-y-kept" "$V1_OUT/pi1.nsql-project" '"name": "lib-y"'
+expect "i1-anchor-x" "$V1_OUT/pi1.nsql-project" '"${workspaceFolder:lib-x}/x.sql"'
+expect "i1-anchor-y" "$V1_OUT/pi1.nsql-project" '"${workspaceFolder:lib-y}/y.sql"'
+expect_not "i1-no-abs-x" "$V1_OUT/pi1.nsql-project" "\"path\": \"$LXM/x.sql\""
+expect_not "i1-no-abs-y" "$V1_OUT/pi1.nsql-project" "\"path\": \"$LYM/y.sql\""
+# i2. 다시 열기 → 두 탭 복원(앵커가 이름으로 풀린다)
+HOME="$IHM" v1_gui pi2 "project.load:$PM/i1.nsql-project,@after:1800:tabs.dump:$O/pi2-tabs.txt,@after:2400:file.exit,@after:3000:toolbar.pick:project.exit_skip" 25
+expect_re "i2-tab-x-restored" "$V1_OUT/pi2-tabs.txt" '^\*?x\.sql\|.*view=false'
+expect_re "i2-tab-y-restored" "$V1_OUT/pi2-tabs.txt" '^\*?y\.sql\|.*view=false'
+# i0. 대조 — 이름 없는 같은 구성 = 두 탭 모두 절대 · "name" 키 없음
+printf '{"version": 2, "folders": [{"path": "."}, {"path": "%s"}, {"path": "%s"}]}\n' "$LXM" "$LYM" > "$P/i0.nsql-project"
+HOME="$IHM" v1_gui pi0 "project.load:$PM/i0.nsql-project,@after:1500:open:$LXM/x.sql,@after:2200:open:$LYM/y.sql,@after:3000:project.save,@after:3600:file.exit,@after:4200:toolbar.pick:project.exit_skip" 25
+cp "$P/i0.nsql-project" "$V1_OUT/pi0.nsql-project" 2>/dev/null
+expect "i0-abs-x" "$V1_OUT/pi0.nsql-project" "\"path\": \"$LXM/x.sql\""
+expect "i0-abs-y" "$V1_OUT/pi0.nsql-project" "\"path\": \"$LYM/y.sql\""
+# "name" 키는 북마크 묶음(`{"id": 1, "name": "" …}`)에도 있으므로 폴더 항목으로 좁힌다.
+expect_not "i0-no-name-key-x" "$V1_OUT/pi0.nsql-project" "\"path\": \"$LXM\", \"name\""
+expect_not "i0-no-name-key-y" "$V1_OUT/pi0.nsql-project" "\"path\": \"$LYM\", \"name\""
+expect "i0-folder-x-written" "$V1_OUT/pi0.nsql-project" "\"path\": \"$LXM\""
+expect_not "i0-no-folder-anchor" "$V1_OUT/pi0.nsql-project" '${workspaceFolder:lib'
+
 # ── h. 절대 경로 알림(T-172 · D-188 · project.warn_absolute · 협업 초안 11-22) ───────────
 #   OS 임시 폴더가 홈 아래(Windows %TEMP% = 사용자 폴더 · 맥 /var/folders는 홈 밖)라 그대로면 탭이 `${userHome}/…`으로 적혀 세지 않는다
 #   → 이 절의 기동만 HOME을 WK 안 빈 폴더로 바꿔 홈 앵커를 피한다(home_dir_str = HOME → USERPROFILE).
@@ -211,6 +245,6 @@ expect_eq "h2-dump-ran" "$([ -f "$V1_OUT/ph2-log.txt" ] && echo y)" "y"
 expect_not "h2-off-no-warn" "$V1_OUT/ph2-log.txt" "$ABSW"
 
 # 공통 — 모든 기동 panic 없음
-for t in pa pb pb2 pc pd pe pe2 pf1 pf2 pf3a pf3b pf4 pg1 pg2 pg3 ph1 ph0 ph2; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
+for t in pa pb pb2 pc pd pe pe2 pf1 pf2 pf3a pf3b pf4 pg1 pg2 pg3 pi1 pi2 pi0 ph1 ph0 ph2; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done

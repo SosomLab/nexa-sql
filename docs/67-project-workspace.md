@@ -40,7 +40,7 @@
 ```jsonc
 // my.nsql-project  (어디에나 · VCS)
 { "version": 1,
-  "folders": [ { "path": "D:/Projects/acme/<프로젝트>/이슈관리", "name": "이슈관리", "exclude": ["target", ".git"] },
+  "folders": [ { "path": "D:/Projects/acme/<프로젝트>/이슈관리", "name": "이슈관리", "exclude": ["target", ".git"] },   // name = 선택 · 앵커 ${workspaceFolder:이름}의 이름(없으면 폴더 이름 · T-172 11-22)
                { "path": "../Oracle" } ],                     // 상대 = 이 파일 기준(Sublime·VS Code 규약)
   "settings": { "editor.tab_size": 4 } }                      // 선택 · 이 프로젝트에서만 덮어씀(24 계층 · 2차)
 

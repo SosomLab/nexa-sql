@@ -1144,6 +1144,12 @@ impl App {
                 .map(|f| ours.folder_src_of(f).or_else(|| theirs.folder_src_of(f)))
                 .collect();
             self.project.folders = plan.folders;
+            // 적어 둔 폴더 이름(`folders[].name`)은 정의 경로가 열쇠라 합치기만 한다(우리 것 먼저 · 저쪽에만 있는 것 추가).
+            for (d, n) in &theirs.folder_names {
+                if !self.project.folder_names.iter().any(|(x, _)| x == d) {
+                    self.project.folder_names.push((d.clone(), n.clone()));
+                }
+            }
             applied += 1;
             self.project_changed(false);
         }

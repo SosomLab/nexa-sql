@@ -24,6 +24,11 @@ pub(crate) struct Project {
     /// ★ T-172 (A): `folders`와 나란히 — 이 PC가 **다른 자리**를 쓰는 폴더의 정의 경로(프로젝트 파일에 적힌 것). 저장할 때는
     ///   이것을 적고 앵커 이름도 이것에서 얻는다(이 PC의 경로가 공유 파일에 새지 않는다). 짧을 수 있다(없음 = `None`).
     pub folder_src: Vec<Option<PathBuf>>,
+    /// ★ T-172 P2(73 §4-1 `folders[].name`): 등록 폴더의 **적어 둔 이름**(정의 경로 → 이름 · 프로젝트 파일의 `"name"`) — 탭 경로 앵커
+    ///   `${workspaceFolder:이름}`의 이름으로 폴더 이름(leaf) 대신 쓴다(leaf가 겹치는 두 폴더도 이름을 적으면 앵커를 쓸 수 있다).
+    ///   순번이 아니라 정의 경로가 열쇠다(폴더 순서를 바꾸거나 다중 인스턴스가 목록을 다시 짜도 어긋나지 않는다) · 지금은 파일을
+    ///   직접 고쳐 적는다(화면에서 이름을 바꾸는 명령은 없다) · 목록에 없는 폴더의 항목은 저장 때 버린다.
+    pub folder_names: Vec<(PathBuf, String)>,
     /// 탐색기에서 마지막으로 고른 항목(절대 · 다시 열 때 그 자리에 선택 · 사용자 09-22).
     pub last_selected: Option<PathBuf>,
     /// ★ 작업 환경(사용자 09-23): 편집기 탭들(순서 · 파일 경로 또는 미저장 스크립트 본문 · 캐럿 + fuzzy 앵커) · 활성 탭 · 북마크(JSON).
@@ -142,13 +147,16 @@ impl Project {
             }
             if let Json::Arr(items) = v {
                 for it in items {
-                    let rel = match it {
-                        Json::Str(s) => Some(s.clone()),
+                    let field = |want: &str| match it {
                         Json::Obj(f) => f.iter().find_map(|(k, v)| match (k.as_str(), v) {
-                            ("path", Json::Str(s)) => Some(s.clone()),
+                            (k, Json::Str(s)) if k == want => Some(s.clone()),
                             _ => None,
                         }),
                         _ => None,
+                    };
+                    let rel = match it {
+                        Json::Str(s) => Some(s.clone()),
+                        _ => field("path"),
                     };
                     if let Some(rel) = rel.filter(|s| !s.trim().is_empty()) {
                         let cx = PathCtx {
@@ -157,16 +165,22 @@ impl Project {
                             names: &[],
                             home: home.as_deref(),
                         };
-                        p.folders.push(resolve(&rel, &cx));
+                        let dir = resolve(&rel, &cx);
+                        if let Some(name) = field("name").and_then(|n| valid_folder_name(&n)) {
+                            p.folder_names.retain(|(d, _)| *d != dir);
+                            p.folder_names.push((dir.clone(), name));
+                        }
+                        p.folders.push(dir);
                     }
                 }
             }
         }
         let folders = p.folders.clone();
+        let names = anchor_names(&folders, &p.folder_names);
         let cx = PathCtx {
             base: base.as_deref(),
             folders: &folders,
-            names: &folders,
+            names: &names,
             home: home.as_deref(),
         };
         for (k, v) in &fields {
@@ -332,10 +346,11 @@ impl Project {
         };
         // 정의 경로(이 PC가 다른 자리를 쓰는 폴더는 원래 경로) — 폴더 목록과 앵커 이름은 이쪽으로 적는다(T-172 (A)).
         let defs = self.folder_defs();
+        let names = anchor_names(&defs, &self.folder_names);
         let cx = PathCtx {
             base: base.as_deref(),
             folders: &self.folders,
-            names: &defs,
+            names: &names,
             home: home.as_deref(),
         };
         let mut out = String::new();
@@ -353,7 +368,14 @@ impl Project {
             }
             out.push_str("\n    { \"path\": \"");
             out.push_str(&escape(&relativize(f, &fcx)));
-            out.push_str("\" }");
+            out.push('"');
+            // 적어 둔 이름(T-172 P2 `folders[].name`) — 있을 때만 쓴다(옛 파일과 같은 꼴 유지).
+            if let Some(name) = explicit_folder_name(&self.folder_names, f) {
+                out.push_str(", \"name\": \"");
+                out.push_str(&escape(name));
+                out.push('"');
+            }
+            out.push_str(" }");
         }
         if !self.folders.is_empty() {
             out.push('\n');
@@ -599,10 +621,11 @@ impl Project {
             names: &[],
             home: home.as_deref(),
         };
+        let names = anchor_names(&defs, &self.folder_names);
         let cx = PathCtx {
             base: base.as_deref(),
             folders: &self.folders,
-            names: &defs,
+            names: &names,
             home: home.as_deref(),
         };
         let tabs = self.tabs.iter().filter_map(|t| t.path.as_deref());
@@ -775,8 +798,9 @@ fn setting_json(key: &str, raw: &str) -> String {
 struct PathCtx<'a> {
     base: Option<&'a Path>,
     folders: &'a [PathBuf],
-    /// 앵커 이름을 얻는 경로들(`folders`와 나란히 · 정의 경로 — 이 PC가 다른 자리를 써도 이름은 공유 정의 쪽).
-    names: &'a [PathBuf],
+    /// 폴더별 앵커 이름(`folders`와 나란히 · [`anchor_names`]가 **정의 경로**에서 얻는다 — 이 PC가 다른 자리를 써도 이름은 공유
+    /// 정의 쪽) · `None` = 그 폴더에는 앵커를 쓰지 않는다.
+    names: &'a [Option<String>],
     home: Option<&'a Path>,
 }
 
@@ -788,18 +812,42 @@ fn home_dir() -> Option<PathBuf> {
     crate::sessions::home_dir_str().map(PathBuf::from)
 }
 
-/// 등록 폴더 `i`의 앵커 이름 = 폴더 이름(leaf) — **다른 등록 폴더와 겹치지 않고** `}`가 없을 때만(겹치면 앵커를 쓰지 않는다).
-fn folder_anchor_name(folders: &[PathBuf], i: usize) -> Option<String> {
-    let name = folders.get(i)?.file_name()?.to_string_lossy().into_owned();
-    if name.is_empty() || name.contains('}') {
-        return None;
-    }
-    let dup = folders.iter().enumerate().any(|(j, f)| {
-        j != i
-            && f.file_name()
-                .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(&name))
-    });
-    (!dup).then_some(name)
+/// 앵커 이름으로 쓸 수 있는 글(앞뒤 공백 제거 · 비어 있지 않고 `}`가 없다) — 아니면 `None`.
+fn valid_folder_name(s: &str) -> Option<String> {
+    let s = s.trim();
+    (!s.is_empty() && !s.contains('}')).then(|| s.to_string())
+}
+
+/// 정의 경로 `def`에 적어 둔 이름(`folders[].name`).
+fn explicit_folder_name<'a>(explicit: &'a [(PathBuf, String)], def: &Path) -> Option<&'a str> {
+    explicit
+        .iter()
+        .find(|(d, _)| d == def)
+        .map(|(_, n)| n.as_str())
+}
+
+/// 등록 폴더별 앵커 이름(`defs`와 나란히): 적어 둔 이름(`folders[].name`)이 있으면 그것, 없으면 폴더 이름(leaf) — 쓸 수 없는 글이거나
+/// **다른 등록 폴더의 이름과 겹치면**(대소문자 무시) 그 폴더들에는 앵커를 쓰지 않는다(`None` · 어느 쪽인지 알 수 없다).
+fn anchor_names(defs: &[PathBuf], explicit: &[(PathBuf, String)]) -> Vec<Option<String>> {
+    let raw: Vec<Option<String>> = defs
+        .iter()
+        .map(|d| match explicit_folder_name(explicit, d) {
+            Some(n) => valid_folder_name(n),
+            None => d
+                .file_name()
+                .and_then(|n| valid_folder_name(&n.to_string_lossy())),
+        })
+        .collect();
+    (0..raw.len())
+        .map(|i| {
+            let name = raw[i].as_ref()?;
+            let dup = raw
+                .iter()
+                .enumerate()
+                .any(|(j, o)| j != i && o.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(name)));
+            (!dup).then(|| name.clone())
+        })
+        .collect()
 }
 
 /// 저장된 글 → 경로. 접두 없는 상대 = 프로젝트 파일 폴더 기준(옛 파일 그대로) · 앵커 = 스크립트 내장 변수와 같은 이름
@@ -816,7 +864,7 @@ fn resolve(rel: &str, cx: &PathCtx<'_>) -> PathBuf {
     if let Some(after) = rel.strip_prefix(ANCHOR_FOLDER) {
         if let Some((name, rest)) = after.split_once('}') {
             let hit = (0..cx.folders.len())
-                .find(|&i| folder_anchor_name(cx.names, i).as_deref() == Some(name));
+                .find(|&i| cx.names.get(i).and_then(|n| n.as_deref()) == Some(name));
             if let Some(i) = hit {
                 return cx.folders[i].join(tail(rest));
             }
@@ -846,7 +894,7 @@ fn relativize(p: &Path, cx: &PathCtx<'_>) -> String {
     let best = (0..cx.folders.len())
         .filter_map(|i| {
             let r = p.strip_prefix(&cx.folders[i]).ok()?;
-            let name = folder_anchor_name(cx.names, i)?;
+            let name = cx.names.get(i).cloned().flatten()?;
             Some((cx.folders[i].components().count(), name, r))
         })
         .max_by_key(|(depth, _, _)| *depth);
@@ -1020,10 +1068,11 @@ mod tests {
             root.join("home"),
         );
         let folders = vec![proj.join("sql"), lib.clone()];
+        let names = anchor_names(&folders, &[]);
         let cx = PathCtx {
             base: Some(&proj),
             folders: &folders,
-            names: &folders,
+            names: &names,
             home: Some(&home),
         };
         let cases = [
@@ -1041,17 +1090,72 @@ mod tests {
         }
         assert_eq!(resolve("${workspaceFolder}/sql/a.sql", &cx), cases[0].0);
         // 이름이 겹치는 등록 폴더에는 앵커를 쓰지 않는다(어느 쪽인지 알 수 없다) → 절대.
-        let dup = vec![lib.clone(), lib2];
+        let dup = vec![lib.clone(), lib2.clone()];
+        let dup_names = anchor_names(&dup, &[]);
         let cx2 = PathCtx {
             base: Some(&proj),
             folders: &dup,
-            names: &dup,
+            names: &dup_names,
             home: None,
         };
         assert!(!relativize(&lib.join("b.sql"), &cx2).starts_with("${"));
+        // ★ `folders[].name`: 겹치는 leaf도 이름을 적어 두면 앵커를 쓴다 · 적은 이름끼리 겹치거나 쓸 수 없는 글이면 다시 절대.
+        let named = [(lib2.clone(), "lib-other".to_string())];
+        let n2 = anchor_names(&dup, &named);
+        assert_eq!(n2, vec![Some("lib".into()), Some("lib-other".into())]);
+        let cx3 = PathCtx {
+            base: Some(&proj),
+            folders: &dup,
+            names: &n2,
+            home: None,
+        };
+        for (p, want) in [
+            (lib.join("b.sql"), "${workspaceFolder:lib}/b.sql"),
+            (lib2.join("c.sql"), "${workspaceFolder:lib-other}/c.sql"),
+        ] {
+            assert_eq!(relativize(&p, &cx3), want);
+            assert_eq!(resolve(want, &cx3), p);
+        }
+        let clash = [(lib2.clone(), "LIB".to_string())];
+        assert_eq!(anchor_names(&dup, &clash), vec![None, None]);
+        let bad = [(lib2, "a}b".to_string())];
+        assert_eq!(anchor_names(&dup, &bad), vec![Some("lib".into()), None]);
         // 이 PC에 없는 폴더 앵커 = 글자 그대로 프로젝트 폴더 아래로 → 저장하면 같은 글로 되돌아간다(잃지 않는다).
         let raw = "${workspaceFolder:gone}/c.sql";
         assert_eq!(relativize(&resolve(raw, &cx), &cx), raw);
+    }
+
+    /// ★ T-172 P2 `folders[].name`: 파일에 적힌 이름이 왕복하고(없는 폴더는 `"name"` 키 자체가 없다) · 그 이름으로 탭 앵커가 풀린다.
+    #[test]
+    fn folder_name_round_trips_and_names_the_anchor() {
+        let root = PathBuf::from(if cfg!(windows) { "Q:\\w" } else { "/w" });
+        let file = root.join("proj").join("p.nsql-project");
+        let (a, b) = (root.join("x").join("lib"), root.join("y").join("lib"));
+        let s = |p: &Path| p.to_string_lossy().replace('\\', "/");
+        let src = format!(
+            r#"{{"version": 2, "folders": [{{"path": "."}}, {{"path": "{}", "name": "lib-x"}}, {{"path": "{}", "name": " lib-y "}}], "tabs": [{{"path": "${{workspaceFolder:lib-y}}/t.sql", "title": "t.sql", "id": 1}}]}}"#,
+            s(&a),
+            s(&b)
+        );
+        let p = Project::from_bytes(&file, src.as_bytes()).unwrap();
+        assert_eq!(p.folders.len(), 3);
+        assert_eq!(
+            p.folder_names,
+            vec![(a, "lib-x".to_string()), (b.clone(), "lib-y".to_string())]
+        );
+        assert_eq!(p.tabs[0].path.as_deref(), Some(b.join("t.sql").as_path()));
+        let js = p.to_json();
+        assert!(
+            js.contains(r#""name": "lib-x""#) && js.contains(r#""name": "lib-y""#),
+            "{js}"
+        );
+        assert!(js.contains(r#"{ "path": "." }"#), "{js}");
+        assert!(js.contains("${workspaceFolder:lib-y}/t.sql"), "{js}");
+        assert_eq!(Project::from_bytes(&file, js.as_bytes()).unwrap(), p);
+        // 폴더를 빼면 그 이름 항목은 저장 때 따라 나가지 않는다.
+        let mut q = p;
+        q.remove_folder(1);
+        assert!(!q.to_json().contains("lib-x"));
     }
 
     /// ★ T-172 (D-188): 절대로 남는 경로만 센다 — 프로젝트 폴더 아래(상대) · 등록 폴더 아래(앵커)는 빼고 · 같은 경로는 한 번.
