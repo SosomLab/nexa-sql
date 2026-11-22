@@ -50,10 +50,13 @@ expect_eq "a1-dump-ran" "$([ -f "$V1_OUT/ha-1.txt" ] && [ -f "$V1_OUT/ha-1log.tx
 expect_not "a1-auto-quiet-when-same" "$V1_OUT/ha-1.txt" "unchanged since"
 expect_not "a1-no-change-notice" "$V1_OUT/ha-1log.txt" "server source changed since"
 expect_eq "a1-no-external" "$(ext)" "0"
-v1_gui ha2 "$OPEN,${C}@after:6000:tab.prev,${C}@after:6300:run.all,${C}@after:9000:tab.next,${C}@after:11500:status.dump:$O/ha-2.txt,${C}@after:11800:log.dump:$O/ha-2log.txt,${C}@after:12100:file.exit,${C}@after:12600:toolbar.pick:project.exit_skip" 30 lite
+v1_gui ha2 "$OPEN,${C}@after:6000:tab.prev,${C}@after:6300:run.all,${C}@after:9000:tab.next,${C}@after:11500:status.dump:$O/ha-2.txt,${C}@after:11800:log.dump:$O/ha-2log.txt,${C}@after:12000:toast.dump:$O/ha-2toast.txt,${C}@after:14200:file.exit,${C}@after:14700:toolbar.pick:project.exit_skip" 30 lite
 expect "a2-auto-changed" "$V1_OUT/ha-2.txt" "main.v1: server source changed since"
 expect "a2-log-line" "$V1_OUT/ha-2log.txt" "server source changed since"
 expect_eq "a2-one-external" "$(ext)" "1"
+expect "a2-toast-object" "$V1_OUT/ha-2toast.txt" "main.v1"
+expect "a2-toast-click-hint" "$V1_OUT/ha-2toast.txt" "Click to compare"
+# a2 토스트 클릭 → 비교 탭(`histobj:`) = 미판정: 동작이 버튼이 아니라 카드 클릭이라 `toast.action`(버튼 누르기 흉내)으로 닿지 않고, 카드 클릭 기동 명령이 없다(11-23).
 fresh
 v1_gui ha0 "$OPEN,${C}@after:6000:tab.prev,${C}@after:6300:run.all,${C}@after:9000:tab.next,${C}@after:11500:status.dump:$O/ha-0.txt,${C}@after:11800:log.dump:$O/ha-0log.txt,${C}@after:12100:file.exit,${C}@after:12600:toolbar.pick:project.exit_skip" 30 lite
 expect_eq "a0-dump-ran" "$([ -f "$V1_OUT/ha-0log.txt" ] && echo y)" "y"

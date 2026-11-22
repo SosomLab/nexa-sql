@@ -18,6 +18,8 @@ All four are in the **Command Palette** (Ctrl+Shift+P) under **File** · you can
 | File: Pin or unpin a local history snapshot… | `edit.history_pin` | Same list · pick one to pin it (📌 in the list · never removed by the limits) or to unpin it |
 | File: Check the server for changes to this object | `edit.history_check` | On an object source tab: reads the object from the server again and compares it with the last server version you have · same = "server source unchanged since <time>" · different = saved as an **external** snapshot + status bar and log message "server source changed since <time>" |
 
+When a server check (manual or automatic) finds a change, a **notification card** also appears — click it to switch to that object tab and compare the server version with the editor.
+
 The commands work on the **active tab**: a file tab (snapshots of that file) or an object source tab opened from the explorer (snapshots of that object). The server check works only on an object source tab.
 
 ## Kinds of snapshot

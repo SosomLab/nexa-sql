@@ -242,10 +242,11 @@ KDM=$(v1_m "$KD"); QDM=$(v1_m "$QD")
 mkk() { printf '{"version": 3, "folders": [{"path": "."}], "active": 0, "tabs": [{"path": "${var:%s}/sub/x.sql", "title": "x.sql", "id": 51}, {"path": "${var:%s}/y.sql", "title": "y.sql", "id": 52}]}\n' "$2" "$2" > "$P/$1"; }
 rm -f "$V1_OUT"/pk*-tabs.txt "$V1_OUT"/pk1-status.txt
 mkk k.nsql-project NOPE
-HOME="$IHM" v1_gui pk1 "project.load:$PM/k.nsql-project,@after:1800:tabs.dump:$O/pk0-tabs.txt,@after:2100:project.var_set:NOPE=$KDM,@after:2900:status.dump:$O/pk1-status.txt,@after:3200:tabs.dump:$O/pk1-tabs.txt,@after:3500:project.save,@after:4100:file.exit,@after:4700:toolbar.pick:project.exit_skip" 25
+HOME="$IHM" v1_gui pk1 "project.load:$PM/k.nsql-project,@after:1800:tabs.dump:$O/pk0-tabs.txt,@after:1950:log.dump:$O/pk0-log.txt,@after:2100:project.var_set:NOPE=$KDM,@after:2900:status.dump:$O/pk1-status.txt,@after:3200:tabs.dump:$O/pk1-tabs.txt,@after:3500:project.save,@after:4100:file.exit,@after:4700:toolbar.pick:project.exit_skip" 25
 cp "$P/k.nsql-project" "$V1_OUT/pk1.nsql-project" 2>/dev/null
 expect_re "k1-before-placeholder-x" "$V1_OUT/pk0-tabs.txt" '^\*?x\.sql\|.*view=true'
 expect_re "k1-before-placeholder-y" "$V1_OUT/pk0-tabs.txt" '^\*?y\.sql\|.*view=true'
+expect "k1-vars-missing-notice" "$V1_OUT/pk0-log.txt" "path variables without a folder on this PC - NOPE (2)"
 expect "k1-status" "$V1_OUT/pk1-status.txt" "Path variable NOPE on this PC"
 expect_re "k1-tab-x-real" "$V1_OUT/pk1-tabs.txt" '^\*?x\.sql\|.*view=false'
 expect_re "k1-tab-y-real" "$V1_OUT/pk1-tabs.txt" '^\*?y\.sql\|.*view=false'
