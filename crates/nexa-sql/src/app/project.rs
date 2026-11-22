@@ -516,6 +516,7 @@ impl App {
         // 미저장 탭의 툴팁 "저장(프로젝트 파일)" 줄 = 이 프로젝트 파일(사용자 10-07).
         self.editors.set_tip_saved_fallback(p.path.clone());
         self.project = p;
+        self.proj_missing.clear();
         self.apply_project_settings();
         let last = self
             .project
@@ -1137,6 +1138,13 @@ impl App {
             self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
             self.sess.status = msg;
         }
+        // ★ T-172 P1: 못 찾았던 탭을 끝에 되돌려 적는다 — 그사이 같은 경로를 연 탭이 있으면 그쪽이 이긴다 · 파일이 돌아왔어도
+        //   열지 않았으면 그대로 둔다(다음에 열 때 복원된다).
+        for m in &self.proj_missing {
+            if !tabs.iter().any(|t: &project::TabState| t.path == m.path) {
+                tabs.push(m.clone());
+            }
+        }
         self.project.tabs = tabs;
         self.project.active = self.editors.active();
         // ★ 67 §9: 이름 없는 탭의 북마크 열쇠도 문서 id로 적는다(탭 id는 인스턴스마다 다르다).
@@ -1190,8 +1198,19 @@ impl App {
         let mut ids: Vec<Option<u64>> = Vec::new();
         let mut restored_dirty = 0usize;
         let mut scratch_remap: Vec<(u64, u64)> = Vec::new();
+        self.proj_missing.clear();
         for t in &tabs {
             let id = self.project_restore_tab(t, &opts, &mut restored_dirty, &mut scratch_remap);
+            // ★ T-172 P1: 원본을 못 찾은 파일 탭 = 상태를 들고 있다가 저장 때 되돌려 적는다 + 로그로 알린다(조용히 잃지 않는다).
+            if let (None, Some(p)) = (id, &t.path) {
+                if !p.is_file() {
+                    self.log_win.push(LogEntry::new(
+                        LogKind::Info,
+                        tf(Msg::StProjectTabMissing, &[&p.to_string_lossy()]),
+                    ));
+                    self.proj_missing.push(t.clone());
+                }
+            }
             ids.push(id);
         }
         if let Some(Some(id)) = ids.get(self.project.active) {

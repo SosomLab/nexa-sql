@@ -631,6 +631,10 @@ struct App {
     /// ★ 미적용 편집이 있는 결과 탭을 닫으려 할 때 미뤄 둔 동작(종류 0 = 닫기 · 1 = 다른 탭 · 2 = 오른쪽 탭, 기준 탭 자리) —
     ///   확인 팝업(`rclose.*`)의 답을 기다린다(`app/grid_results.rs` · 사용자 11-21).
     rclose_pending: Option<(u8, usize)>,
+    /// ★ 프로젝트를 열 때 **원본 파일을 찾지 못한 탭**(T-172 P1 · 11-22) — 열지는 못했지만 상태(경로 · 미저장 본문 · 캐럿)를 들고
+    ///   있다가 저장할 때 프로젝트 파일에 그대로 다시 적는다. 종전에는 조용히 건너뛰어 다음 저장 때 프로젝트 파일에서 사라졌다
+    ///   (다른 PC에서 열거나 폴더를 옮기면 탭과 미저장 본문을 영영 잃었다).
+    proj_missing: Vec<project::TabState>,
     /// 확인을 받은 재진입(한 번 쓰고 내린다).
     rclose_ok: bool,
     /// `NSQL_TRACE_IME=1` — 키·IME 사건을 stderr로(T-139 진단).
@@ -2196,6 +2200,7 @@ fn main() {
         dmg_prev: std::collections::VecDeque::new(),
         frame_clip: None,
         rclose_pending: None,
+        proj_missing: Vec::new(),
         rclose_ok: false,
         trace_ime: std::env::var_os("NSQL_TRACE_IME").is_some(),
         hangul_app: None,
