@@ -246,7 +246,7 @@ impl ApplicationHandler<Wake> for App {
             //   시험 전용 비용 · 주 창은 위에서 그렸다).
             let main_id = self.window.as_ref().map(|w| w.id());
             let aux: Vec<WindowId> = self
-                .all_windows()
+                .capture_windows()
                 .into_iter()
                 .map(Window::id)
                 .filter(|id| Some(*id) != main_id)
@@ -982,7 +982,7 @@ impl ApplicationHandler<Wake> for App {
             WindowEvent::CloseRequested => {
                 // 🔧 창 닫기(X)도 **늘** 종료 흐름(`request_exit` = 프로젝트 저장/물음 · 미저장 파일 탭 물음 · 트랜잭션 확인)을
                 //   지난다 — 종전에는 미커밋이 없으면 흐름을 건너뛰어 프로젝트·북마크가 저장되지 않았다(사용자 09-23 "종료 시 꼭 저장").
-                self.request_exit();
+                self.request_exit_user();
                 self.redraw();
                 if !self.exit_requested {
                     return;

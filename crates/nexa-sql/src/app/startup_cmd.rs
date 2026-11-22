@@ -1462,7 +1462,7 @@ cells={n}
                 Some((path, title)) if !title.trim().is_empty() => {
                     let needle = title.trim().to_ascii_lowercase();
                     let hit = self
-                        .all_windows()
+                        .capture_windows()
                         .into_iter()
                         .skip(1)
                         .find(|w| w.title().to_ascii_lowercase().contains(&needle));
@@ -1485,7 +1485,7 @@ cells={n}
         // ★ T-459 2차(217차): 열린 창 목록 덤프 = 헤드리스 기능 점검의 "창 수" 판정(OS는 숨은 창을 못 본다) — `wins=N` 한 줄 +
         //   창마다 `제목\t가로x세로\tvisible|hidden`(주 창이 첫 줄).
         if let Some(path) = id.strip_prefix("windows.dump:") {
-            let wins = self.all_windows();
+            let wins = self.capture_windows();
             let mut out = format!("wins={}\n", wins.len());
             for w in wins {
                 let s = w.inner_size();

@@ -564,6 +564,9 @@ struct App {
     missing_close_armed: Option<u64>,
     /// 딸린 결과 탭에 미적용 편집이 있어 첫 닫기를 막은 편집기 탭(T-507 잔여) — 같은 탭을 다시 닫으면 닫는다.
     result_close_armed: Option<u64>,
+    /// 결과 탭 미적용 편집 확인(`rdirty_ask`)이 미뤄 둔 동작(`file.exit` · `project.close` · `project.load:<경로>`) · 확인을 한 번 건너뛸 표식.
+    rdirty_then: Option<String>,
+    rdirty_ok: bool,
     /// ★ 파일 열기/저장 창을 마지막으로 연 **작업 모드 열쇠**(사용자 10-22 · `project:<파일>` / `folder:<폴더>` / `file`):
     /// 모드가 같으면 마지막 위치 · 다르면(기동 직후 · 모드 전환 뒤) 그 모드의 위치에서 연다.
     file_dialog_mode: Option<String>,
@@ -2158,6 +2161,8 @@ fn main() {
         missing_browse: None,
         missing_close_armed: None,
         result_close_armed: None,
+        rdirty_then: None,
+        rdirty_ok: false,
         file_dialog_mode: None,
         menubar,
         tabs_menu_sig: String::new(),

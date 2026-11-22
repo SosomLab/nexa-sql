@@ -394,6 +394,10 @@ impl App {
             }
             "project.close" | "project.none" => {
                 self.palette.close();
+                // T-507: 닫으면 탭이 통째로 사라진다 → 결과 탭 미적용 편집을 먼저 묻는다.
+                if self.project.is_open() && self.rdirty_ask("project.close") {
+                    return;
+                }
                 if self.project.is_open() {
                     let _ = self.project_save();
                     self.project_set(project::Project::default(), false);
@@ -471,6 +475,12 @@ impl App {
     /// 프로젝트 파일을 읽어 현재 프로젝트로(현재 것은 먼저 저장).
     pub(crate) fn project_load_path(&mut self, path: &Path) {
         self.palette.close();
+        // T-507: 다른 프로젝트로 바꾸면 지금 탭들이 사라진다 → 결과 탭 미적용 편집을 먼저 묻는다(같은 파일 다시 열기는 해당 없음).
+        if self.project.path.as_deref() != Some(path)
+            && self.rdirty_ask(&format!("project.load:{}", path.to_string_lossy()))
+        {
+            return;
+        }
         let pc = self
             .settings
             .get("project.pc_paths")

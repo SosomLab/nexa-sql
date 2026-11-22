@@ -243,14 +243,20 @@ impl App {
     /// 각자의 동기화가 뒤에 덮어쓴다.
     pub(crate) fn sync_toolbar_tips(&mut self) {
         for (id, m) in TOOLBAR_ITEMS {
-            let name = crate::order_win::without_shortcut(t(*m));
-            let sc = self.keymap.display_of(id);
-            let tip = if sc.is_empty() {
-                name.to_string()
-            } else {
-                format!("{name} ({sc})")
-            };
+            let tip = self.tool_tip(id, *m);
             self.tool_dock.set_item_tip(id, &tip);
+        }
+    }
+
+    /// 툴바 버튼 하나의 툴팁 글 = 이름 + 지금 키맵의 단축키(없으면 이름만) — 상태에 따라 툴팁을 바꿔 쓰는 자리(문장 실행 ·
+    /// 롤백)도 이것으로 만든다(11-22: 그 두 자리가 문구 원문으로 덮어써 바꾼 단축키가 반영되지 않았다).
+    pub(crate) fn tool_tip(&self, id: &str, m: Msg) -> String {
+        let name = crate::order_win::without_shortcut(t(m));
+        let sc = self.keymap.display_of(id);
+        if sc.is_empty() {
+            name.to_string()
+        } else {
+            format!("{name} ({sc})")
         }
     }
 

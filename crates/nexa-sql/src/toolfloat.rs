@@ -122,6 +122,11 @@ impl ToolFloatWin {
         Some((o.x + self.cursor.0, o.y + self.cursor.1))
     }
 
+    /// 창(캡처·창 덤프·헤드리스 재그리기 대상에 넣는다 · `App::capture_windows`).
+    pub(crate) fn window(&self) -> Option<&Window> {
+        self.window.as_deref()
+    }
+
     /// 현재 창 좌표(화면 물리 px).
     pub(crate) fn position(&self) -> Option<(i32, i32)> {
         let p = self.window.as_ref()?.outer_position().ok()?;

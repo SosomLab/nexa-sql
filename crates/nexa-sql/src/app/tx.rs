@@ -1093,15 +1093,13 @@ impl App {
         let settled = self.sess.tx_settled;
         let rollback_on = sessions::rollback_enabled(open, settled, self.sess.tx_pending.len());
         if let Some(gid) = self.tool_dock.group_of("run.rollback").map(str::to_string) {
+            let tip = if open && !rollback_on {
+                t(Msg::TipTxRollbackNone).to_string()
+            } else {
+                self.tool_tip("run.rollback", Msg::TipRollback)
+            };
             if let Some(bar) = self.tool_dock.bar_mut(&gid) {
-                bar.set_item_tip(
-                    "run.rollback",
-                    t(if open && !rollback_on {
-                        Msg::TipTxRollbackNone
-                    } else {
-                        Msg::TipRollback
-                    }),
-                );
+                bar.set_item_tip("run.rollback", &tip);
             }
         }
         for id in ["run.commit", "run.rollback"] {

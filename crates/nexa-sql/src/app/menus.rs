@@ -585,7 +585,7 @@ impl App {
                     self.on_new_tab();
                 }
             }
-            "file.exit" => self.request_exit(),
+            "file.exit" => self.request_exit_user(),
             // ★ 파일 열기/저장(T-74) — 자체 대화상자(nexa-dlg) · 네이티브 0.
             "file.open" => self.open_file_dlg = Some(PickerMode::Open),
             // 읽기 전용 탭(이진 안내 · 앞부분 · 읽기 전용 열기)은 저장 없음(사용자 10-13 "바이너리로 열린 파일은 저장 기능을 막아") —

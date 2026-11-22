@@ -52,9 +52,64 @@ impl App {
     }
 
     /// 닫기 확인 메뉴의 답.
+    /// 모든 편집기 탭에 딸린 결과 탭 가운데 미적용 편집이 있는 것의 수(T-507 · 활성 패널은 `panels`에 없다 → 겹치지 않는다).
+    pub(crate) fn result_dirty_total(&self) -> usize {
+        std::iter::once(self.panel_editor)
+            .chain(self.panels.keys().copied())
+            .map(|ed| self.editor_result_dirty(ed))
+            .sum()
+    }
+
+    /// ★ T-507 마무리(11-22): 결과 탭에 미적용 편집이 남은 채 **탭들이 통째로 사라지는 동작**(앱 종료 · 프로젝트 닫기 · 다른 프로젝트
+    ///   열기)을 하려 한다 → 상태 팝업으로 묻는다(버리고 계속 / 취소). `then` = 버리기를 골랐을 때 다시 태울 동작. `true` = 물었다
+    ///   (호출자는 그만둔다). 사용자가 직접 누른 진입점에서만 부른다 — `request_exit`는 질문마다 다시 들어오는 함수라 몸통에 두면
+    ///   답할 때마다 또 막힌다.
+    pub(crate) fn rdirty_ask(&mut self, then: &str) -> bool {
+        if std::mem::take(&mut self.rdirty_ok) {
+            return false;
+        }
+        let n = self.result_dirty_total();
+        if n == 0 {
+            return false;
+        }
+        self.rdirty_then = Some(then.to_string());
+        self.sess.status = tf(Msg::StResultDirtyLeave, &[&n.to_string()]);
+        let items = vec![
+            CtxItem::item("close.rdirty_go", t(Msg::MnResultDirtyDiscard)),
+            CtxItem::Separator,
+            CtxItem::item("close.cancel", t(Msg::MnCloseCancel)),
+        ];
+        let r = self.status_tx_rect;
+        self.open_status_popup(r, items);
+        self.redraw();
+        true
+    }
+
+    /// 사용자가 누른 종료(메뉴 · 단축키 · 창 ×) — 결과 탭 미적용 편집을 먼저 묻고 종료 흐름으로.
+    pub(crate) fn request_exit_user(&mut self) {
+        if self.rdirty_ask("file.exit") {
+            return;
+        }
+        self.request_exit();
+    }
+
     pub(crate) fn close_pick(&mut self, id: &str) {
         let tab = self.editors.active_id();
         match id {
+            // 결과 탭 미적용 편집을 버리고 미뤄 둔 동작을 잇는다(`rdirty_ask`).
+            "close.rdirty_go" => {
+                let then = self.rdirty_then.take().unwrap_or_default();
+                if then == "file.exit" {
+                    self.request_exit();
+                } else if then == "project.close" {
+                    self.rdirty_ok = true;
+                    self.project_cmd("project.close");
+                } else if let Some(p) = then.strip_prefix("project.load:") {
+                    self.rdirty_ok = true;
+                    self.project_load_path(std::path::Path::new(p));
+                }
+                self.rdirty_ok = false;
+            }
             "close.discard" => {
                 if let Some(i) = self.editors.index_of_id(tab) {
                     if let Some(p) = self.editors.path_of(i) {

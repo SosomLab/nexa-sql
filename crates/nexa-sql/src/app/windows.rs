@@ -274,6 +274,14 @@ impl App {
         .collect()
     }
 
+    /// 캡처(`capture:<png>@<제목>`) · 창 덤프(`windows.dump`) · 헤드리스 재그리기의 대상 = 위 창들 + **떼어 낸 툴바 창**(11-22 ·
+    /// 종전에는 빠져 있어 자동 판정이 플로팅 창을 못 봤다). 투명도·포커스 묶음·z-order는 종전대로 `all_windows`만 본다.
+    pub(crate) fn capture_windows(&self) -> Vec<&Window> {
+        let mut v = self.all_windows();
+        v.extend(self.tool_floats.iter().filter_map(|f| f.window()));
+        v
+    }
+
     /// 창 id → 창(닫혔으면 `None`).
     fn aux_window(&self, id: WindowId) -> Option<&Window> {
         self.all_windows().into_iter().find(|w| w.id() == id)

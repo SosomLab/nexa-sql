@@ -605,14 +605,12 @@ impl App {
             let mut inv = Invalidations::default();
             self.tool_dock
                 .set_item_enabled("run.statement", on, &mut inv);
-            self.tool_dock.set_item_tip(
-                "run.statement",
-                t(if on || !self.editors.cur().has_multi() {
-                    Msg::TipRunStatement
-                } else {
-                    Msg::TipRunStatementMulti
-                }),
-            );
+            let tip = if on || !self.editors.cur().has_multi() {
+                self.tool_tip("run.statement", Msg::TipRunStatement)
+            } else {
+                t(Msg::TipRunStatementMulti).to_string()
+            };
+            self.tool_dock.set_item_tip("run.statement", &tip);
             self.redraw();
         }
     }
