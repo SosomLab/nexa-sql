@@ -265,6 +265,23 @@ expect_re "k3-found-x-real" "$V1_OUT/pk3-tabs.txt" '^\*?x\.sql\|.*view=false'
 expect_re "k3-inferred-y-real" "$V1_OUT/pk3-tabs.txt" '^\*?y\.sql\|.*view=false'
 expect "k3-pc-paths-var-q" "$V1_HOME/settings.conf" "var:Q"
 
+# ── l. 변수 자리가 멀쩡할 때 찾아보기 = 그 탭만(독립 검토 후속 · `var_missing_here` · 11-23 묶음 17) ─────────────
+#   `vars: {"DATA": <실재 폴더>}` + `${var:DATA}/a.sql`(없음) + `${var:DATA}/b.sql`(있음) → 자리 탭 1 → 다른 폴더의 a.sql로 찾아보기 →
+#   a.sql만 그 파일로 열림 · 대응표에 `var:DATA` 없음 · b.sql 경로 불변 · "Path variable DATA on this PC" 없음(종전 = 변수 전체가 옮겨짐)
+LD="$WK/ld"; OD="$WK/od"; mkdir -p "$LD" "$OD"; printf 'SELECT 21 AS b FROM dual;\n' > "$LD/b.sql"; printf 'SELECT 22 AS a FROM dual;\n' > "$OD/a.sql"
+LDM=$(v1_m "$LD"); ODM=$(v1_m "$OD")
+printf '{"version": 3, "vars": {"DATA": "%s"}, "folders": [{"path": "."}], "active": 0, "tabs": [{"path": "${var:DATA}/a.sql", "title": "a.sql", "id": 61}, {"path": "${var:DATA}/b.sql", "title": "b.sql", "id": 62}]}\n' "$LDM" > "$P/l.nsql-project"
+rm -f "$V1_OUT"/pl-*.txt
+HOME="$IHM" v1_gui pl "project.load:$PM/l.nsql-project,@after:1800:tabs.dump:$O/pl-0.txt,@after:2100:project.missing_found:$ODM/a.sql,@after:2900:tabs.dump:$O/pl-1.txt,@after:3100:log.dump:$O/pl-log.txt,@after:3400:project.save,@after:4000:file.exit,@after:4600:toolbar.pick:project.exit_skip" 25
+cp "$P/l.nsql-project" "$V1_OUT/pl.nsql-project" 2>/dev/null
+expect_re "l-before-one-placeholder" "$V1_OUT/pl-0.txt" '^\*?a\.sql\|.*view=true'
+expect_re "l-b-real-before" "$V1_OUT/pl-0.txt" '^\*?b\.sql\|.*view=false'
+expect_re "l-a-opened" "$V1_OUT/pl-1.txt" '^\*?a\.sql\|.*view=false'
+expect_not "l-no-pc-var" "$V1_HOME/settings.conf" "var:DATA"
+expect_not "l-no-var-notice" "$V1_OUT/pl-log.txt" "Path variable DATA on this PC"
+expect "l-b-path-unchanged" "$V1_OUT/pl.nsql-project" '"${var:DATA}/b.sql"'
+expect "l-vars-kept" "$V1_OUT/pl.nsql-project" "\"DATA\": \"$LDM\""
+
 # ── h. 절대 경로 알림(T-172 · D-188 · project.warn_absolute · 협업 초안 11-22) ───────────
 #   OS 임시 폴더가 홈 아래(Windows %TEMP% = 사용자 폴더 · 맥 /var/folders는 홈 밖)라 그대로면 탭이 `${userHome}/…`으로 적혀 세지 않는다
 #   → 이 절의 기동만 HOME을 WK 안 빈 폴더로 바꿔 홈 앵커를 피한다(home_dir_str = HOME → USERPROFILE).
@@ -297,6 +314,6 @@ expect_eq "h2-dump-ran" "$([ -f "$V1_OUT/ph2-log.txt" ] && echo y)" "y"
 expect_not "h2-off-no-warn" "$V1_OUT/ph2-log.txt" "$ABSW"
 
 # 공통 — 모든 기동 panic 없음
-for t in pa pb pb2 pc pd pe pe2 pf1 pf2 pf3a pf3b pf4 pg1 pg2 pg3 pi1 pi2 pi0 pj pk1 pk2 pk3 ph1 ph0 ph2; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
+for t in pa pb pb2 pc pd pe pe2 pf1 pf2 pf3a pf3b pf4 pg1 pg2 pg3 pi1 pi2 pi0 pj pk1 pk2 pk3 pl ph1 ph0 ph2; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done

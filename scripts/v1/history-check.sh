@@ -63,5 +63,27 @@ expect_eq "a0-dump-ran" "$([ -f "$V1_OUT/ha-0log.txt" ] && echo y)" "y"
 expect_not "a0-off-no-notice" "$V1_OUT/ha-0log.txt" "server source changed since"
 expect_eq "a0-off-no-external" "$(ext)" "0"
 for t in ha1 ha2 ha0; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
+
+# ── 독립 검토 후속(11-23 묶음 17) ──
+#   r1·r2 자기 컴파일 = 변경 아님: 파일 탭에서 뷰를 지운 뒤 오브젝트 탭에 새 정의를 넣고 F5(run.all) → 서버 본 = 버퍼라 `server` 시점이
+#         같은 해시로 생략되는 길 → 확인 = "unchanged"(종전 = 기준이 옛 open으로 떨어져 "changed" · 확인마다 다시) · 두 번 · external 0
+#   r3 수동 확인 두 번을 간격 없이 → 둘째는 "still in progress"(대기 중이면 건너뜀) 또는 정상 처리 · 탭 수 불변(중복 탭 0)
+#   r4 뷰를 지운 뒤 확인(응답 = 소스 읽기 실패) → 탐색기에서 다른 뷰 v2를 열면 탭이 열린다(남은 요청이 응답을 삼키지 않음)
+printf 'DROP VIEW v1;\n' > "$WK/drop.sql"; printf 'CREATE VIEW v1 AS SELECT 2 AS b;' > "$WK/new.sql"
+OPENR="${C}open:$W/drop.sql,${C}@after:1500:explorer.expand:main,${C}@after:2500:explorer.expand:Views,${C}@after:3300:explorer.select:v1,${C}@after:3600:explorer.pick:source"
+rm -f "$V1_OUT"/hr-*.txt
+fresh
+v1_gui hr1 "$OPENR,${C}@after:6000:tab.prev,${C}@after:6300:run.all,${C}@after:8500:tab.next,${C}@after:8800:edit.select_all,${C}@after:9000:editor.paste:$W/new.sql,${C}@after:9400:run.all,${C}@after:13000:edit.history_check,${C}@after:15500:status.dump:$O/hr-1.txt,${C}@after:15800:edit.history_check,${C}@after:18300:status.dump:$O/hr-2.txt,${C}@after:18600:tabs.dump:$O/hr-3a.txt,${C}@after:18900:edit.history_check,${C}@after:18950:edit.history_check,${C}@after:19100:status.dump:$O/hr-3.txt,${C}@after:21500:tabs.dump:$O/hr-3b.txt,${C}@after:22000:file.exit,${C}@after:22500:toolbar.pick:project.exit_skip" 40 lite
+expect "r1-own-compile-unchanged" "$V1_OUT/hr-1.txt" "main.v1: server source unchanged since"
+expect "r2-again-unchanged" "$V1_OUT/hr-2.txt" "main.v1: server source unchanged since"
+expect_eq "r1-r2-no-external" "$(ext)" "0"
+if grep -qE 'still in progress|unchanged since' "$V1_OUT/hr-3.txt" 2>/dev/null; then v1_pass "r3-second-check-skipped-or-ok"; else v1_failmsg "r3-second-check-skipped-or-ok" "$(head -c 200 "$V1_OUT/hr-3.txt" 2>/dev/null)"; fi
+expect_eq "r3-no-duplicate-tab" "$(grep -c '' "$V1_OUT/hr-3b.txt" 2>/dev/null)" "$(grep -c '' "$V1_OUT/hr-3a.txt" 2>/dev/null)"
+fresh
+v1_cli run -c lite --no-prompt "$(printf 'DROP VIEW IF EXISTS v2;\nCREATE VIEW v2 AS SELECT 9 AS z;\n' > "$WK/v2.sql"; v1_m "$WK/v2.sql")" >/dev/null
+v1_gui hr4 "$OPENR,${C}@after:6000:tab.prev,${C}@after:6300:run.all,${C}@after:8500:tab.next,${C}@after:8800:edit.history_check,${C}@after:11500:status.dump:$O/hr-4a.txt,${C}@after:11800:explorer.select:v2,${C}@after:12100:explorer.pick:source,${C}@after:15000:tabs.dump:$O/hr-4.txt,${C}@after:15500:file.exit,${C}@after:16000:toolbar.pick:project.exit_skip" 30 lite
+expect_not "r4-check-not-unchanged" "$V1_OUT/hr-4a.txt" "unchanged since"
+expect "r4-other-view-opens" "$V1_OUT/hr-4.txt" "v2.sql"
+for t in hr1 hr4; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done
