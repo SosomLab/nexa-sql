@@ -60,6 +60,11 @@ impl GitWatch {
             self.file = file;
             self.last = None;
             self.rx = None;
+            // ★ 앞 파일의 HEAD 본문은 버린다(검토 11-23): 새 조회가 돌아오기 전에 `git.revert_hunk`·덩어리 팝업이 **다른 파일의
+            //   HEAD**로 지금 탭을 고칠 수 있었다. 브랜치·변경 수는 폴더 것이라 그대로 둔다.
+            if let Some(i) = self.info.as_mut() {
+                i.head = None;
+            }
         }
     }
 
@@ -144,7 +149,12 @@ pub(crate) fn probe(dir: &Path, file: Option<&Path>) -> Option<GitInfo> {
     let head = file
         .and_then(|f| f.file_name())
         .and_then(|n| n.to_str())
-        .and_then(|n| git(dir, &["show", &format!("HEAD:./{n}")]));
+        .and_then(|n| git(dir, &["show", &format!("HEAD:./{n}")]))
+        // UTF-8 BOM은 뗀다(편집기도 열 때 뗀다 — 남기면 첫 줄이 늘 "다름"이고 되돌리기가 U+FEFF를 본문에 넣는다 · 검토 11-23).
+        .map(|h| match h.strip_prefix('\u{feff}') {
+            Some(rest) => rest.to_string(),
+            None => h,
+        });
     // 추적 브랜치 대비 앞/뒤(로컬 ref만 · 추적 브랜치가 없으면 git이 실패 코드 → None).
     let ab = git(dir, &["rev-list", "--left-right", "--count", "HEAD...@{u}"])
         .and_then(|out| parse_ab(&out));
@@ -181,6 +191,23 @@ pub(crate) fn segment_text(info: &GitInfo) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 감시 파일이 바뀌면 앞 파일의 HEAD 본문을 버린다(검토 11-23) — 새 조회 전에 되돌리기·팝업이 다른 파일의 HEAD를 쓰지 않게.
+    /// 브랜치·변경 수(폴더 것)는 그대로 · 같은 파일로 다시 지정하면 그대로.
+    #[test]
+    fn set_file_drops_previous_head() {
+        let mut w = GitWatch::new();
+        w.set_file(Some(PathBuf::from("a.sql")));
+        w.info = Some(GitInfo {
+            head: Some("x\n".into()),
+            ..probe_like("main", 2)
+        });
+        w.set_file(Some(PathBuf::from("a.sql")));
+        assert_eq!(w.info().and_then(|g| g.head.as_deref()), Some("x\n"));
+        w.set_file(Some(PathBuf::from("b.sql")));
+        let g = w.info().unwrap();
+        assert!(g.head.is_none() && g.branch == "main" && g.changed == 2);
+    }
 
     #[test]
     fn parse_ab_reads_two_counts_only() {

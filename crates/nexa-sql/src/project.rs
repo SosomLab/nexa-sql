@@ -718,6 +718,10 @@ impl Project {
         self.expanded.iter_mut().for_each(re);
         self.last_selected.iter_mut().for_each(re);
         self.folders.iter_mut().for_each(re);
+        // 등록 폴더의 정의 쪽 기록(다른 자리를 쓰는 폴더의 원래 경로 · `folders[].name`의 열쇠)도 같이 옮긴다 — 안 옮기면 저장 때
+        //   적어 둔 폴더 이름이 조용히 빠진다(검토 11-23).
+        self.folder_src.iter_mut().flatten().for_each(re);
+        self.folder_names.iter_mut().for_each(|(d, _)| re(d));
         Some((old, dir.to_path_buf()))
     }
 
@@ -1546,6 +1550,17 @@ mod tests {
             Some(here2.join("sub").join("b.sql").as_path())
         );
         let js = p.to_json();
+        // 변수 아래 등록 폴더의 적어 둔 이름은 변수 자리를 옮겨도 남는다.
+        let named = format!(
+            r#"{{"version":3,"id":"00aa11bb22cc33dd","vars":{{"DATA":"{gone_txt}"}},"folders":[{{"path":"${{var:DATA}}/lib","name":"lib-x"}}]}}"#
+        );
+        let pn = Project::from_bytes_pc(&file, named.as_bytes(), &table).unwrap();
+        assert_eq!(pn.folders, vec![here.join("lib")]);
+        let jn = pn.to_json();
+        assert!(
+            jn.contains("\"path\": \"${var:DATA}/lib\", \"name\": \"lib-x\""),
+            "{jn}"
+        );
         assert!(js.contains(&format!("\"DATA\": \"{gone_txt}\"")), "{js}");
         assert!(js.contains("\"path\": \"${var:DATA}/a.sql\""), "{js}");
         assert!(js.contains("\"path\": \"${var:NOPE}/sub/b.sql\""), "{js}");

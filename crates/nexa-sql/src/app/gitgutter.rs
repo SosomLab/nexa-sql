@@ -134,10 +134,15 @@ impl App {
         } else {
             let tb = self.editors.cur();
             let (line, work) = (tb.caret_line(), tb.text());
-            self.git
-                .info()
-                .and_then(|g| g.head.clone())
-                .and_then(|head| revert_edit(&head, &work, line))
+            let head = self.git.info().and_then(|g| g.head.clone());
+            // ★ HEAD 본문은 UTF-8로만 읽는다(`git show` 출력) — 다른 인코딩의 파일은 한글이 U+FFFD로 깨져 있다. 거터 표시는
+            //   틀려도 해가 없지만 되돌리기는 그 글자를 **버퍼에 써넣으므로** 거부하고 알린다(검토 11-23 · 데이터 보호).
+            if head.as_deref().is_some_and(|h| h.contains('\u{fffd}')) {
+                self.sess.status = t(Msg::StGitRevertEncoding).into();
+                self.redraw();
+                return;
+            }
+            head.and_then(|head| revert_edit(&head, &work, line))
         };
         match edit {
             Some(e) => {
