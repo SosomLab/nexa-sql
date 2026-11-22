@@ -4268,6 +4268,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Text,
         default: "",
     },
+    // ★ T-172 (A)(D-494): 못 찾은 프로젝트 폴더의 이 PC 자리(고유 번호|폴더 열쇠|경로 · 화면 비노출 · 프로젝트 파일 밖 = PC마다 다른 값).
+    Entry {
+        key: "project.pc_paths",
+        cat: Msg::CatProject,
+        label: Msg::LblProjectPcPaths,
+        desc: Msg::DescProjectPcPaths,
+        kind: SettingKind::Text,
+        default: "",
+    },
     Entry {
         key: "project.restore_last",
         cat: Msg::CatProject,
@@ -9534,6 +9543,7 @@ pub const HIDDEN: &[&str] = &[
     "file.recent",
     "project.last",
     "project.recent",
+    "project.pc_paths",
     "file.show_hidden",
     "file.show_dot",
     "script.strict",

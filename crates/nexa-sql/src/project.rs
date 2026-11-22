@@ -19,6 +19,11 @@ pub(crate) struct Project {
     pub path: Option<PathBuf>,
     /// 탐색기 루트 폴더(절대 · 순서 = 표시 순서).
     pub folders: Vec<PathBuf>,
+    /// ★ T-172 (A)(D-494): 프로젝트 고유 번호(파일 안 `id` · 복사·이동해도 따라간다) — PC별 폴더 대응표의 열쇠. 없으면 필요할 때 만든다.
+    pub id: Option<String>,
+    /// ★ T-172 (A): `folders`와 나란히 — 이 PC가 **다른 자리**를 쓰는 폴더의 정의 경로(프로젝트 파일에 적힌 것). 저장할 때는
+    ///   이것을 적고 앵커 이름도 이것에서 얻는다(이 PC의 경로가 공유 파일에 새지 않는다). 짧을 수 있다(없음 = `None`).
+    pub folder_src: Vec<Option<PathBuf>>,
     /// 탐색기에서 마지막으로 고른 항목(절대 · 다시 열 때 그 자리에 선택 · 사용자 09-22).
     pub last_selected: Option<PathBuf>,
     /// ★ 작업 환경(사용자 09-23): 편집기 탭들(순서 · 파일 경로 또는 미저장 스크립트 본문 · 캐럿 + fuzzy 앵커) · 활성 탭 · 북마크(JSON).
@@ -125,6 +130,10 @@ impl Project {
                 ));
             }
         }
+        p.id = fields.iter().find_map(|(k, v)| match (k.as_str(), v) {
+            ("id", Json::Str(s)) if !s.trim().is_empty() => Some(s.trim().to_string()),
+            _ => None,
+        });
         // ★ 폴더를 **먼저** 읽는다(T-172 P2) — 탭·선택 경로의 `${workspaceFolder:이름}` 앵커가 폴더 목록을 가리킨다(키 순서와 무관하게).
         let home = home_dir();
         for (k, v) in &fields {
@@ -145,6 +154,7 @@ impl Project {
                         let cx = PathCtx {
                             base: base.as_deref(),
                             folders: &[],
+                            names: &[],
                             home: home.as_deref(),
                         };
                         p.folders.push(resolve(&rel, &cx));
@@ -156,6 +166,7 @@ impl Project {
         let cx = PathCtx {
             base: base.as_deref(),
             folders: &folders,
+            names: &folders,
             home: home.as_deref(),
         };
         for (k, v) in &fields {
@@ -316,18 +327,27 @@ impl Project {
         let fcx = PathCtx {
             base: base.as_deref(),
             folders: &[],
+            names: &[],
             home: home.as_deref(),
         };
+        // 정의 경로(이 PC가 다른 자리를 쓰는 폴더는 원래 경로) — 폴더 목록과 앵커 이름은 이쪽으로 적는다(T-172 (A)).
+        let defs = self.folder_defs();
         let cx = PathCtx {
             base: base.as_deref(),
             folders: &self.folders,
+            names: &defs,
             home: home.as_deref(),
         };
         let mut out = String::new();
         out.push_str("{\n  \"version\": ");
         out.push_str(&VERSION.to_string());
+        if let Some(id) = &self.id {
+            out.push_str(",\n  \"id\": \"");
+            out.push_str(&escape(id));
+            out.push('"');
+        }
         out.push_str(",\n  \"folders\": [");
-        for (i, f) in self.folders.iter().enumerate() {
+        for (i, f) in defs.iter().enumerate() {
             if i > 0 {
                 out.push(',');
             }
@@ -527,7 +547,114 @@ impl Project {
     }
 
     pub(crate) fn remove_folder(&mut self, i: usize) -> Option<PathBuf> {
+        if i < self.folder_src.len() {
+            self.folder_src.remove(i);
+        }
         (i < self.folders.len()).then(|| self.folders.remove(i))
+    }
+
+    /// ★ T-172 (A): 폴더 `i`의 **정의 경로**(프로젝트 파일에 적힌 것) — 이 PC가 다른 자리를 쓰고 있으면 그 원래 경로, 아니면 지금 경로.
+    pub(crate) fn folder_def(&self, i: usize) -> PathBuf {
+        self.folder_src
+            .get(i)
+            .cloned()
+            .flatten()
+            .or_else(|| self.folders.get(i).cloned())
+            .unwrap_or_default()
+    }
+
+    fn folder_defs(&self) -> Vec<PathBuf> {
+        (0..self.folders.len())
+            .map(|i| self.folder_def(i))
+            .collect()
+    }
+
+    /// 이 실제 경로를 쓰는 폴더의 정의 경로(다른 자리를 쓰는 폴더만 `Some`) — 다중 인스턴스 병합이 폴더 목록을 다시 짤 때.
+    pub(crate) fn folder_src_of(&self, f: &Path) -> Option<PathBuf> {
+        let i = self.folders.iter().position(|x| x == f)?;
+        self.folder_src.get(i).cloned().flatten()
+    }
+
+    /// PC별 대응표의 열쇠 = 폴더가 프로젝트 파일에 적히는 글(정의 경로 · 프로젝트 기준 상대/홈 앵커/절대).
+    pub(crate) fn folder_key(&self, i: usize) -> String {
+        let (base, home) = (self.base(), home_dir());
+        let fcx = PathCtx {
+            base: base.as_deref(),
+            folders: &[],
+            names: &[],
+            home: home.as_deref(),
+        };
+        relativize(&self.folder_def(i), &fcx)
+    }
+
+    /// 고유 번호(없으면 지금 만든다 · OS 난수 8바이트 = 16진 16자) — PC별 대응표의 열쇠(D-494). 난수를 못 얻으면 `None`.
+    pub(crate) fn ensure_id(&mut self) -> Option<String> {
+        if self.id.is_none() {
+            let b = nsql_vault::random_bytes(8).ok()?;
+            self.id = Some(b.iter().map(|x| format!("{x:02x}")).collect());
+        }
+        self.id.clone()
+    }
+
+    /// ★ T-172 (B): 폴더 `i`를 **이 PC에서만** 다른 자리로 — 프로젝트 파일에는 정의 경로가 그대로 적힌다(`folder_src`). 그 폴더
+    ///   아래를 가리키던 탭·펼침·선택 경로를 새 자리로 옮긴다. 바뀌었으면 (옛 실제 경로, 새 경로).
+    pub(crate) fn relocate_folder(&mut self, i: usize, new: &Path) -> Option<(PathBuf, PathBuf)> {
+        let old = self.folders.get(i)?.clone();
+        if old == new {
+            return None;
+        }
+        let def = self.folder_def(i);
+        if self.folder_src.len() < self.folders.len() {
+            self.folder_src.resize(self.folders.len(), None);
+        }
+        self.folder_src[i] = (def != new).then_some(def);
+        self.folders[i] = new.to_path_buf();
+        let re = |p: &mut PathBuf| {
+            if let Ok(r) = p.strip_prefix(&old) {
+                *p = if r.as_os_str().is_empty() {
+                    new.to_path_buf()
+                } else {
+                    new.join(r)
+                };
+            }
+        };
+        self.tabs
+            .iter_mut()
+            .filter_map(|t| t.path.as_mut())
+            .for_each(re);
+        self.expanded.iter_mut().for_each(re);
+        self.last_selected.iter_mut().for_each(re);
+        Some((old, new.to_path_buf()))
+    }
+
+    /// ★ T-172 (A): 이 PC의 대응표(설정 `project.pc_paths`)를 입힌다 — **못 찾은 폴더만**, 표의 자리가 실제로 있을 때만.
+    pub(crate) fn apply_pc_paths(&mut self, raw: &str) {
+        let Some(id) = self.id.clone() else { return };
+        for i in 0..self.folders.len() {
+            if self.folders[i].is_dir() {
+                continue;
+            }
+            if let Some(to) = pc_paths_get(raw, &id, &self.folder_key(i)).filter(|p| p.is_dir()) {
+                self.relocate_folder(i, &to);
+            }
+        }
+    }
+
+    /// 읽고 이 PC의 대응표까지 입힌다(앱이 여는 길은 전부 이것).
+    pub(crate) fn load_pc(path: &Path, pc_paths: &str) -> Result<Project, String> {
+        let mut p = Self::load(path)?;
+        p.apply_pc_paths(pc_paths);
+        Ok(p)
+    }
+
+    pub(crate) fn from_bytes_pc(
+        path: &Path,
+        bytes: &[u8],
+        pc_paths: &str,
+    ) -> Result<Project, String> {
+        let mut p = Self::from_bytes(path, bytes)?;
+        p.apply_pc_paths(pc_paths);
+        Ok(p)
     }
 }
 
@@ -616,6 +743,8 @@ fn setting_json(key: &str, raw: &str) -> String {
 struct PathCtx<'a> {
     base: Option<&'a Path>,
     folders: &'a [PathBuf],
+    /// 앵커 이름을 얻는 경로들(`folders`와 나란히 · 정의 경로 — 이 PC가 다른 자리를 써도 이름은 공유 정의 쪽).
+    names: &'a [PathBuf],
     home: Option<&'a Path>,
 }
 
@@ -655,7 +784,7 @@ fn resolve(rel: &str, cx: &PathCtx<'_>) -> PathBuf {
     if let Some(after) = rel.strip_prefix(ANCHOR_FOLDER) {
         if let Some((name, rest)) = after.split_once('}') {
             let hit = (0..cx.folders.len())
-                .find(|&i| folder_anchor_name(cx.folders, i).as_deref() == Some(name));
+                .find(|&i| folder_anchor_name(cx.names, i).as_deref() == Some(name));
             if let Some(i) = hit {
                 return cx.folders[i].join(tail(rest));
             }
@@ -685,7 +814,7 @@ fn relativize(p: &Path, cx: &PathCtx<'_>) -> String {
     let best = (0..cx.folders.len())
         .filter_map(|i| {
             let r = p.strip_prefix(&cx.folders[i]).ok()?;
-            let name = folder_anchor_name(cx.folders, i)?;
+            let name = folder_anchor_name(cx.names, i)?;
             Some((cx.folders[i].components().count(), name, r))
         })
         .max_by_key(|(depth, _, _)| *depth);
@@ -719,6 +848,43 @@ fn escape(s: &str) -> String {
         }
     }
     out
+}
+
+/// PC별 폴더 대응표(설정 `project.pc_paths` · T-172 (A) · D-494) — `고유 번호|폴더 열쇠|이 PC의 경로` 셋씩 `|`로 잇는다(최신 먼저).
+fn pc_paths_rows(raw: &str) -> Vec<(&str, &str, &str)> {
+    let mut it = raw.split('|');
+    let mut out = Vec::new();
+    while let (Some(a), Some(b), Some(c)) = (it.next(), it.next(), it.next()) {
+        if !a.is_empty() && !b.is_empty() && !c.is_empty() {
+            out.push((a, b, c));
+        }
+    }
+    out
+}
+
+pub(crate) fn pc_paths_get(raw: &str, id: &str, key: &str) -> Option<PathBuf> {
+    pc_paths_rows(raw)
+        .into_iter()
+        .find(|(a, b, _)| *a == id && *b == key)
+        .map(|(_, _, p)| PathBuf::from(p))
+}
+
+/// 한 줄을 넣거나 바꾼다(맨 앞으로 · 200줄 상한 = 오래된 것부터 버린다). 열쇠·경로에 `|`가 있으면 적지 않는다.
+pub(crate) fn pc_paths_set(raw: &str, id: &str, key: &str, path: &Path) -> String {
+    let path = path.to_string_lossy();
+    if id.is_empty() || key.is_empty() || key.contains('|') || path.contains('|') {
+        return raw.to_string();
+    }
+    let mut rows: Vec<(&str, &str, &str)> = pc_paths_rows(raw)
+        .into_iter()
+        .filter(|(a, b, _)| !(*a == id && *b == key))
+        .collect();
+    rows.insert(0, (id, key, &path));
+    rows.truncate(200);
+    rows.iter()
+        .map(|(a, b, c)| format!("{a}|{b}|{c}"))
+        .collect::<Vec<_>>()
+        .join("|")
 }
 
 /// 최근 프로젝트 목록(설정 `project.recent` · `|` 구분 · 최신 먼저 · 존재하는 파일만 · 최대 10).
@@ -820,6 +986,7 @@ mod tests {
         let cx = PathCtx {
             base: Some(&proj),
             folders: &folders,
+            names: &folders,
             home: Some(&home),
         };
         let cases = [
@@ -841,12 +1008,73 @@ mod tests {
         let cx2 = PathCtx {
             base: Some(&proj),
             folders: &dup,
+            names: &dup,
             home: None,
         };
         assert!(!relativize(&lib.join("b.sql"), &cx2).starts_with("${"));
         // 이 PC에 없는 폴더 앵커 = 글자 그대로 프로젝트 폴더 아래로 → 저장하면 같은 글로 되돌아간다(잃지 않는다).
         let raw = "${workspaceFolder:gone}/c.sql";
         assert_eq!(relativize(&resolve(raw, &cx), &cx), raw);
+    }
+
+    /// ★ T-172 (A)(B): 고유 번호 왕복 · 다시 지정한 폴더는 이 PC에서만 바뀌고(파일에는 정의 경로 그대로 · 앵커 이름도 정의 쪽) ·
+    ///   대응표로 다시 열면 같은 자리로 풀린다.
+    #[test]
+    fn pc_paths_relocate_keeps_shared_definition() {
+        let root = std::env::temp_dir().join(format!("nsql-pcpaths-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (pdir, there) = (root.join("p"), root.join("elsewhere").join("lib2"));
+        std::fs::create_dir_all(&pdir).unwrap();
+        std::fs::create_dir_all(&there).unwrap();
+        std::fs::write(there.join("b.sql"), "select 1").unwrap();
+        let file = pdir.join("my.nsql-project");
+        let gone = root.join("gone").join("lib");
+        let gone_txt = gone.to_string_lossy().replace('\\', "/");
+        let doc = format!(
+            r#"{{"version":2,"id":"00aa11bb22cc33dd","folders":[{{"path":"{gone_txt}"}}],"active":0,"tabs":[{{"path":"${{workspaceFolder:lib}}/b.sql","title":"b.sql"}}]}}"#
+        );
+        let mut p = Project::from_bytes(&file, doc.as_bytes()).unwrap();
+        assert_eq!(p.id.as_deref(), Some("00aa11bb22cc33dd"));
+        assert_eq!(p.tabs[0].path, Some(gone.join("b.sql")));
+        let key = p.folder_key(0);
+        // 열쇠 = 파일에 적히는 글(홈 아래면 `${userHome}/…` · 아니면 절대).
+        assert!(key.ends_with("gone/lib"), "{key}");
+        // 다시 지정: 실제 경로만 바뀐다 · 탭 경로가 따라온다.
+        assert_eq!(p.relocate_folder(0, &there), Some((gone, there.clone())));
+        assert_eq!(p.folders[0], there);
+        assert_eq!(p.tabs[0].path, Some(there.join("b.sql")));
+        // 저장할 글 = 정의 경로 그대로 · 앵커 이름도 정의 쪽(lib) · 이 PC의 자리(lib2 · elsewhere)는 새지 않는다.
+        let json = p.to_json();
+        assert!(
+            json.contains(&key) && json.contains("${workspaceFolder:lib}/b.sql"),
+            "{json}"
+        );
+        assert!(
+            !json.contains("elsewhere") && json.contains("\"id\": \"00aa11bb22cc33dd\""),
+            "{json}"
+        );
+        // 대응표 → 다시 열면 같은 자리.
+        let table = pc_paths_set("", "00aa11bb22cc33dd", &key, &there);
+        let again = Project::from_bytes_pc(&file, json.as_bytes(), &table).unwrap();
+        assert_eq!(again.folders[0], there);
+        assert_eq!(again.tabs[0].path, Some(there.join("b.sql")));
+        assert_eq!(again.to_json(), json);
+        // 다른 고유 번호의 줄은 쓰지 않는다 · 같은 열쇠는 바꿔 쓴다 · 폴더 제거는 정의 경로도 함께.
+        let other = pc_paths_set(&table, "ffff", &key, &root);
+        assert_eq!(
+            pc_paths_get(&other, "00aa11bb22cc33dd", &key),
+            Some(there.clone())
+        );
+        let moved = pc_paths_set(&other, "00aa11bb22cc33dd", &key, &root);
+        assert_eq!(
+            pc_paths_get(&moved, "00aa11bb22cc33dd", &key),
+            Some(root.clone())
+        );
+        assert_eq!(moved.split('|').count(), 6);
+        let mut q = again;
+        assert_eq!(q.remove_folder(0), Some(there));
+        assert!(q.folder_src.is_empty() && q.folders.is_empty());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// ★ T-172: 더 새 형식의 프로젝트 파일은 열지 않는다 · 폴더는 키 순서와 무관하게 먼저 읽힌다.

@@ -557,6 +557,8 @@ struct App {
     _instance_lock: Option<std::fs::File>,
     /// 폴더 고르기의 시작 폴더(설정의 지금 값).
     folder_start: Option<PathBuf>,
+    /// 폴더 고르기 창이 "프로젝트 폴더 다시 지정"으로 열렸으면 그 폴더 순번(T-172 (B)) — 확정 때 꺼내 쓴다 · 폴더 추가는 비운다.
+    relocate_idx: Option<usize>,
     /// ★ 파일 열기/저장 창을 마지막으로 연 **작업 모드 열쇠**(사용자 10-22 · `project:<파일>` / `folder:<폴더>` / `file`):
     /// 모드가 같으면 마지막 위치 · 다르면(기동 직후 · 모드 전환 뒤) 그 모드의 위치에서 연다.
     file_dialog_mode: Option<String>,
@@ -2147,6 +2149,7 @@ fn main() {
         first_instance,
         _instance_lock: instance_lock,
         folder_start: None,
+        relocate_idx: None,
         file_dialog_mode: None,
         menubar,
         tabs_menu_sig: String::new(),

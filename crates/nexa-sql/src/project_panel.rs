@@ -1007,6 +1007,13 @@ impl ProjectPanel {
         ];
         if is_root {
             items.push(CtxItem::Separator);
+            // ★ T-172 (B): 못 찾은 루트 폴더 = 이 PC에서의 자리를 다시 지정.
+            if !self.nodes[node].path.is_dir() {
+                items.push(CtxItem::item(
+                    "relocate_folder",
+                    t(Msg::MnProjectRelocateFolder),
+                ));
+            }
             items.push(CtxItem::item(
                 "remove_folder",
                 t(Msg::MnProjectRemoveFolder),
@@ -1045,7 +1052,7 @@ impl ProjectPanel {
             }
             return;
         }
-        if id != "remove_folder" {
+        if id != "remove_folder" && id != "relocate_folder" {
             return;
         }
         // 루트 노드의 순번 = 프로젝트 폴더 순번(`set_project`가 `folders` 순서대로 루트를 만든다).
@@ -1054,7 +1061,7 @@ impl ProjectPanel {
             .and_then(|r| self.rows.get(r).copied())
             .and_then(|n| self.roots.iter().position(|&x| x == n));
         if let Some(i) = idx {
-            self.command = Some(format!("project.remove_folder:{i}"));
+            self.command = Some(format!("project.{id}:{i}"));
         }
     }
 

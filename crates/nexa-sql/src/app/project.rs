@@ -276,6 +276,29 @@ impl App {
             }
             return;
         }
+        // ★ T-172 (B): `project.relocate_folder:<순번>` = 폴더 고르기 창 · `…:<순번>:<경로>` = 바로(자동 시험).
+        if let Some(rest) = id.strip_prefix("project.relocate_folder:") {
+            let (i, dir) = match rest.split_once(':') {
+                Some((a, b)) => (a.parse::<usize>().ok(), Some(PathBuf::from(b))),
+                None => (rest.parse::<usize>().ok(), None),
+            };
+            if let Some(i) = i.filter(|&i| i < self.project.folders.len()) {
+                match dir {
+                    Some(d) => self.project_relocate_folder(i, &d),
+                    None => {
+                        self.relocate_idx = Some(i);
+                        self.file_purpose = FilePurpose::Project;
+                        // 시작 = 옛 자리에서 위로 올라가며 처음 있는 폴더.
+                        self.folder_start = self.project.folders[i]
+                            .ancestors()
+                            .find(|a| a.is_dir())
+                            .map(Path::to_path_buf);
+                        self.open_file_dlg = Some(PickerMode::Folder);
+                    }
+                }
+            }
+            return;
+        }
         if let Some(rest) = id.strip_prefix("project.remove_folder:") {
             if let Some(f) = rest
                 .parse::<usize>()
@@ -369,6 +392,7 @@ impl App {
                 }
             }
             "project.add_folder" => {
+                self.relocate_idx = None;
                 if self.project.is_open() {
                     self.file_purpose = FilePurpose::Project;
                     self.folder_start = self
@@ -436,7 +460,12 @@ impl App {
     /// 프로젝트 파일을 읽어 현재 프로젝트로(현재 것은 먼저 저장).
     pub(crate) fn project_load_path(&mut self, path: &Path) {
         self.palette.close();
-        match project::Project::load(path) {
+        let pc = self
+            .settings
+            .get("project.pc_paths")
+            .unwrap_or("")
+            .to_string();
+        match project::Project::load_pc(path, &pc) {
             Ok(p) => {
                 let switching = self.project.path.as_deref() != Some(path);
                 if self.project.is_open() && switching {
@@ -500,6 +529,57 @@ impl App {
             }
         }
         self.redraw();
+    }
+
+    /// ★ T-172 (A)(B)(사용자 11-22 "이 PC 대응표에만"): 못 찾은 프로젝트 폴더를 이 PC의 다른 자리로 다시 지정한다 — 프로젝트 파일의
+    ///   폴더 정의는 그대로 두고, 설정 `project.pc_paths`에 `고유 번호 + 폴더 열쇠 → 이 PC의 경로`를 적는다. 그 폴더 아래라서
+    ///   못 찾았던 탭은 다시 연다.
+    pub(crate) fn project_relocate_folder(&mut self, i: usize, dir: &Path) {
+        let taken = self
+            .project
+            .folders
+            .iter()
+            .enumerate()
+            .any(|(j, f)| j != i && f == dir);
+        if i >= self.project.folders.len() || !dir.is_dir() || taken {
+            return;
+        }
+        let key = self.project.folder_key(i);
+        let Some(id) = self.project.ensure_id() else {
+            return;
+        };
+        let Some((old, new)) = self.project.relocate_folder(i, dir) else {
+            return;
+        };
+        let raw = project::pc_paths_set(
+            self.settings.get("project.pc_paths").unwrap_or(""),
+            &id,
+            &key,
+            &new,
+        );
+        let _ = self.settings.set("project.pc_paths", &raw);
+        self.persist_settings();
+        for m in &mut self.proj_missing {
+            if let Some(p) = m.path.as_mut() {
+                if let Ok(r) = p.strip_prefix(&old) {
+                    *p = new.join(r);
+                }
+            }
+        }
+        let (found, still): (Vec<_>, Vec<_>) = std::mem::take(&mut self.proj_missing)
+            .into_iter()
+            .partition(|m| m.path.as_ref().is_some_and(|p| p.is_file()));
+        self.proj_missing = still;
+        let opts = nsql_bookmarks::RelocateOpts::default();
+        let (mut dirty, mut remap) = (0usize, Vec::new());
+        for t in &found {
+            let _ = self.project_restore_tab(t, &opts, &mut dirty, &mut remap);
+        }
+        self.sess.status = tf(
+            Msg::StProjectFolderRelocated,
+            &[&nexa_fs::path::display(&old), &nexa_fs::path::display(&new)],
+        );
+        self.project_changed(true);
     }
 
     pub(crate) fn project_add_folder(&mut self, dir: &Path) {
@@ -783,9 +863,15 @@ impl App {
             return ProjSync::Same;
         }
         // 못 읽는 문서(깨졌거나 쓰는 중)면 합칠 수 없다 — 종전처럼 우리 상태가 다음 저장에 쓰인다.
+        // 이 PC의 폴더 대응표를 세 문서에 똑같이 입힌다(T-172 (A)) — 탭·폴더 경로가 지금 열린 것과 같은 자리로 풀려야 맞춰진다.
+        let pc = self
+            .settings
+            .get("project.pc_paths")
+            .unwrap_or("")
+            .to_string();
         let (Ok(theirs), Ok(base)) = (
-            project::Project::from_bytes(&path, &bytes),
-            project::Project::from_bytes(&path, &self.project_last_json),
+            project::Project::from_bytes_pc(&path, &bytes, &pc),
+            project::Project::from_bytes_pc(&path, &self.project_last_json, &pc),
         ) else {
             return ProjSync::Same;
         };
@@ -794,7 +880,7 @@ impl App {
         let ours_doc = self.project.to_document();
         // 마지막으로 쓰거나 맞춘 뒤 우리가 바꾼 것이 없는가 — 없으면 합친 뒤에도 "쓸 것 없음"으로 둔다(아래).
         let was_clean = doc_mark(&ours_doc) == self.project_ours_mark;
-        let Ok(ours) = project::Project::from_bytes(&path, &ours_doc) else {
+        let Ok(ours) = project::Project::from_bytes_pc(&path, &ours_doc, &pc) else {
             return ProjSync::Same;
         };
         let plan = projsync::plan(&base, &ours, &theirs);
@@ -898,7 +984,16 @@ impl App {
             self.editors.switch_to_id(keep_active);
             self.sync_grid_tab();
         }
+        // 저쪽이 먼저 만든 고유 번호는 받는다(우리 것이 있으면 우리 것 — 나중에 쓰는 쪽).
+        if self.project.id.is_none() && theirs.id.is_some() {
+            self.project.id = theirs.id.clone();
+        }
         if plan.folders != self.project.folders {
+            self.project.folder_src = plan
+                .folders
+                .iter()
+                .map(|f| ours.folder_src_of(f).or_else(|| theirs.folder_src_of(f)))
+                .collect();
             self.project.folders = plan.folders;
             applied += 1;
             self.project_changed(false);
@@ -1976,7 +2071,12 @@ impl App {
         let Some((path, from_arg)) = plan else {
             return;
         };
-        match project::Project::load(&path) {
+        let pc = self
+            .settings
+            .get("project.pc_paths")
+            .unwrap_or("")
+            .to_string();
+        match project::Project::load_pc(&path, &pc) {
             Ok(proj) => {
                 if from_arg {
                     // 복원은 기동 마지막(`project_restore` 호출부)에서 한 번 — 여기서 하면 두 번 열린다.

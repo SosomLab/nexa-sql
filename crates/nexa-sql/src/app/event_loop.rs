@@ -1407,7 +1407,11 @@ impl App {
                             self.result_export_start(&path)
                         }
                         (PickerMode::Folder, FilePurpose::Project) => {
-                            self.project_add_folder(&path)
+                            // 다시 지정(T-172 (B))으로 연 창이면 그 폴더의 자리를 바꾼다 · 아니면 폴더 추가.
+                            match self.relocate_idx.take() {
+                                Some(i) => self.project_relocate_folder(i, &path),
+                                None => self.project_add_folder(&path),
+                            }
                         }
                         (PickerMode::Folder, _) => {}
                         (PickerMode::Open, FilePurpose::RunFile) => {
