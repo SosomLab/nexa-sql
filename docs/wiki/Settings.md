@@ -115,6 +115,14 @@ Right-clicking a toolbar button or group first shows **extra commands for that a
 
 Right-clicking a status bar cell first shows **commands related to that cell** (for example Transaction mode = Transaction Log · Memory = Memory Usage · Row count/Elapsed time = Output) and `Hide "<name>"`, and then, below a separator, the **common menu** (Status bar settings… · Reset status bar items). The menu opens just above the status bar so it does not cover the cells. The status text area on the left, which has no cells, shows only the common menu. The license cell cannot be hidden. Left-clicking a cell still does what it did before (changing syntax · indentation · line ending · encoding, and so on).
 
+## File encoding — reopen with another encoding (11-23)
+
+Click the **encoding** cell of the status bar (for example `UTF-8`). The popup lists the encodings twice: **Reopen ▸** reads the file from disk again and decodes it with the encoding you pick (use it when a file opened with broken characters, for example a Korean EUC-KR / CP949 file opened as UTF-8); the list below only changes the encoding used **when saving**. Reopening is one Undo step — Ctrl+Z brings back the text you had before. It is refused, with a message in the status bar, when the tab has unsaved edits (save or undo them first) and for large files (close the tab and open the file with the encoding instead). After reopening, saving keeps the file in that encoding.
+
+## File encoding — reopen with another encoding (11-23)
+
+Click the **encoding** cell of the status bar (for example `UTF-8`). The popup lists the encodings twice: **Reopen ▸** reads the file from disk again and decodes it with the encoding you pick (use it when a file opened with broken characters, for example a Korean EUC-KR / CP949 file opened as UTF-8); the list below only changes the encoding used **when saving**. Reopening is one Undo step — Ctrl+Z brings back the text you had before. It is refused, with a message in the status bar, when the tab has unsaved edits (save or undo them first) and for large files (close the tab and open the file with the encoding instead). After reopening, saving keeps the file in that encoding.
+
 ## Tabs (10-07)
 
 The **Editors** group of the settings window has a **Tabs** category (right below Editor). It gathers the tab-related settings in one place — rows `tabs.rows` · tooltip `tabs.tooltip` · active tab line color `editor.tab_accent_color` · tab line colors `editor.tab_line_unsaved/file/preview` · unsaved tab text `editor.tab_unsaved_text`/`editor.tab_unsaved_color` · close mark `editor.tab_close_show` · closing unsaved tabs `editor.close_unsaved` · plus two new keys (key names unchanged · only the category shown moved).

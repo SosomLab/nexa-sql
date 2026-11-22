@@ -176,6 +176,7 @@
 >
 > ★ **11-11 AI(Claude · Codex) 탭 1·2차 완료 · push**([journal 11-11 §2·§3](journal/2026-11-11.md) · D-481 · 1차 be20dc72 · 2d8adfaa · 8c13ea52 · f8d2ccd5 · 2차 742fb7b2 · ed6f43a2 · 40153854 · 33f43021) = API · 다중 프로필 · CLI 모드 · Codex 어댑터(스키마 확정) · 제공자 선택 · 도구 16 · MCP · `/grid` · 클립보드 이미지 · 모델 목록 조회 · 비용 표 설정화 · 마크다운 렌더 · 붙여넣기 칩 · WIF · 설정 20 · 헤드리스 V1(모의) ✓ · 통합 46/0 · CI 전부 ✅(중간 빨강 1 = bin dead_code → 40153854) · 남은 것 = 사용자 실기(T-475)
 >
+> ★ **11-23 묶음 19**(브랜치 `t512-enc-reopen` · 병합·push 대기) = T-512 인코딩으로 다시 열기 고침(311be71f · 미저장 편집이면 거부) · 새 V1 enc-reopen 21/0 · git-revert 31/0 · Debug PID 23880 · 묶음 18 CI ✓ · [journal 11-23 §15](journal/2026-11-23.md)
 > ★ **11-23 묶음 18**(브랜치 `review-fixes-2` · 병합·push 대기) = 둘째 독립 검토(11-22 낮 커밋) 지적 3 수정(git 되돌리기가 앞 파일 HEAD로 · BOM/비 UTF-8 HEAD 거부 · 변수 아래 폴더 이름 · 81dcf798 · 71910eb9 · 6ef04063) · V2 = test 700/0/6 · git-revert 30/0 · project-paths 152/0 · **새 결함 후보 T-512**(인코딩으로 다시 열기가 열린 탭에서 무효) · Debug PID 15296 · [journal 11-23 §14](journal/2026-11-23.md)
 > ★ **11-23 묶음 17**(두 저장소 `review-fixes` · 병합·push 대기) = 독립 검토 지적 5 수정(O-1 자기 컴파일 오알림 · 남은 요청이 탭 삼킴 · T-172 찾아보기 추론 조건 · 수동 확인 중복 탭 · 옆 띠 낡음 판정 · 8b28551c · 00ad264) · V2 ✓ verify 20261123-030343(history-check 34/0 · project-paths 147/0) · Debug PID 29732 · [journal 11-23 §13](journal/2026-11-23.md)
 > ★ **다음 세션 시작점 = [journal 11-23 §12](journal/2026-11-23.md)(08:00 보고용 모음 · 묶음 6~16 · CI push 11회 전부 ✓ · 전체 V1 23시나리오 469/0 · 무인 진행 추천안 3 · 사용자 결정 12 · 아침 확인 목록 · 다음 릴리스 노트 초안)** · 위키 공백 3 채움(Data-Editing 닫기 확인 · Git 새 쪽 · Projects 경로 변수) · Debug PID 16740
