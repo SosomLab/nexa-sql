@@ -685,7 +685,7 @@ impl App {
         let id = self.editors.tab_id(i);
         self.editors.switch_to_id(id);
         self.sync_grid_tab();
-        self.sess.status = tf(Msg::ProjBanMissingDiscard, &[""]);
+        self.sess.status = tf(Msg::ProjBanMissingDiscard, &[""]).trim_end().to_string();
         self.ext_banner_sync();
         true
     }
@@ -725,6 +725,7 @@ impl App {
         //   그 문서에 없으니 걷힌다(복원하는 길은 `project_restore`가 새로 채운다).
         self.proj_missing
             .retain(|m| p.tabs.iter().any(|t| t.path == m.path));
+        let switched = self.project.path != p.path;
         self.project = p;
         self.apply_project_settings();
         let last = self
@@ -744,6 +745,14 @@ impl App {
                     &self.project.folders.len().to_string(),
                 ],
             );
+        }
+        // ★ T-172: 다른 프로젝트를 열었는데 등록 폴더를 못 찾았다 → 알린다(로그 + 알림 · 탐색기 우클릭 "폴더 다시 지정…").
+        let gone = self.project.folders.iter().filter(|f| !f.is_dir()).count();
+        if switched && gone > 0 {
+            let msg = tf(Msg::StProjectFoldersMissing, &[&gone.to_string()]);
+            self.log_win.push(LogEntry::new(LogKind::Info, msg.clone()));
+            self.toasts
+                .push(toast::ToastKind::Info, t(Msg::MnProject).to_string(), msg);
         }
         self.persist_settings();
         self.project_changed(false);
@@ -1456,6 +1465,11 @@ impl App {
                     };
                     self.editors
                         .open_view_tab(&format!("missing:{}", m.id), &title);
+                    // 보관된 미저장 본문은 읽기 전용으로 보여 준다(D-189).
+                    if let Some(txt) = &m.text {
+                        let at = self.editors.active();
+                        self.editors.set_view_text(at, txt);
+                    }
                     id = Some(self.editors.active_id());
                     self.proj_missing.push(m);
                 }

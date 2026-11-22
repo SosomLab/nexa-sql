@@ -143,6 +143,10 @@ impl App {
         if !self.gate_open() {
             return;
         }
+        // 못 찾은 탭의 자리 탭 본문은 보여 주기만 한다(실행 대상 아님 · T-172 (C)).
+        if self.missing_id_at(self.editors.active()).is_some() {
+            return;
+        }
         // 다중 커서/선택이면 "캐럿 문장"이 하나가 아니다 → 문장 실행은 막고 전체 실행(F5)만(사용자 09-17).
         if !all && self.editors.cur().has_multi() {
             self.sess.status = t(Msg::StMultiCaretRun).into();

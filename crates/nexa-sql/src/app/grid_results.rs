@@ -1150,6 +1150,21 @@ impl App {
             .is_some_and(|t| t.grid.edit_dirty())
     }
 
+    /// 편집기 탭 `ed`에 딸린 결과 탭 가운데 미적용 편집이 있는 것의 수(T-507 · 활성 패널 = `self.panel` · 잠든 패널 = `panels`).
+    pub(crate) fn editor_result_dirty(&self, ed: u64) -> usize {
+        if ed == self.panel_editor {
+            self.panel
+                .tabs
+                .iter()
+                .filter(|t| self.result_tab_dirty(t.id))
+                .count()
+        } else {
+            self.panels
+                .get(&ed)
+                .map_or(0, |p| p.tabs.iter().filter(|t| t.grid.edit_dirty()).count())
+        }
+    }
+
     /// ★ 닫으려는 결과 탭에 **미적용 편집**이 있으면 묻는다(사용자 11-21 · 종전에는 묻지 않고 닫혀 편집이 사라졌다) → `true` =
     ///   물었다(동작을 미뤄 두고 호출자는 그만둔다). 확인(`rclose.discard`)이면 같은 동작을 다시 태운다 · 편집기 탭 닫기 확인과
     ///   같은 부품(상태 팝업). `what` = (종류, 기준 탭 자리).

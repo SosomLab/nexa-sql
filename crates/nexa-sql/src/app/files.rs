@@ -160,6 +160,16 @@ impl App {
             self.redraw();
             return;
         }
+        // ★ T-507 잔여(11-22): 딸린 결과 탭에 미적용 편집이 있으면 첫 닫기는 막고 알린다 — 같은 탭을 한 번 더 닫으면 버리고 닫는다
+        //   (종전에는 편집기 탭을 닫으면 결과 탭의 편집이 묻지 않고 사라졌다).
+        let rdirty = self.editor_result_dirty(id);
+        if rdirty > 0 && self.result_close_armed != Some(id) {
+            self.result_close_armed = Some(id);
+            self.sess.status = tf(Msg::StTabCloseResultDirty, &[&rdirty.to_string()]);
+            self.redraw();
+            return;
+        }
+        self.result_close_armed = None;
         // 그 탭이 쓰는 세션의 대기 문장(전용 세션이면 그 세션 전부 = 탭을 닫으면 세션도 닫힌다 · docs/52 §8).
         let sid = self.sess_id_for_tab(id);
         let n = self.sess_by_id(sid).map_or(0, |s| {

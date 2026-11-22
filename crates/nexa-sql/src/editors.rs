@@ -698,7 +698,9 @@ impl Editors {
 
     /// 파일 검색용 탭 본문(id · 제목 · 본문 · 경로) — 저장 안 된 변경 포함(T-81a).
     pub(crate) fn tab_texts(&self) -> Vec<(u64, String, String, Option<PathBuf>)> {
+        // 뷰 탭은 파일 본문이 아니다(못 찾은 탭의 자리 탭은 보관된 본문을 읽기 전용으로 보여 줄 뿐 · T-172 (C)).
         (0..self.bufs.len())
+            .filter(|&i| !self.view_tabs.contains_key(&self.tab_id(i)))
             .map(|i| {
                 (
                     self.tab_id(i),
@@ -1049,7 +1051,13 @@ impl Editors {
         // 탭별 줄 색 = 구분별(미저장 · 저장된 파일 · 미리보기 · 묶인 탭도 자기 색 · 사용자 09-23/09-28).
         let colors: Vec<Option<nexa_ctl::Color>> = (0..self.titles.len())
             .map(|i| {
-                if self.deleted.contains(&self.tab_id(i)) {
+                // 못 찾은 탭의 자리 탭도 같은 색(T-172 (C) · `deleted`에 넣으면 미저장 취급이 되므로 색만).
+                if self.deleted.contains(&self.tab_id(i))
+                    || self
+                        .view_tabs
+                        .get(&self.tab_id(i))
+                        .is_some_and(|k| k.starts_with("missing:"))
+                {
                     Some(DELETED_TAB_COLOR)
                 } else {
                     self.line_color_of(i)
@@ -2150,7 +2158,23 @@ impl Editors {
             tb.mark_saved();
         }
         self.set_read_only(i, true);
+        // 뷰 열쇠는 탭을 만든 뒤에 붙는다 → 열쇠에 따라 갈리는 탭 줄 색·배지를 다시 맞춘다.
+        self.sync_badges();
         created
+    }
+
+    /// 뷰 탭 본문에 **보여 주기만 하는** 글을 넣는다(읽기 전용 · 저장된 상태 유지 — 닫을 때 묻지 않는다). 못 찾은 탭의 자리 탭이
+    /// 프로젝트 파일에 보관된 미저장 본문을 보일 때(T-172 (C) · D-189). 같은 열쇠로 `open_view_tab`을 다시 부르면 비워진다.
+    pub(crate) fn set_view_text(&mut self, i: usize, text: &str) {
+        if !self.is_view_tab(i) {
+            return;
+        }
+        if let Some(tb) = self.bufs.get_mut(i) {
+            tb.set_read_only(false);
+            tb.set_text(text);
+            tb.mark_saved();
+        }
+        self.set_read_only(i, true);
     }
 
     /// ★ AI 세션 탭(사용자 11-12 "편집기 탭과 같은 기준" = 1클릭 미리보기 · 더블클릭 고정): 뷰 탭을 **미리보기/고정**으로 연다 —
@@ -3137,7 +3161,9 @@ impl Editors {
                 }
                 TabAction::Close(i) => {
                     self.end_split();
-                    self.close_tab(i);
+                    // ★ 탭 ×도 호스트의 닫기 문지기(`close_tab_guarded`)를 거친다(11-22) — 종전에는 바로 닫아 실행 중 확인 ·
+                    //   못 찾은 탭의 자리 탭 확인(T-172) · 딸린 결과 탭의 미적용 편집 확인(T-507)이 ×에서만 빠졌다.
+                    self.tx_close_req = Some(i);
                 }
                 TabAction::New => {
                     self.end_split();
