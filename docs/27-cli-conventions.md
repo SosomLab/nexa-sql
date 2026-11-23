@@ -136,7 +136,7 @@ RDBMS: sqlplus/sql(SQLcl) 1521 · psql 5432 · mysql/mariadb 3306 · sqlcmd/mssq
 | ⓑ 네이티브/래퍼 분리 | 방언별 네이티브(`CONNECT`=Oracle · `\c`=PG …)는 그 방언에서만, 우리 것은 `\connect` 또는 `@connect` | 출처가 이름에 보인다 | SQL*Plus 스크립트의 `CONNECT`가 MSSQL 세션에선 오류 → 이식성 손실 · 사용자가 두 문법을 배운다 · 혼합 스크립트(프로필로 방언 전환)가 깨진다 |
 | ⓒ 접두 필수 | 우리 명령은 전부 `\`·`@` 접두(psql식) · 맨몸 `CONNECT`는 서버로 보냄 | 애매함 0 | Oracle 서버는 `CONNECT`를 모른다(ORA-00900) — 맨몸 CONNECT가 쓸모없어진다 · SQL*Plus 호환 포기 |
 
-**권장 = ⓐ + 명시**: ① `CONNECT`는 우리 클라이언트 명령이며 SQL*Plus 상위 호환(도움말 첫 줄에 명시) ② 로그 창에 `connect` 엔트리가 "client"로 찍힌다(서버로 안 감을 눈으로 확인) ③ 셸 별칭 `\c`·`:connect`(T-52) ④ **세션 모드와의 관계**([24] `session.mode`): `shared`면 편집기 안의 `CONNECT`가 **모든 탭의 세션을 바꾼다** → 상태줄 경고 + 로그 · `per-editor`면 그 탭만 ⑤ 서버로 보내야 하는 드문 경우(예: MySQL Shell의 `\connect`와 같은 이름의 사용자 프로시저)는 `EXEC`/`CALL`로 감싸므로 충돌 없음.
+**권장 = ⓐ + 명시**: ① `CONNECT`는 우리 클라이언트 명령이며 SQL*Plus 상위 호환(도움말 첫 줄에 명시) ② 로그 창에 `connect` 엔트리가 "client"로 찍힌다(서버로 안 감을 눈으로 확인) ③ 셸 별칭 `\c`·`:connect`(T-52) ④ **세션 모드와의 관계**(★ DR-34에 맞춤 · 11-24 T-126): **GUI** = 편집기 안의 `CONNECT`는 **그 탭 하나의 전용 세션**을 만든다(`session.private_connect` · 공유 연결과 다른 탭은 그대로 · 탭 앞 표식 🔌 · `DISCONNECT`로 공유 복귀 · [52 §4](52-session-modes.md)) · `session.mode=per-editor`면 그 탭 세션의 대상을 바꾼다 · **CLI**(`nsql run` · `nsql shell`) = 세션이 하나뿐이라 `CONNECT`는 그 세션을 **교체**한다(이전 세션은 커밋한 뒤 닫음 · `nsql-run` `Runner::connect`) ⑤ 서버로 보내야 하는 드문 경우(예: MySQL Shell의 `\connect`와 같은 이름의 사용자 프로시저)는 `EXEC`/`CALL`로 감싸므로 충돌 없음.
 
 → 결정 **D-45**: ⓐ(권장) / ⓑ / ⓒ.
 
