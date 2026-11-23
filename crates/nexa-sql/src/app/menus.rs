@@ -1173,6 +1173,8 @@ impl App {
                         (i + n - 1) % n
                     };
                     self.editors.switch(j);
+                    // 탭을 옮겼다 = 키는 그 탭의 편집기로(종전엔 포커스를 옮기지 않아 AI 패널·찾기 막대에 남았다 · 사용자 11-23).
+                    self.set_focus(Focus::Editor);
                 }
             }
             "view.theme" => self.cycle_theme(),
@@ -1944,6 +1946,15 @@ impl App {
                 // ★ AI 대본에서 드래그로 고른 줄(작성 상자 선택이 없을 때 · 사용자 11-11).
                 if sel.is_none() && (self.ai_view_active() || self.ai.side_focus) {
                     sel = self.ai_view.selection_text();
+                }
+                // ★ 찾기 막대에 포커스가 있는데 그 상자에 선택이 없으면 **편집기의 선택**을 복사한다(사용자 11-23 — Enter/F3으로
+                //   일치를 고르면 편집기에 선택이 보이지만 포커스는 찾기 막대에 남아 Ctrl+C가 조용히 아무것도 하지 않았다).
+                if sel.is_none() && self.focus == Focus::Find {
+                    let ed = self.editors.cur_mut();
+                    let was = ed.is_focused();
+                    ed.set_focused(true);
+                    sel = ed.copy_selection();
+                    ed.set_focused(was);
                 }
                 if std::env::var_os("NSQL_TRACE_CLIP").is_some() {
                     eprintln!(

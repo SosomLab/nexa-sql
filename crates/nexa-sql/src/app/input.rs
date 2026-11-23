@@ -342,6 +342,15 @@ impl App {
         if f != Focus::Grid {
             self.grid.blur_text_input();
         }
+        // ★ AI 분할 창의 키 포커스(`side_focus`)는 **편집기 영역 포커스이고 지금 탭에 분할 창이 켜져 있을 때만** 남는다
+        //   (사용자 11-23 "AI 창에 포커스가 있다가 다른 편집기 탭으로 가서 친 글자가 AI 창에 들어감" · "선택을 복사해도 안 됨"
+        //   — 종전엔 탭과 무관한 전역 값이라 분할 창이 없는 탭·다른 패널로 가도 남아 복사·입력의 대상이 AI 작성 상자였다).
+        if self.ai.side_focus && !(f == Focus::Editor && self.ai_side_on()) {
+            self.ai.side_focus = false;
+            if !self.ai_view_active() {
+                self.ai_view.set_focused(false);
+            }
+        }
         // ★ 편집기 캐럿 깜빡임 = 실제 포커스일 때만(AI 분할 창·채팅 탭이 키를 받는 동안은 고정 빔 · 사용자 11-11).
         let ed_on = f == Focus::Editor && !self.ai.side_focus && !self.ai_view_active();
         self.ed_mut().set_focused(ed_on);

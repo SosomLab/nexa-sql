@@ -5384,7 +5384,8 @@ pub const REGISTRY: &[Entry] = &[
             min: 100,
             max: 1000,
         },
-        default: "400",
+        // 500 = Windows 기본 더블클릭 간격(종전 400 = 보통 속도의 더블클릭이 버려졌다 · 사용자 11-23).
+        default: "500",
     },
     Entry {
         key: "ui.slide_ms",

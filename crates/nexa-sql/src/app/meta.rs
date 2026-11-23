@@ -518,6 +518,37 @@ impl App {
                         .push(toast::ToastKind::Error, title, body.clone());
                     self.sess.status = body;
                 }
+                // ★ 소스를 열려는 뜻(T-514 · D-510): 같은 서버·스키마·이름·종류의 탭이 이미 있으면 **그 탭으로 가기만** 한다
+                //   (서버에 묻지 않고 본문도 건드리지 않는다 — 편집 중일 수 있다) · 없으면 요청을 탐색기로 되돌려 보낸다.
+                //   종전 = 열 때마다 새 탭(답이 늦어 다시 더블클릭하면 같은 객체 탭이 2~3개 · 사용자 11-23).
+                ExplorerAction::WantSource {
+                    o,
+                    kind,
+                    title,
+                    server,
+                } => {
+                    let open = self
+                        .object_tabs
+                        .iter()
+                        .find(|(id, t)| {
+                            t.kind == kind
+                                && t.server == server
+                                && t.name.eq_ignore_ascii_case(&o.name)
+                                && t.schema.eq_ignore_ascii_case(&o.schema)
+                                && self.editors.index_of_id(**id).is_some()
+                        })
+                        .map(|(id, _)| *id);
+                    match open {
+                        Some(id) => {
+                            self.editors.switch_to_id(id);
+                            self.set_focus(Focus::Editor);
+                            self.redraw();
+                        }
+                        None => self
+                            .explorer
+                            .request_source(server.as_ref(), &o, kind, title),
+                    }
+                }
                 // 표식이 달린 소스 요청이 실패로 끝났다(T-513) — 그 요청 기록만 지운다(0 = 보통 열기의 실패 · 할 일 없음).
                 ExplorerAction::SourceError(token) => {
                     if token != 0 {

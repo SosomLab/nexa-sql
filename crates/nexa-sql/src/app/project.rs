@@ -2347,6 +2347,8 @@ impl App {
             .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
         self.bm_panel
             .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
+        self.explorer
+            .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
         self.search
             .set_dblclick_ms(self.settings.int("ui.dblclick_ms").max(0) as u128);
         // 타입어헤드 한 벌(객체 탐색기와 같은 설정 · 09-28) — 기동 때와 설정 변경 때.

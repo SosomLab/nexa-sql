@@ -884,6 +884,14 @@ pub(crate) enum ExplorerAction {
     ///   접는다. 타임아웃 안내(`Fail`만 · 요청은 살아 있고 늦게 올 수 있다)와 구별하려고 따로 둔다. 값 = 그 요청의 표식
     ///   (T-513 · 0 = 보통 열기 · 호스트는 0을 무시) · 응답 오류 · 세대 바뀜 · 끊김·재결합으로 버려진 요청에서 나간다.
     SourceError(u64),
+    /// ★ 사용자가 객체 소스를 **열려고 했다**(더블클릭 · 메뉴 "소스 열기"/"본문 열기" · T-514 · D-510) — 호스트가 같은 객체의 탭이
+    ///   이미 있으면 그 탭으로 가고(서버에 묻지 않는다), 없으면 `ExplorerSet::request_source`로 요청을 되돌려 보낸다.
+    WantSource {
+        o: ObjectInfo,
+        kind: ObjectKind,
+        title: String,
+        server: Option<ConnectSpec>,
+    },
     /// ★ 실패 안내(docs/107 §5 · "상태줄 한 줄로 끝내지 않는다"): 제목 + 본문 → 오류 토스트 + 상태줄 + 로그 1줄.
     Fail {
         title: String,
@@ -962,7 +970,8 @@ const ICON_REF_FONT_PX: f32 = 17.0;
 
 const ROW_H: f32 = 22.0;
 const INDENT: f32 = 14.0;
-const DBLCLICK_MS: u128 = 400;
+/// 더블클릭 판정 시간의 기본값 — 실제 값은 설정 `ui.dblclick_ms`(`set_dblclick_ms` · 다른 패널과 같은 키 · 11-23 종전엔 여기만 고정).
+const DBLCLICK_MS: u128 = 500;
 
 pub(crate) struct Explorer {
     nodes: Vec<Node>,
@@ -1087,6 +1096,8 @@ pub(crate) struct Explorer {
     menu: CtxMenu,
     actions: Vec<ExplorerAction>,
     last_click: Option<(usize, Instant)>,
+    /// 더블클릭 판정 시간(설정 `ui.dblclick_ms`).
+    dblclick_ms: u128,
     visible: bool,
     focused: bool,
     /// 오브젝트 아이콘(설정 `explorer.icons`) · 틴트 이미지 캐시 `(종류, rgb)`.
@@ -2667,6 +2678,7 @@ impl Explorer {
             menu: CtxMenu::new(),
             actions: Vec::new(),
             last_click: None,
+            dblclick_ms: DBLCLICK_MS,
             visible,
             focused: false,
             icons_on: true,
@@ -6715,7 +6727,7 @@ impl Explorer {
                     token: 0,
                 });
             }
-            NodeKind::Object(o) if o.kind.has_source() => self.open_source(&o),
+            NodeKind::Object(o) if o.kind.has_source() => self.want_source(&o, o.kind),
             NodeKind::Column(c) => self.actions.push(ExplorerAction::Copy(c.name)),
             NodeKind::Item(_) if self.nodes[i].expandable => self.toggle(i),
             NodeKind::Item(it) => self.actions.push(ExplorerAction::Copy(it.name)),
@@ -6767,6 +6779,11 @@ impl Explorer {
 
     pub(crate) fn set_quote_always(&mut self, on: bool) {
         self.quote_always = on;
+    }
+
+    /// 더블클릭 판정 시간(설정 `ui.dblclick_ms`).
+    pub(crate) fn set_dblclick_ms(&mut self, ms: u128) {
+        self.dblclick_ms = ms.max(1);
     }
 
     /// Shift 상태 갱신(10-10): 메뉴가 열려 있으면 "이름 복사" ↔ "전체 이름 복사" 라벨만 바꿔 **열린 채** 다시 넣는다(위치·hover 유지).
@@ -7255,19 +7272,35 @@ impl Explorer {
         });
     }
 
-    /// 소스 열기(스펙) — 패키지 본문은 `open_body`(같은 길 · 종류만 `PackageBody`).
-    fn open_source(&mut self, o: &ObjectInfo) {
-        self.open_source_kind(o, o.kind, format!("{}.sql", o.name), 0);
+    /// ★ 사용자의 소스 열기(T-514): 바로 요청하지 않고 호스트에 묻는다 — 이미 열린 객체면 그 탭으로 · 아니면 호스트가
+    /// [`Explorer::request_source`]로 되돌려 보낸다. 오프라인이면 종전 길 그대로(안내만).
+    fn want_source(&mut self, o: &ObjectInfo, kind: ObjectKind) {
+        let title = if kind == ObjectKind::PackageBody {
+            format!("{}.body.sql", o.name)
+        } else {
+            format!("{}.sql", o.name)
+        };
+        if self.offline {
+            self.open_source_kind(o, kind, title, 0);
+            return;
+        }
+        self.actions.push(ExplorerAction::WantSource {
+            o: o.clone(),
+            kind,
+            title,
+            server: None,
+        });
     }
 
-    /// ★ 패키지 **본문** 열기(사용자 09-26 "Body는 어떻게 열고 수정하나") — `CREATE OR REPLACE PACKAGE BODY …`를 새 탭에 · 고쳐서 실행하면 컴파일.
-    fn open_body(&mut self, o: &ObjectInfo) {
-        self.open_source_kind(
-            o,
-            ObjectKind::PackageBody,
-            format!("{}.body.sql", o.name),
-            0,
-        );
+    /// 호스트가 되돌려 보낸 소스 요청(T-514 · 열린 탭이 없을 때) — 보통 열기와 한 길.
+    pub(crate) fn request_source(&mut self, o: &ObjectInfo, kind: ObjectKind, title: String) {
+        self.open_source_kind(o, kind, title, 0);
+    }
+
+    /// 소스 열기(스펙) — 패키지 **본문**(사용자 09-26 · `CREATE OR REPLACE PACKAGE BODY …`를 새 탭에 · 고쳐서 실행하면 컴파일)은
+    /// `want_source(o, PackageBody)`(같은 길 · 종류만 다르다).
+    fn open_source(&mut self, o: &ObjectInfo) {
+        self.open_source_kind(o, o.kind, format!("{}.sql", o.name), 0);
     }
 
     fn open_source_kind(&mut self, o: &ObjectInfo, kind: ObjectKind, title: String, token: u64) {
@@ -8997,7 +9030,7 @@ impl Explorer {
                         .round() as i32;
                 let glyph_w = (16.0 * self.scale).round() as i32;
                 let now = Instant::now();
-                let dbl = matches!(self.last_click, Some((j, t)) if j == i && now.duration_since(t).as_millis() < DBLCLICK_MS);
+                let dbl = matches!(self.last_click, Some((j, t)) if j == i && now.duration_since(t).as_millis() < self.dblclick_ms);
                 self.last_click = Some((i, now));
                 if dbl {
                     self.last_click = None;
@@ -9583,12 +9616,12 @@ impl Explorer {
             "select" => self.activate(i),
             // 🔧 뷰의 "소스 열기"가 행 조회(SELECT 템플릿)로 가던 결함(09-30): 관계형이라도 메뉴가 소스면 소스.
             "source" => match self.nodes[i].kind.clone() {
-                NodeKind::Object(o) if o.kind.has_source() => self.open_source(&o),
+                NodeKind::Object(o) if o.kind.has_source() => self.want_source(&o, o.kind),
                 _ => self.activate(i),
             },
             "body" => {
                 if let NodeKind::Object(o) = self.nodes[i].kind.clone() {
-                    self.open_body(&o);
+                    self.want_source(&o, ObjectKind::PackageBody);
                 }
             }
             "import" => {

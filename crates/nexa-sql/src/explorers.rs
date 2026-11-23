@@ -206,6 +206,8 @@ pub(crate) struct ExplorerSet {
     source_qualify: bool,
     /// SELECT 템플릿 인용 정책(`editor.quote_idents` = always · 10-08).
     quote_always: bool,
+    /// 더블클릭 판정 시간(설정 `ui.dblclick_ms` · 새 칸에도 적용).
+    dblclick_ms: u128,
     schema_opts: nsql_catalog::SchemaOpts,
     /// ★ 검색 인덱스 설정(84 §5 · 새 칸에도 준다).
     index_cfg: crate::explorer::IndexCfg,
@@ -265,6 +267,7 @@ impl ExplorerSet {
             gen_opts: nsql_catalog::GenOpts::default(),
             source_qualify: true,
             quote_always: false,
+            dblclick_ms: 400,
             schema_opts: nsql_catalog::SchemaOpts::default(),
             index_cfg: crate::explorer::IndexCfg::default(),
             filter_expand: false,
@@ -300,6 +303,7 @@ impl ExplorerSet {
         ex.set_gen_opts(self.gen_opts);
         ex.set_source_qualify(self.source_qualify);
         ex.set_quote_always(self.quote_always);
+        ex.set_dblclick_ms(self.dblclick_ms);
         ex.set_schema_opts(self.schema_opts);
         ex.set_index_cfg(self.index_cfg);
         ex.set_filter_expand(self.filter_expand);
@@ -634,6 +638,14 @@ impl ExplorerSet {
         self.quote_always = on;
         for p in &mut self.panes {
             p.ex.set_quote_always(on);
+        }
+    }
+
+    /// 더블클릭 판정 시간(설정 `ui.dblclick_ms`) — 열린 칸 전부 + 뒤에 여는 칸.
+    pub(crate) fn set_dblclick_ms(&mut self, ms: u128) {
+        self.dblclick_ms = ms.max(1);
+        for p in &mut self.panes {
+            p.ex.set_dblclick_ms(ms);
         }
     }
 
@@ -1286,6 +1298,20 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         (ex.source_ready(), ex.is_offline())
     }
 
+    /// 호스트가 되돌려 보내는 보통 소스 요청(T-514 · [`Explorer::request_source`]) — 그 서버 칸(모르면 지금 칸)으로.
+    pub(crate) fn request_source(
+        &mut self,
+        spec: Option<&ConnectSpec>,
+        o: &nsql_catalog::ObjectInfo,
+        kind: nsql_catalog::ObjectKind,
+        title: String,
+    ) {
+        match spec.and_then(|s| self.find(s)) {
+            Some(i) => self.panes[i].ex.request_source(o, kind, title),
+            None => self.cur_mut().request_source(o, kind, title),
+        }
+    }
+
     /// 표식이 달린 소스 요청(T-513 · [`Explorer::reload_source_tok`]) — 그 서버 칸(없으면 지금 칸)으로. 반환 = 보냈는가.
     pub(crate) fn reload_source_tok(
         &mut self,
@@ -1924,6 +1950,15 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                         out.push(ExplorerAction::Preview {
                             spec,
                             r,
+                            server: p.key.clone(),
+                        });
+                    }
+                    // 소스를 열려는 뜻(T-514) = 이 칸의 서버를 채워 호스트로.
+                    ExplorerAction::WantSource { o, kind, title, .. } => {
+                        out.push(ExplorerAction::WantSource {
+                            o,
+                            kind,
+                            title,
                             server: p.key.clone(),
                         });
                     }

@@ -1648,6 +1648,16 @@ impl App {
         let tab = self.editors.active_id();
         if tab != self.ext_last_tab {
             self.ext_last_tab = tab;
+            // ★ 활성 탭이 바뀌었다 = 키 포커스를 새 탭 기준으로 다시 맞춘다(사용자 11-23): AI 분할 창의 키 포커스는 탭을 넘어
+            //   따라가지 않고(새 탭에서는 편집기 본문이 받는다), 새 탭 글 상자의 포커스 여부도 앞 탭 것을 물려받지 않고
+            //   `set_focus` 한 곳의 판정을 따른다.
+            if self.ai.side_focus {
+                self.ai.side_focus = false;
+                if !self.ai_view_active() {
+                    self.ai_view.set_focused(false);
+                }
+            }
+            self.set_focus(self.focus);
             self.vars_win_context();
             self.ext_check(false);
             self.ext_banner_sync();
