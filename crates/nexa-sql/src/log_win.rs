@@ -48,10 +48,51 @@ struct LineMeta {
     breaks: Vec<usize>,
 }
 
-/// 스위치 툴팁까지 머무는 시간(ms).
-const TIP_MS: u128 = 600;
+/// ★ 로그 창 조정값(T-66 · D-515 · 접속 창 `ConnTuning`과 같은 방식): 구현 상수를 한곳에 모아 비노출 설정 `log.*`에서
+/// 채운다(`main.rs::log_tuning`). 기본값 = 종전 상수 그대로(값 불변 · 시험 `tuning_defaults_match_registry`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct LogTuning {
+    /// 스위치 툴팁까지 머무는 시간(ms).
+    pub tip_ms: u128,
+    /// 창 바깥 여백(논리 px).
+    pub pad: f32,
+    /// 줄 높이 = 글꼴 높이 + 이 값(논리 px · 본문·푸터 공통).
+    pub row_extra: f32,
+    /// 스위치 트랙 기본 폭(배율 `log.switch_scale` 적용 전 · 논리 px).
+    pub switch_track_w: f32,
+    /// 스위치마다 앞 여백(논리 px).
+    pub switch_gap: f32,
+    /// 스위치 라벨 뒤 여분(논리 px).
+    pub switch_label_extra: f32,
+    /// 휠 스크롤 양을 나누는 값.
+    pub wheel_div: i32,
+    /// 처음 열 때의 창 크기(논리 px).
+    pub window_w: f64,
+    pub window_h: f64,
+    /// 우클릭 메뉴 글 폭의 하한(px).
+    pub menu_min_w: i32,
+}
+
+impl Default for LogTuning {
+    fn default() -> Self {
+        LogTuning {
+            tip_ms: 600,
+            pad: 6.0,
+            row_extra: 4.0,
+            switch_track_w: 20.0,
+            switch_gap: 3.0,
+            switch_label_extra: 14.0,
+            wheel_div: 3,
+            window_w: 592.0,
+            window_h: 320.0,
+            menu_min_w: 160,
+        }
+    }
+}
 
 pub(crate) struct LogWin {
+    /// 조정값(T-66 · 비노출 설정 `log.*`).
+    tuning: LogTuning,
     window: Option<Rc<Window>>,
     /// 창 기하 기억(`wingeom::Memo`): 기록 위치·크기(같은 모니터일 때만 씀) · 마지막 닫힌 (위치, 크기).
     memo: crate::wingeom::Memo,
@@ -152,6 +193,7 @@ impl LogWin {
 
     pub(crate) fn new(format: &str) -> Self {
         LogWin {
+            tuning: LogTuning::default(),
             window: None,
             memo: crate::wingeom::Memo::default(),
 
@@ -430,7 +472,7 @@ impl LogWin {
             y,
             items,
             host,
-            (self.row_h * 10).max(160),
+            (self.row_h * 10).max(self.tuning.menu_min_w),
         );
         self.redraw();
     }
@@ -519,6 +561,11 @@ impl LogWin {
             }
             _ => LogWinAction::None,
         }
+    }
+
+    /// 조정값 주입(T-66 · 기동 때 한 번 · 비노출 설정 `log.*`).
+    pub(crate) fn set_tuning(&mut self, t: LogTuning) {
+        self.tuning = t;
     }
 
     /// 푸터 스위치 크기(설정 `log.switch_scale` % · 글자에 비례해 작게).
@@ -791,7 +838,7 @@ impl LogWin {
         !self.tip_shown
             && self
                 .sw_hover
-                .is_some_and(|(_, since)| since.elapsed().as_millis() >= TIP_MS)
+                .is_some_and(|(_, since)| since.elapsed().as_millis() >= self.tuning.tip_ms)
     }
 
     /// 호스트의 타이머 유지 조건 — 툴팁을 기다리는 중.
@@ -836,7 +883,7 @@ impl LogWin {
                 dy: 0,
                 owner,
                 memo: Some(&self.memo),
-                default_size: (592.0, 320.0),
+                default_size: (self.tuning.window_w, self.tuning.window_h),
                 ime: false,
             },
         ) else {
@@ -1083,11 +1130,11 @@ impl LogWin {
                 if !self.bars_event(&ev) {
                     match ev {
                         InputEvent::Wheel { delta: px } => {
-                            let y = self.scroll_y - px / 3;
+                            let y = self.scroll_y - px / self.tuning.wheel_div.max(1);
                             self.set_scroll(y);
                         }
                         InputEvent::HWheel { delta: px } => {
-                            let x = self.scroll_x + px / 3;
+                            let x = self.scroll_x + px / self.tuning.wheel_div.max(1);
                             self.set_scroll_x(x);
                         }
                         _ => {}
@@ -1398,8 +1445,9 @@ impl LogWin {
             let mut dc = RasterCtx::new(&mut gfx, font, s).with_fonts(prefs);
             dc.fill_rect(Rect::new(0, 0, wi, hi), th.panel_bg);
             dc.select_font(FontSlot::Base, false);
-            let pad = (6.0 * s).round() as i32;
-            let row_h = dc.text_height() + (4.0 * s).round() as i32;
+            let tun = self.tuning;
+            let pad = (tun.pad * s).round() as i32;
+            let row_h = dc.text_height() + (tun.row_extra * s).round() as i32;
             self.row_h = row_h;
             self.view_w = wi;
             // 헤더(고정 · 스크롤과 무관)
@@ -1416,7 +1464,7 @@ impl LogWin {
             self.header_h = y;
             // 푸터(스위치 · 위치 표시) 한 줄은 본문에서 뺀다 — 높이는 푸터 글꼴 기준.
             dc.set_fonts(footer_prefs);
-            let footer_row_h = dc.text_height() + (4.0 * s).round() as i32;
+            let footer_row_h = dc.text_height() + (tun.row_extra * s).round() as i32;
             dc.set_fonts(prefs);
             dc.select_font(FontSlot::Base, false);
             self.view_h = hi - footer_row_h - pad;
@@ -1555,7 +1603,7 @@ impl LogWin {
             let mut inv = Invalidations::default();
             let mut x = pad / 2;
             let sep_gap = pad;
-            let track_w = (20.0 * self.switch_mult * s).round() as i32;
+            let track_w = (tun.switch_track_w * self.switch_mult * s).round() as i32;
             for (i, (sw, msg)) in [
                 (&mut self.wrap_switch, Msg::LblLogSwWrap),
                 (&mut self.newest_switch, Msg::LblLogSwSort),
@@ -1575,10 +1623,11 @@ impl LogWin {
                     x += sep_gap;
                 }
                 // 스위치 앞 3px 여백(사용자 09-16).
-                x += (3.0 * s).round() as i32;
+                x += (tun.switch_gap * s).round() as i32;
                 sw.set_scale(s);
                 // 트랙(배율) + 간격 + 라벨 폭 + 여백 — Switch는 폭을 스스로 재지 않는다.
-                let w = track_w + dc.text_width(t(msg)) + (14.0 * s).round() as i32;
+                let w =
+                    track_w + dc.text_width(t(msg)) + (tun.switch_label_extra * s).round() as i32;
                 sw.set_bounds(Rect::new(x, fy + 2, w, footer_row_h + pad - 2), &mut inv);
                 sw.paint(&mut dc, th);
                 x += w;

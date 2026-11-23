@@ -3246,6 +3246,37 @@ mod bm_gutter_tests {
     }
 }
 
+/// 로그 창 조정값(T-66 · 비노출 설정 `log.*` → [`log_win::LogTuning`]) — 순수 변환(범위는 레지스트리가 지킨다).
+fn log_tuning(settings: &Settings) -> log_win::LogTuning {
+    let i = |k: &str| settings.int(k);
+    log_win::LogTuning {
+        tip_ms: i("log.tip_ms").max(0) as u128,
+        pad: i("log.pad").max(0) as f32,
+        row_extra: i("log.row_extra").max(0) as f32,
+        switch_track_w: i("log.switch_track_w").max(1) as f32,
+        switch_gap: i("log.switch_gap").max(0) as f32,
+        switch_label_extra: i("log.switch_label_extra").max(0) as f32,
+        wheel_div: i("log.wheel_div").max(1) as i32,
+        window_w: i("log.window_w").max(200) as f64,
+        window_h: i("log.window_h").max(120) as f64,
+        menu_min_w: i("log.menu_min_w").max(0) as i32,
+    }
+}
+
+#[cfg(test)]
+mod tuning_tests {
+    use super::*;
+
+    /// ★ T-66 값 불변: 조정값 구조체의 기본값 = 레지스트리 기본값(설정 파일이 없을 때의 변환 결과) — 둘이 어긋나면
+    /// 기동 뒤 동작이 코드 기본값과 달라진다(접속 창 `port_w` 58 ↔ 72의 전례).
+    #[test]
+    fn tuning_defaults_match_registry() {
+        // 없는 파일 = 레지스트리 기본값만(실제 설정 폴더를 읽지 않는다).
+        let s = Settings::open(std::path::PathBuf::from("__tuning_test_nonexistent__.conf"));
+        assert_eq!(log_tuning(&s), log_win::LogTuning::default());
+    }
+}
+
 fn conn_tuning(settings: &Settings) -> conn_win::ConnTuning {
     let i = |k: &str| settings.int(k);
     conn_win::ConnTuning {
