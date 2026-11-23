@@ -220,6 +220,7 @@ MouseDown 때 누른 영역(`area_at`)을 기억하고, 그 영역 밖의 MouseM
 - ★ **툴바 글자 항목(10-01)**: 글이 바뀌는 항목(`ToolItem::text` + `set_item_label`)은 그룹 사각형이 낡는다 — nexa-ctl `ToolDock`이 paint에서 감지해 `relayout_if_stale`로 재배치하므로 호스트는 paint 뒤 그 함수를 한 번 부른다(`app/paint.rs`). 새 글자 항목을 넣을 때 **글이 길어진 뒤 클릭이 닿는지** 실기 1회.
 
 - ★ **스크립트 엔진 메시지 = `tr!` 영어 기본 + 호스트 `set_lang`(10-17 · T-369)**: nsql-script는 의존 0이라 `nsql-i18n::Msg`를 못 쓴다 → 사용자에게 보이는 엔진 메시지는 `tr!(영어, 한국어)`로 쓰고, 언어는 호스트(GUI 기동·언어 전환 · nsql-cli)가 `nsql_script::set_lang`으로 정한다 · 새 엔진 메시지에 한국어 리터럴만 넣지 않는다.
+- ★ **CLI "필드 이름 줄" = 영어 고정(11-23 사용자 · D-516 · T-37 종결)**: `nsql` 출력에서 **필드 이름 + 값** 꼴의 줄(예 `license status`·`installed`·`exported` · driver 목록의 같은 꼴)은 기계가 읽는 필드 이름이라 `Msg`로 옮기지 않고 영어로 둔다 · 사람에게 하는 문장(안내 · 오류 · 확인)은 그대로 `Msg`.
 
 - ★ **C 라이브러리가 프로세스 로캘을 보는 자리 = 호출 전에 LC_CTYPE을 UTF-8로 보정(10-24)**: Rust 프로세스는 `setlocale`을 부르지 않아 **늘 C 로캘**이라고 전제한다 → 로캘을 보고 글자를 바꾸는 C 코드(외부 명령 `pbcopy`/`pbpaste` = [journal 10-16 §13](journal/2026-10-16.md) · ODBC 벤더 드라이버의 UTF-16 메시지 = [journal 10-24 §1](journal/2026-10-24.md))를 부르기 전에 보정한다 — 패턴 = nsql-driver-odbc `ensure_utf8_ctype()`(유닉스 · 프로세스 1회 · **LC_CTYPE만** · 후보 `""` → `C.UTF-8` → `en_US.UTF-8` → `UTF-8` · 순수 판정 `is_utf8_locale` + 시험) · 외부 명령은 `LC_ALL=en_US.UTF-8` 환경으로 띄운다(`clipboard.rs` `imp::cmd`).
 
