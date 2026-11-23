@@ -1610,6 +1610,46 @@ cells={n}
         // ★ 자체 시험(10-01 ㉗-j): 활성 탭에 파일 내용을 붙여 넣는다(사용자 재현 순서 "새 편집창 → 쿼리 붙여넣기" · 키 주입 0).
         // ★ 자체 시험(T-115 판정용 · 11-23): `editor.key:Enter` = 활성 편집기에 Enter 키 사건(자동 들여쓰기 길 — 붙여넣기는 그 길을
         //   타지 않는다). 주입이 아니라 컨트롤에 사건을 직접 준다(OS 입력 0).
+        // ★ 자체 시험(T-516 판정용 · 11-23): `focus.dump:<파일>` = 키 포커스 상태 한 벌 · `focus.type:<글>` = **지금 키를 받는
+        //   글 상자**(`focused_textbox` — IME 확정 글자와 같은 길)에 글자 사건을 준다(`editor.paste`·`editor.key`는 활성 편집기에
+        //   바로 주므로 포커스가 엉뚱한 곳에 남은 결함을 못 본다). OS 입력 0.
+        if let Some(path) = id.strip_prefix("focus.dump:") {
+            let target = match self.focus {
+                Focus::Editor if self.ext_view_active() => "ext_view",
+                Focus::Editor if self.ai_view_active() || self.ai.side_focus => "ai_view",
+                Focus::Editor => "editor",
+                _ => "other",
+            };
+            let out = format!(
+                "focus={:?}
+side_focus={}
+side_on={}
+ai_view_tab={}
+editor_focused={}
+key_target={}
+tab={}
+",
+                self.focus,
+                self.ai.side_focus,
+                self.ai_side_on(),
+                self.ai_view_active(),
+                self.editors.cur().is_focused(),
+                target,
+                self.editors.active(),
+            );
+            let _ = std::fs::write(path, out);
+            return;
+        }
+        if let Some(text) = id.strip_prefix("focus.type:") {
+            let mut inv = nexa_ctl::Invalidations::default();
+            if let Some(tb) = self.focused_textbox() {
+                for c in text.chars().filter(|c| !c.is_control()) {
+                    tb.on_event(&nexa_ctl::InputEvent::Char { c, now_ms: 0 }, &mut inv);
+                }
+            }
+            self.redraw();
+            return;
+        }
         if id == "editor.key:Enter" {
             let mut inv = nexa_ctl::Invalidations::default();
             self.editors.cur_mut().on_event(
