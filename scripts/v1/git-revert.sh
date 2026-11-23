@@ -13,7 +13,7 @@ GM=$(v1_m "$R/g.sql"); DM=$(v1_m "$R/d.sql"); O=$(v1_m "$V1_OUT")
 G0=$(md5sum < "$R/g.sql"); D0=$(md5sum < "$R/d.sql")
 # 기동 1회 = 새 격리 홈(미저장 본문 hot exit가 다음 기동에 새지 않게) · <태그> <명령 목록(open 뒤)>
 rv() { local tag=$1 file=$2 cmds=$3
-  v1_home en; v1_set "statusbar.git_secs=1" "editor.git_gutter=on"
+  v1_home en; v1_set "statusbar.git_secs=1" "editor.git_gutter=on" ${RV_SET:-}
   v1_gui "$tag" "open:$file,@after:3500:$cmds" 25
   rm -rf "$V1_HOME"; V1_HOME=""
 }
@@ -69,5 +69,37 @@ expect "r8-reopened-korean" "$V1_OUT/rv8-ed0.txt" "한글 둘 고침"
 if LC_ALL=C grep -q $'�' "$V1_OUT/rv8-ed.txt" 2>/dev/null; then v1_failmsg "r8-no-replacement-char" "본문에 U+FFFD"; else v1_pass "r8-no-replacement-char"; fi
 expect_eq "r8-body-unchanged-by-revert" "$(tail -n +2 "$V1_OUT/rv8-ed.txt" 2>/dev/null | md5sum)" "$(tail -n +2 "$V1_OUT/rv8-ed0.txt" 2>/dev/null | md5sum)"
 for t in rv6 rv7 rv8; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
+# ── C-1 되돌리기 진입점 둘(D-520 · 11-23 d83b8543) ──
+#   r9  팝업 [되돌리기]: `git.popup:7` → 열림 · line=7 · 버튼 글 있음 → `githunk.revert`(버튼과 같은 함수) → 본문 = HEAD · 팝업 닫힘 → undo 한 번 = 고친 글
+#   r9b 팝업을 연 뒤 본문을 바꾸면(editor.paste) 판이 달라져 되돌리지 않고 안내 · 본문의 7행 고친 글 그대로
+#   r10 거터 우클릭 `gutter.menu:7` → 메뉴 마지막 = bmg.git_revert → 고르면 본문 = HEAD
+#   r10b 변경 없는 줄(2행) 메뉴 → 항목은 있으나 고르면 본문 불변(비활성 · menudump는 활성 여부를 못 보임)
+#   r10c bookmark.enabled=off → 메뉴 = bmg.git_revert 하나
+echo "-- pasted" > "$WK/p.txt"; PM=$(v1_m "$WK/p.txt")
+rv rv9 "$GM" "git.popup:7,@after:3800:githunk.dump:$O/rv9-p0.txt,@after:3900:githunk.revert,@after:4200:editor.dump:$O/rv9-ed.txt,@after:4300:githunk.dump:$O/rv9-p1.txt,@after:4500:edit.undo,@after:4800:editor.dump:$O/rv9-ed2.txt,@after:5200:file.exit,@after:5700:toolbar.pick:project.exit_skip"
+expect "r9-popup-open" "$V1_OUT/rv9-p0.txt" "open=true"
+expect "r9-popup-line-7" "$V1_OUT/rv9-p0.txt" "line=7"
+expect_re "r9-btn-label" "$V1_OUT/rv9-p0.txt" '^btn_label=.+'
+expect "r9-body-head" "$V1_OUT/rv9-ed.txt" "SELECT 7 FROM dual;"
+expect_not "r9-body-no-edit" "$V1_OUT/rv9-ed.txt" "SELECT 77 FROM dual;"
+expect "r9-popup-closed" "$V1_OUT/rv9-p1.txt" "open=false"
+expect "r9-undo-brings-edit" "$V1_OUT/rv9-ed2.txt" "SELECT 77 FROM dual;"
+rv rv9b "$GM" "git.popup:7,@after:3800:editor.paste:$PM,@after:4000:githunk.revert,@after:4300:status.dump:$O/rv9b-st.txt,@after:4500:editor.dump:$O/rv9b-ed.txt,@after:4600:githunk.dump:$O/rv9b-p.txt,@after:5000:file.exit,@after:5500:toolbar.pick:project.exit_skip"
+expect "r9b-pasted" "$V1_OUT/rv9b-ed.txt" "-- pasted"
+expect "r9b-edit-kept" "$V1_OUT/rv9b-ed.txt" "SELECT 77 FROM dual;"
+expect "r9b-status-notice" "$V1_OUT/rv9b-st.txt" "No git change at the cursor line"
+expect "r9b-popup-closed" "$V1_OUT/rv9b-p.txt" "open=false"
+rv rv10 "$GM" "gutter.menu:7,@after:3800:toolbar.menudump:$O/rv10-m.txt,@after:3900:toolbar.pick:bmg.git_revert,@after:4200:editor.dump:$O/rv10-ed.txt,@after:4600:file.exit,@after:5100:toolbar.pick:project.exit_skip"
+expect_eq "r10-menu-last-git-revert" "$(grep -v '^$' "$V1_OUT/rv10-m.txt" 2>/dev/null | tail -1)" "bmg.git_revert"
+expect_re "r10-menu-has-bookmark" "$V1_OUT/rv10-m.txt" '^bmg\.(toggle|set|add)'
+expect "r10-body-head" "$V1_OUT/rv10-ed.txt" "SELECT 7 FROM dual;"
+expect_not "r10-body-no-edit" "$V1_OUT/rv10-ed.txt" "SELECT 77 FROM dual;"
+rv rv10b "$GM" "gutter.menu:2,@after:3800:toolbar.menudump:$O/rv10b-m.txt,@after:3900:toolbar.pick:bmg.git_revert,@after:4200:editor.dump:$O/rv10b-ed.txt,@after:4600:file.exit,@after:5100:toolbar.pick:project.exit_skip"
+expect "r10b-menu-has-item" "$V1_OUT/rv10b-m.txt" "bmg.git_revert"
+expect "r10b-body-unchanged" "$V1_OUT/rv10b-ed.txt" "SELECT 77 FROM dual;"
+RV_SET="bookmark.enabled=off" rv rv10c "$GM" "gutter.menu:7,@after:3800:toolbar.menudump:$O/rv10c-m.txt,@after:4200:file.exit"
+expect_eq "r10c-menu-only-git" "$(grep -v '^$' "$V1_OUT/rv10c-m.txt" 2>/dev/null | tr '\n' '|')" "bmg.git_revert|"
+expect_eq "r-disk-g-untouched-2" "$(md5sum < "$R/g.sql")" "$G0"
+for t in rv9 rv9b rv10 rv10b rv10c; do expect_not "$t-no-panic" "$V1_OUT/$t.stderr" "panicked"; done
 rm -rf "$WK"
 v1_done

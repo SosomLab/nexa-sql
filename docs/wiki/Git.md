@@ -19,4 +19,9 @@ In the Command Palette (Ctrl+Shift+P) under **Edit** · you can give them a key 
 | Next git change / Previous git change | `git.next_hunk` · `git.prev_hunk` | Moves the cursor to the next/previous changed block (wraps around) · "No git changes in this tab" if there is none |
 | Revert git change at cursor | `git.revert_hunk` | Puts the HEAD text back for the changed block under the cursor — **one Undo step**, so Ctrl+Z brings your edit back · the file is **not saved** until you save it |
 
+You can also revert a change with the mouse — both do the same as the command above (one Undo step · not saved):
+
+- **[Revert] button in the change popup** — click a mark in the gutter band, then **Revert** at the right of the popup's top line. The popup closes and that change goes back to the HEAD text. If you edited the text after opening the popup, nothing is reverted and the status bar tells you (the lines may have moved). Read-only tabs have no button.
+- **Right-click the gutter → Revert This Change** — the last item of the gutter menu (after a separator). It is there when the git band is on, the file has a HEAD version and the tab can be edited, and it is enabled only on a changed line. The menu opens for this item even when bookmarks are off (`bookmark.enabled` = off — then it is the only item).
+
 Large files are compared line by line precisely: only the lines that really changed are marked, even in files of many thousands of lines.
