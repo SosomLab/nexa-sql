@@ -8929,7 +8929,18 @@ impl Explorer {
     }
 
     fn is_loading(&self) -> bool {
-        self.nodes.iter().any(|n| n.state == LoadState::Loading)
+        // 소스 요청이 진행 중일 때도 점 애니메이션을 돌린다(그 객체 행에 표시 · 사용자 11-24).
+        self.source_pending || self.nodes.iter().any(|n| n.state == LoadState::Loading)
+    }
+
+    /// 이 노드의 소스를 지금 읽는 중인가(더블클릭·"소스 열기" 뒤 답이 오기 전) — 행 오른쪽 끝에 점을 그린다.
+    /// 사용자 11-24 "더블클릭이 안 열리는 것 같다 · 느리지만 열린다": 답이 오기까지 표시가 상태줄 한 줄뿐이라 안 된 줄 알고
+    /// 다시 눌렀다.
+    fn source_busy(&self, n: &Node) -> bool {
+        self.source_pending
+            && self.source_token == 0
+            && matches!(&n.kind, NodeKind::Object(o)
+                if o.name.eq_ignore_ascii_case(&self.source_name) && o.extra == self.source_extra)
     }
 
     /// 호스트의 빠른 타이머(≈30ms)를 유지해야 하는가 — 스크롤바 · 호버 페이드 · 로딩 애니메이션.
@@ -9031,6 +9042,23 @@ impl Explorer {
                 let glyph_w = (16.0 * self.scale).round() as i32;
                 let now = Instant::now();
                 let dbl = matches!(self.last_click, Some((j, t)) if j == i && now.duration_since(t).as_millis() < self.dblclick_ms);
+                // ★ 진단(사용자 11-24 "더블클릭이 안 열린다"): 더블클릭이 **될 뻔했는데 안 된** 경우를 로그 창에 한 줄 — 간격 초과
+                //   (판정 시간의 3배 안) · 두 클릭 사이에 다른 행(행이 밀렸거나 다른 줄을 누름). 원인이 설정인지 화면 밀림인지 가린다.
+                if !dbl {
+                    if let Some((j, t0)) = self.last_click {
+                        let ms = now.duration_since(t0).as_millis();
+                        if j == i && ms < self.dblclick_ms * 3 {
+                            self.actions.push(ExplorerAction::Log(format!(
+                                "[explorer] double-click missed: {ms} ms between clicks (limit {} ms · ui.dblclick_ms)",
+                                self.dblclick_ms
+                            )));
+                        } else if j != i && ms < self.dblclick_ms {
+                            self.actions.push(ExplorerAction::Log(format!(
+                                "[explorer] double-click missed: second click hit another row ({ms} ms)"
+                            )));
+                        }
+                    }
+                }
                 self.last_click = Some((i, now));
                 if dbl {
                     self.last_click = None;
@@ -10138,8 +10166,16 @@ impl Explorer {
                         dc.select_font(FontSlot::Base, false);
                         right = cr.right();
                     }
+                    // ★ 소스 읽는 중(사용자 11-24): 그 행 오른쪽 끝에 움직이는 점(용량 글 자리 · 읽는 동안은 용량 대신).
+                    let busy = self.source_busy(&self.nodes[*i]);
+                    if busy {
+                        let dots = "•".repeat(1 + (self.dots_step % 3) as usize);
+                        let w = dc.text_width("•••");
+                        let dx = rr.right() - (10.0 * s).round() as i32 - w;
+                        dc.text(dx, ty, rr, &dots, th.accent);
+                    }
                     // ★ 용량(사용자 09-30 · DBeaver식): 행 오른쪽 끝에 흐리게 · 라벨과 겹치면 생략.
-                    if let Some((sz, unit, partial)) = size_txt {
+                    if let Some((sz, unit, partial)) = size_txt.filter(|_| !busy) {
                         // 보조(Status) 글꼴보다 1pt(≈1.33px) 더 작게(사용자 09-30) · 단위별 색(텍스트 색만).
                         //   증분 = 논리 px(배율은 그리기 쪽이 곱한다 · 10-02 — 여기서 또 곱하면 2배율에서 두 배로 줄어든다).
                         dc.select_font_sized(FontSlot::Status, false, -(4.0 / 3.0));
