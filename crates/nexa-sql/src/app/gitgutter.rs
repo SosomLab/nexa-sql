@@ -129,11 +129,18 @@ impl App {
     /// (`replace_range` = 되돌리기 한 단계 · Ctrl+Z로 복구) · 디스크 파일·git 저장소는 건드리지 않는다(저장은 사용자가). 읽기 전용 탭 ·
     /// 뷰 탭 · HEAD를 아직 못 받은 탭 · 덩어리 밖의 캐럿 = 아무것도 바꾸지 않고 상태줄 안내.
     pub(crate) fn git_revert_hunk(&mut self) {
+        let line = self.editors.cur().caret_line();
+        self.git_revert_hunk_at(line);
+    }
+
+    /// 작업본 줄 `line`(0기준)의 덩어리를 되돌린다 — 캐럿 명령 · 덩어리 팝업 [되돌리기] · 거터 우클릭 "이 변경 되돌리기"가
+    /// 함께 쓰는 한 길(D-520 · 11-23 · 거절 조건·안내도 같다).
+    pub(crate) fn git_revert_hunk_at(&mut self, line: usize) {
         let edit = if self.editors.is_view_tab_active() || self.editors.cur().is_read_only() {
             None
         } else {
             let tb = self.editors.cur();
-            let (line, work) = (tb.caret_line(), tb.text());
+            let work = tb.text();
             let head = self.git.info().and_then(|g| g.head.clone());
             // ★ HEAD 본문은 UTF-8로만 읽는다(`git show` 출력) — 다른 인코딩의 파일은 한글이 U+FFFD로 깨져 있다. 거터 표시는
             //   틀려도 해가 없지만 되돌리기는 그 글자를 **버퍼에 써넣으므로** 거부하고 알린다(검토 11-23 · 데이터 보호).

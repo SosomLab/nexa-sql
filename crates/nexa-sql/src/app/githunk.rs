@@ -1,13 +1,15 @@
 //! App — git 덩어리 diff 팝업(C-1 후속 · docs/19 §2 M3 "hunk diff 팝업" · 11-10 1차): 거터 git 띠의 덩어리를 **좌클릭**하면 그
 //! 덩어리의 HEAD/작업본 조각(문맥 `editor.git_context`줄)을 편집기 위 팝업(2-pane [`diff_view::DiffView`])으로 보인다.
 //! 설정 `editor.git_popup`(기본 on) · Esc·바깥 클릭 = 닫기(팝업 비트 512 · 배타 규칙 61 §2-2-b) · 팝업 안 포인터·휠은 뷰어가 받는다.
-//! 되돌리기 = 캐럿 줄 명령 `git.revert_hunk`(`gitgutter.rs` · 11-22 · 팝업 안 버튼은 없다) · 상태줄 ahead/behind는 2차(19 §2 나머지).
+//! 되돌리기 = 캐럿 줄 명령 `git.revert_hunk`(`gitgutter.rs` · 11-22) + ★ 팝업 머리 줄 오른쪽 [되돌리기] 버튼(D-520 · 11-23 ·
+//! 누르면 그 덩어리를 되돌리고 팝업을 닫는다) + 거터 우클릭 "이 변경 되돌리기"(`bookmarks.rs`) · 상태줄 ahead/behind는 2차.
 
 use crate::*;
 use nexa_ctl::diff;
 use nexa_ctl::draw::DrawCtx;
 use nexa_ctl::geom::place_popup_beside;
 use nexa_ctl::theme::Theme;
+use nexa_ctl::{Button, Control};
 use std::ops::Range;
 
 /// 전체 정렬(LCS)의 상한 — 이보다 긴 본문은 팝업 대신 상태줄 안내(클릭 때만 도는 계산이지만 큰 파일은 피한다).
@@ -23,9 +25,51 @@ pub(crate) struct GitHunkPopup {
     open: bool,
     /// 열 때 쓴 (행 수 · 줄 높이 · 배율) — 첫 그리기 뒤 칸의 실제 줄 높이가 다르면 높이를 다시 맞춘다(협업 V1 11-10 "셋째 문맥 줄 한 줄 모자람").
     fit: (i32, i32, f32),
+    /// ★ [되돌리기] 버튼(D-520) — 처음 열 때 만든다 · 라벨은 열 때마다 다시 단다(언어 전환).
+    btn: Option<Button>,
+    /// 이 팝업이 가리키는 덩어리: (탭 번호 · 작업본 줄 0기준 · 열 때의 본문 판) — 버튼을 누를 때 탭·판이 같을 때만 되돌린다.
+    target: Option<(usize, usize, u64)>,
 }
 
 impl GitHunkPopup {
+    /// 버튼 fade(hover) 진행 — 다시 그릴 것이 있으면 true.
+    pub(crate) fn tick(&mut self, now_ms: u64) -> bool {
+        self.open && self.btn.as_mut().is_some_and(|b| b.tick(now_ms))
+    }
+
+    /// 머리 줄 오른쪽의 버튼 자리(폭 84 × 높이 20 · 오른쪽 여백 8).
+    fn btn_rect(&self) -> Rect {
+        let s = |v: f32| (v * self.fit.2).round() as i32;
+        let (w, h) = (s(84.0), s(20.0));
+        Rect::new(
+            self.rect.x + self.rect.w - w - s(8.0),
+            self.rect.y + s(2.0),
+            w,
+            h,
+        )
+    }
+
+    /// 자체 시험 덤프(`githunk.dump:<파일>`): 열림 · 가리키는 줄(1기준) · 팝업 사각형 · 버튼 사각형 + 뷰어 덤프.
+    pub(crate) fn dump(&self) -> String {
+        let r = self.rect;
+        let b = self.btn_rect();
+        format!(
+            "open={}\nline={}\nrect={},{},{},{}\nbtn={},{},{},{}\nbtn_label={}\n{}",
+            self.open,
+            self.target.map_or(0, |(_, l, _)| l + 1),
+            r.x,
+            r.y,
+            r.w,
+            r.h,
+            b.x,
+            b.y,
+            b.w,
+            b.h,
+            self.btn.as_ref().map_or("", |b| b.label()),
+            self.view.dump()
+        )
+    }
+
     pub(crate) fn is_open(&self) -> bool {
         self.open
     }
@@ -42,6 +86,11 @@ impl GitHunkPopup {
     pub(crate) fn close(&mut self) {
         self.open = false;
         self.view.set_focused(false);
+        self.target = None;
+        // 가려질 때 hover·눌림·포커스를 비운다(다음에 열 때 남아 보이지 않게 · UI 규칙).
+        if let Some(b) = self.btn.as_mut() {
+            b.clear_transient();
+        }
     }
 
     /// 팝업 층 그리기(테두리 1px + 뷰어 + 뷰어의 편집 메뉴).
@@ -62,6 +111,13 @@ impl GitHunkPopup {
         let b = self.rect;
         dc.fill_rect(Rect::new(b.x - 1, b.y - 1, b.w + 2, b.h + 2), th.border);
         self.view.paint(dc, th);
+        // [되돌리기] 버튼 = 머리 줄 오른쪽(뷰어 위 · 뷰어의 편집 메뉴보다는 아래).
+        let br = self.btn_rect();
+        if let Some(btn) = self.btn.as_mut() {
+            let mut inv = nexa_ctl::Invalidations::default();
+            btn.set_bounds(br, &mut inv);
+            btn.paint(dc, th);
+        }
         self.view.paint_popup(dc, th);
     }
 }
@@ -134,6 +190,16 @@ impl App {
         let Some(line) = tb.git_band_line_at(p) else {
             return false;
         };
+        self.git_hunk_open(line, p)
+    }
+
+    /// 작업본 줄 `line`(0기준)의 덩어리 팝업을 `p` 옆에 연다(거터 띠 클릭 · 자체 시험 `git.popup:<줄>`). 열었거나 안내했으면 true.
+    pub(crate) fn git_hunk_open(&mut self, line: usize, p: Point) -> bool {
+        let i = self.editors.active();
+        let Some(tb) = self.editors.tab_box(i) else {
+            return false;
+        };
+        let rev = tb.rev();
         let lh = tb.line_h().max(1);
         let work = tb.text();
         let Some(head) = self.git.info().and_then(|g| g.head.clone()) else {
@@ -193,11 +259,43 @@ impl App {
         let pos = place_popup_beside(p, avoid, (w, h), host);
         self.githunk.rect = Rect::new(pos.x, pos.y, w, h);
         self.githunk.fit = (rows_n, lh, self.scale);
+        // [되돌리기] 버튼: 읽기 전용 탭에는 두지 않는다(되돌릴 수 없다) · 머리 글은 버튼 폭만큼 자른다.
+        let editable = !self.editors.cur().is_read_only();
+        self.githunk.target = editable.then_some((i, line, rev));
+        if editable {
+            let label = t(Msg::BtnGitRevertHunk);
+            match self.githunk.btn.as_mut() {
+                Some(b) => b.set_label(label),
+                None => self.githunk.btn = Some(Button::new(label)),
+            }
+            self.githunk.view.set_head_reserve(s(84.0 + 16.0));
+        } else {
+            self.githunk.btn = None;
+            self.githunk.view.set_head_reserve(0);
+        }
         self.githunk.view.set_bounds(self.githunk.rect, self.scale);
         self.githunk.open = true;
         self.githunk.view.set_focused(true);
         self.redraw();
         true
+    }
+
+    /// 팝업 [되돌리기](D-520 · 버튼 클릭 · 자체 시험 `githunk.revert`): 팝업을 닫고, 열 때와 **같은 탭 · 같은 본문 판**일 때만
+    /// 그 줄의 덩어리를 되돌린다(그 사이 본문이 바뀌었으면 줄이 어긋날 수 있다 → 되돌리지 않고 안내).
+    pub(crate) fn git_hunk_revert_click(&mut self) {
+        let target = self.githunk.target;
+        self.githunk.close();
+        match target {
+            Some((tab, line, rev))
+                if self.editors.active() == tab && self.editors.cur().rev() == rev =>
+            {
+                self.git_revert_hunk_at(line);
+            }
+            _ => {
+                self.sess.status = t(Msg::StGitNoHunkAtCaret).into();
+                self.redraw();
+            }
+        }
     }
 
     /// 열린 덩어리 팝업의 사건: Esc = 닫기 · 팝업 안 포인터·휠 = 뷰어 · 바깥 클릭은 배타 규칙(`ctxmenu_exclusive_step`)이 닫는다.
@@ -221,9 +319,31 @@ impl App {
             | InputEvent::MouseMove { x, y }
                 if inside(*x, *y) =>
             {
-                if self.githunk.view.on_event(ev) {
-                    self.redraw();
+                // ★ [되돌리기] 버튼(D-520): 마우스는 커서 아래 컨트롤에만 — 버튼 위의 누름·놓음은 버튼이, 그 밖은 뷰어가 받는다.
+                //   이동은 둘 다 본다(버튼을 벗어나면 hover를 걷는다) · 눌린 채 밖에서 놓으면 버튼이 취소로 받는다.
+                let on_btn = self.githunk.btn_rect().contains(Point { x: *x, y: *y });
+                let mut inv = nexa_ctl::Invalidations::default();
+                let mut clicked = false;
+                let mut to_view = true;
+                if let Some(btn) = self.githunk.btn.as_mut() {
+                    let is_move = matches!(ev, InputEvent::MouseMove { .. });
+                    let is_up = matches!(ev, InputEvent::MouseUp { .. });
+                    if on_btn || is_move || (is_up && btn.is_pressed()) {
+                        btn.on_event(ev, &mut inv);
+                        // 포커스 링은 한 창에 하나 이하 — 버튼은 링을 갖지 않는다(키 포커스는 뷰어).
+                        btn.base_mut().focused = false;
+                        clicked = btn.take_clicked();
+                        to_view = !on_btn;
+                    }
                 }
+                if clicked {
+                    self.git_hunk_revert_click();
+                    return true;
+                }
+                if to_view {
+                    self.githunk.view.on_event(ev);
+                }
+                self.redraw();
                 true
             }
             InputEvent::Wheel { .. } if inside(self.cursor.0, self.cursor.1) => {

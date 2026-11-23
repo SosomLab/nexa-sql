@@ -413,9 +413,6 @@ impl App {
     /// 거터 우클릭(사용자 09-23): 활성 편집기의 거터(북마크/니모닉 영역 + 줄번호) 안이면 그 줄로 캐럿을 옮기고 상태에 맞는 메뉴를 연다.
     /// 열었으면 true(사건 소비) · 거터 밖이면 false(본문 우클릭 = 종전 편집 메뉴).
     pub(crate) fn open_bm_gutter_menu(&mut self, p: Point) -> bool {
-        if !self.bookmarks.enabled {
-            return false;
-        }
         // 뷰 탭(비교 diff 뷰어 · 확장 상세)은 자리 탭의 숨은 상자 위에 다른 것이 그려진다 → 그 거터 자리의 우클릭은 뷰의 몫.
         if self.editors.active_view().is_some() {
             return false;
@@ -430,15 +427,48 @@ impl App {
         // 마지막 줄 아래 빈 영역 = 줄 단위 항목(토글·니모닉) 없이 "북마크 보기"만(사용자 09-23).
         let on_text = !tb.below_text(p);
         let line = on_text.then(|| tb.line_at_point(p)).flatten();
+        self.open_bm_gutter_menu_at(line, p)
+    }
+
+    /// 거터 메뉴를 줄 `line`(0기준 · None = 마지막 줄 아래)에 대해 `p`에 연다(우클릭 · 자체 시험 `gutter.menu:<줄>`).
+    /// ★ git 변경 되돌리기(D-520 · 11-23): 그 줄이 git 변경 덩어리에 들면 "이 변경 되돌리기"가 활성 — git 거터가 켜져 있고
+    ///   HEAD 본문을 받은 편집 가능한 탭에서만 항목을 둔다. 북마크 기능이 꺼져 있어도 이 항목만으로 메뉴가 열린다.
+    pub(crate) fn open_bm_gutter_menu_at(&mut self, line: Option<usize>, p: Point) -> bool {
+        let i = self.editors.active();
+        let bm_on = self.bookmarks.enabled;
+        let git = line.and_then(|line| {
+            let tb = self.editors.tab_box(i)?;
+            let ok = self.settings.flag("editor.git_gutter")
+                && !tb.is_read_only()
+                && self.git.info().is_some_and(|g| g.head.is_some());
+            // 덩어리 = 띠가 그려진 줄 범위(반열림 · 삭제만인 덩어리는 그 아래 줄 하나 — 되돌리기의 판정과 같은 자리).
+            ok.then(|| tb.git_hunks().iter().any(|(a, b)| *a <= line && line < *b))
+        });
+        if !bm_on && git.is_none() {
+            return false;
+        }
         let state = line.map(|line| {
             self.editors.cur_mut().goto_line(line + 1);
-            let (bm, mn) = self.bookmarks.line_state(&self.editors, i, line);
+            let (bm, mn) = if bm_on {
+                self.bookmarks.line_state(&self.editors, i, line)
+            } else {
+                (None, None)
+            };
             (line, bm, mn)
         });
         self.bm_gutter = state.map(|(line, bm, _)| (i, line, bm));
         self.close_context_menus();
-        let used = self.bookmarks.used_mnemonics(&self.editors, i);
-        let items = bm_gutter_items(state.map(|(_, bm, mn)| (bm.is_some(), mn)), &used);
+        let used = if bm_on {
+            self.bookmarks.used_mnemonics(&self.editors, i)
+        } else {
+            Vec::new()
+        };
+        let items = bm_gutter_items(
+            state.map(|(_, bm, mn)| (bm.is_some(), mn)),
+            &used,
+            bm_on,
+            git,
+        );
         self.open_status_popup_w(Rect::new(p.x, p.y, 1, 1), items, 170.0);
         true
     }
@@ -503,6 +533,8 @@ impl App {
         self.editors.cur_mut().goto_line(line + 1);
         match rest {
             "toggle" => self.bookmark_cmd("bookmark.toggle"),
+            // ★ 이 줄의 git 변경 되돌리기(D-520) — 캐럿 명령·팝업 버튼과 한 길.
+            "git_revert" => self.git_revert_hunk_at(line),
             "mn:clear" => {
                 if let Some(id) = bm {
                     self.bookmarks.set_mnemonic(id, None);

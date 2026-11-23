@@ -30,6 +30,8 @@ pub(crate) struct DiffView {
     note: String,
     /// 마지막으로 사건을 받은 쪽(스크롤 동기의 주도권).
     last_side: bool,
+    /// 머리 줄 오른쪽에 비워 둘 폭(px · 담는 쪽의 버튼 자리 · 기본 0).
+    head_reserve: i32,
 }
 
 impl Default for DiffView {
@@ -51,6 +53,7 @@ impl Default for DiffView {
             labels: (String::new(), String::new()),
             note: String::new(),
             last_side: false,
+            head_reserve: 0,
         }
     }
 }
@@ -130,6 +133,11 @@ impl DiffView {
     }
 
     /// 머리글 덮어쓰기(기본 = `CompareHeadDiff2`의 DB 비교 문구 · hunk 팝업은 HEAD/편집기 범례로 바꾼다).
+    /// 머리 줄 오른쪽에 비워 둘 폭(px · 담는 쪽의 버튼 자리).
+    pub(crate) fn set_head_reserve(&mut self, px: i32) {
+        self.head_reserve = px.max(0);
+    }
+
     pub(crate) fn set_head(&mut self, head: String) {
         self.head = head;
     }
@@ -281,7 +289,8 @@ impl DiffView {
             format!(" · {}", self.note)
         };
         let head = format!("{}{pos}{note} · {}", self.head, t(Msg::CompareHeadKeys));
-        let clip = Rect::new(b.x, b.y, b.w, self.s(24.0));
+        // 머리 줄 오른쪽에 담는 쪽이 버튼을 두면 그 폭만큼 글을 자른다(`set_head_reserve` · 덩어리 팝업 [되돌리기]).
+        let clip = Rect::new(b.x, b.y, (b.w - self.head_reserve).max(0), self.s(24.0));
         dc.text(b.x + self.s(8.0), hy, clip, &head, th.text);
         // 상자 둘(동기 스크롤 · 색조).
         let (lr, rr) = self.pane_rects();

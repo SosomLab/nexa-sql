@@ -3085,11 +3085,19 @@ fn probe_policy(settings: &Settings) -> probe::ProbePolicy {
 /// `bmg.mn:clear`(니모닉이 있을 때만 · ★ 하위 메뉴가 아니라 "니모닉 ▸" **바로 밑** 최상위 항목 · 사용자 10-22).
 /// 마지막 줄 아래 빈 영역(`line = None`)에서는 "북마크 보기"만. `used` = 이 문서에서 쓰는 (니모닉, 줄 0기준) — 다른 북마크 것은
 /// "사용 중: N줄" 보조 글(사용자 10-22 · 고르면 호스트가 가져오기 확인).
+/// ★ `git`(D-520 · 11-23) = 그 줄의 git 변경 되돌리기 항목: None = 두지 않음 · Some(활성) = 맨 아래 구분선 뒤 `bmg.git_revert`.
+///   `bookmarks = false`(북마크 기능 꺼짐)면 북마크 항목 없이 git 항목만.
 fn bm_gutter_items(
     line: Option<(bool, Option<u8>)>,
     used: &[(u8, usize)],
+    bookmarks: bool,
+    git: Option<bool>,
 ) -> Vec<nexa_ctl::controls::ctxmenu::CtxItem> {
     use nexa_ctl::controls::ctxmenu::CtxItem;
+    let git_item = git.map(|en| CtxItem::maybe("bmg.git_revert", t(Msg::MnGitRevertHunkHere), en));
+    if !bookmarks {
+        return git_item.into_iter().collect();
+    }
     let mut out = vec![CtxItem::item("bmg.view", t(Msg::MnBookmarksPanel))];
     let Some((has_bm, mnemonic)) = line else {
         return out;
@@ -3116,6 +3124,9 @@ fn bm_gutter_items(
             mnemonic.is_some(),
         ),
     ]);
+    if let Some(it) = git_item {
+        out.extend([CtxItem::Separator, it]);
+    }
     out
 }
 
@@ -3141,15 +3152,15 @@ mod bm_gutter_tests {
                 _ => None,
             })
         };
-        let blank = bm_gutter_items(None, &[]);
+        let blank = bm_gutter_items(None, &[], true, None);
         assert_eq!(blank.len(), 1, "below text: view only");
         assert_eq!(enabled(&blank, "bmg.view"), Some(true));
-        let none = bm_gutter_items(Some((false, None)), &[]);
+        let none = bm_gutter_items(Some((false, None)), &[], true, None);
         assert_eq!(enabled(&none, "bmg.view"), Some(true));
         assert_eq!(enabled(&none, "bmg.toggle"), Some(true));
         assert_eq!(checked(&none, "bmg.toggle"), Some(false));
         assert_eq!(enabled(&none, "bmg.remove"), None, "no remove item");
-        let bm = bm_gutter_items(Some((true, None)), &[]);
+        let bm = bm_gutter_items(Some((true, None)), &[], true, None);
         assert_eq!(enabled(&bm, "bmg.toggle"), Some(true));
         assert_eq!(checked(&bm, "bmg.toggle"), Some(true));
         let sub = |items: &[CtxItem]| -> Vec<CtxItem> {
@@ -3170,7 +3181,7 @@ mod bm_gutter_tests {
             None,
             "not inside submenu"
         );
-        let with_mn = bm_gutter_items(Some((true, Some(3))), &[]);
+        let with_mn = bm_gutter_items(Some((true, Some(3))), &[], true, None);
         assert_eq!(enabled(&with_mn, "bmg.mn:clear"), Some(true));
         assert_eq!(sub(&with_mn).len(), 9, "1..9 only");
         let ids: Vec<&str> = with_mn
@@ -3186,7 +3197,29 @@ mod bm_gutter_tests {
             "clear right below the mnemonic submenu"
         );
         // 사용 중 보조 글(사용자 10-22): 다른 북마크의 번호에만 · 자기 것(✓)에는 없음.
-        let used = bm_gutter_items(Some((true, Some(3))), &[(3, 10), (5, 41)]);
+        // ★ git 변경 되돌리기(D-520): 맨 아래 · 덩어리 줄에서만 활성 · 북마크가 꺼져 있으면 그 항목만 · git 정보가 없으면 없음.
+        let ids_of = |items: &[CtxItem]| -> Vec<String> {
+            items
+                .iter()
+                .filter_map(|it| match it {
+                    CtxItem::Item { id, .. } => Some(id.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let g = bm_gutter_items(Some((false, None)), &[], true, Some(true));
+        assert_eq!(
+            ids_of(&g).last().map(String::as_str),
+            Some("bmg.git_revert")
+        );
+        assert_eq!(enabled(&g, "bmg.git_revert"), Some(true));
+        let g_off = bm_gutter_items(Some((false, None)), &[], true, Some(false));
+        assert_eq!(enabled(&g_off, "bmg.git_revert"), Some(false));
+        let only = bm_gutter_items(Some((false, None)), &[], false, Some(true));
+        assert_eq!(ids_of(&only), ["bmg.git_revert"]);
+        assert!(bm_gutter_items(Some((false, None)), &[], false, None).is_empty());
+        assert_eq!(enabled(&none, "bmg.git_revert"), None);
+        let used = bm_gutter_items(Some((true, Some(3))), &[(3, 10), (5, 41)], true, None);
         let sub_of = |items: &[CtxItem], id: &str| -> Option<String> {
             items.iter().find_map(|it| match it {
                 CtxItem::Item { id: i, sub, .. } if i == id => sub.clone(),

@@ -1613,6 +1613,42 @@ cells={n}
         // ★ 자체 시험(T-516 판정용 · 11-23): `focus.dump:<파일>` = 키 포커스 상태 한 벌 · `focus.type:<글>` = **지금 키를 받는
         //   글 상자**(`focused_textbox` — IME 확정 글자와 같은 길)에 글자 사건을 준다(`editor.paste`·`editor.key`는 활성 편집기에
         //   바로 주므로 포커스가 엉뚱한 곳에 남은 결함을 못 본다). OS 입력 0.
+        // ★ 자체 시험(D-520 판정용 · 11-23): `git.popup:<줄 1기준>` = 그 줄의 덩어리 팝업 · `githunk.dump:<파일>` = 팝업 상태 ·
+        //   `githunk.revert` = 팝업 [되돌리기] 버튼을 누른 것과 같은 함수 · `gutter.menu:<줄 1기준>` = 거터 우클릭 메뉴(항목은
+        //   `toolbar.menudump` · 고르기는 `toolbar.pick:bmg.git_revert`). 좌표 주입 없이 사용자 경로의 함수를 그대로 부른다.
+        if let Some(n) = id.strip_prefix("git.popup:") {
+            let line = n.trim().parse::<usize>().unwrap_or(1).saturating_sub(1);
+            let ed = self.editors.editor_bounds();
+            let lh = self.editors.cur().line_h().max(1);
+            let p = Point {
+                x: ed.x + 2,
+                y: ed.y + lh * (line as i32) + lh / 2,
+            };
+            self.git_hunk_open(line, p);
+            return;
+        }
+        if let Some(path) = id.strip_prefix("githunk.dump:") {
+            let _ = std::fs::write(path, self.githunk.dump());
+            return;
+        }
+        if id == "githunk.revert" {
+            if self.githunk.is_open() {
+                self.git_hunk_revert_click();
+            }
+            return;
+        }
+        if let Some(n) = id.strip_prefix("gutter.menu:") {
+            let line = n.trim().parse::<usize>().unwrap_or(1).saturating_sub(1);
+            let ed = self.editors.editor_bounds();
+            let lh = self.editors.cur().line_h().max(1);
+            let p = Point {
+                x: ed.x + 2,
+                y: ed.y + lh * (line as i32) + lh / 2,
+            };
+            self.open_bm_gutter_menu_at(Some(line), p);
+            self.redraw();
+            return;
+        }
         if let Some(path) = id.strip_prefix("focus.dump:") {
             let target = match self.focus {
                 Focus::Editor if self.ext_view_active() => "ext_view",
