@@ -10,4 +10,6 @@ expect_eq "external-8" "$(cnt '[Editors ▸ External changes]')" "8"
 expect_eq "find-7" "$(cnt '[Editors ▸ Find in Files]')" "7"
 LEFT=$(awk '$0=="[Editors ▸ Files]"{f=1;next} f&&/^\[/{exit} f' "$V1_OUT/config.txt" | grep -cE '^(file\.external_|search\.)')
 expect_eq "files-left-0" "$LEFT" "0"
+# 탐색기 더블클릭 판정 시간 기본 500 ms(11-23 저녁 975acb89 · 종전 400 · 탐색기도 이 키를 씀)
+expect_eq "dblclick-ms-500" "$(grep -E '^ui\.dblclick_ms ' "$V1_OUT/config.txt" | awk '{print $2}')" "500"
 v1_done

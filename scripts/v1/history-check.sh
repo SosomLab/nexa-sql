@@ -119,12 +119,18 @@ CREATE VIEW v2 AS SELECT 9 AS z;
 ' > "$WK/v2.sql"; v1_cli run -c lite --no-prompt "$(v1_m "$WK/v2.sql")" >/dev/null; }
 fresh; mkv2
 v1_gui hr8 "$OPEN,${C}@after:6000:tabs.dump:$O/hr-8a.txt,${C}@after:6200:edit.history_check,${C}@after:6230:explorer.select:v1,${C}@after:6260:explorer.pick:source,${C}@after:10000:tabs.dump:$O/hr-8b.txt,${C}@after:10200:status.dump:$O/hr-8s.txt,${C}@after:10400:log.dump:$O/hr-8log.txt,${C}@after:10700:file.exit,${C}@after:11200:toolbar.pick:project.exit_skip" 25 lite
-# 이미 열린 객체를 탐색기에서 다시 열면 원래 탭이 하나 더 열린다(앱 동작 · 11-23 첫 판에서 확인) → 같은 순서를 확인 없이 돈 대조(hr8c)와 탭 수가 같아야 한다
+# 같은 순서를 확인 없이 돈 대조(hr8c)와 탭 수가 같아야 한다 · 대조 자체 = T-514(D-510 · 11-23 저녁 975acb89): 이미 열린 객체를 탐색기에서
+#   다시 열면 **새 탭 없이 그 탭으로 이동만**(종전 = 원래 탭이 하나 더 열림 · 대조 v1.sql 2개 → 이제 1개 + 활성 `*`)
+#   패키지 스펙이 열린 상태에서 본문 열기 = 새 탭(종류가 다름)은 SQLite에 패키지가 없어 판정 불가 → Oracle 사용자 실기
 v1_gui hr8c "$OPEN,${C}@after:6000:tabs.dump:$O/hr-8ca.txt,${C}@after:6230:explorer.select:v1,${C}@after:6260:explorer.pick:source,${C}@after:10000:tabs.dump:$O/hr-8cb.txt,${C}@after:10700:file.exit,${C}@after:11200:toolbar.pick:project.exit_skip" 25 lite
 expect_eq "r8-tab-count-same-as-control" "$(grep -c '' "$V1_OUT/hr-8b.txt" 2>/dev/null)" "$(grep -c '' "$V1_OUT/hr-8cb.txt" 2>/dev/null)"
 expect_eq "r8-v1-tabs-same-as-control" "$(grep -c 'v1[.]sql' "$V1_OUT/hr-8b.txt" 2>/dev/null)" "$(grep -c 'v1[.]sql' "$V1_OUT/hr-8cb.txt" 2>/dev/null)"
 expect_eq "r8-log-dump-ran" "$([ -f "$V1_OUT/hr-8log.txt" ] && echo y)" "y"
 expect_not "r8-no-late-drop" "$V1_OUT/hr-8log.txt" "late source response dropped"
+expect_eq "t514-before-one-v1-tab" "$(grep -c 'v1[.]sql' "$V1_OUT/hr-8ca.txt" 2>/dev/null)" "1"
+expect_eq "t514-reopen-no-new-tab" "$(grep -c 'v1[.]sql' "$V1_OUT/hr-8cb.txt" 2>/dev/null)" "1"
+expect_eq "t514-reopen-same-tab-count" "$(grep -c '' "$V1_OUT/hr-8cb.txt" 2>/dev/null)" "$(grep -c '' "$V1_OUT/hr-8ca.txt" 2>/dev/null)"
+expect "t514-reopened-tab-active" "$V1_OUT/hr-8cb.txt" "*v1.sql|"
 fresh; mkv2
 v1_gui hr9 "$OPEN,${C}@after:6000:explorer.select:v2,${C}@after:6100:explorer.pick:source,${C}@after:6150:edit.history_check,${C}@after:6400:status.dump:$O/hr-9s.txt,${C}@after:10000:tabs.dump:$O/hr-9t.txt,${C}@after:10300:log.dump:$O/hr-9log.txt,${C}@after:10600:file.exit,${C}@after:11100:toolbar.pick:project.exit_skip" 25 lite
 if grep -qE 'still in progress|server source (unchanged|changed) since|no earlier server version' "$V1_OUT/hr-9s.txt" 2>/dev/null; then v1_pass "r9-check-busy-or-ok"; else v1_failmsg "r9-check-busy-or-ok" "$(head -c 200 "$V1_OUT/hr-9s.txt" 2>/dev/null)"; fi
@@ -132,7 +138,7 @@ expect "r9-v2-tab-opened" "$V1_OUT/hr-9t.txt" "v2.sql"
 expect_eq "r9-one-v1-tab" "$(grep -c 'v1[.]sql' "$V1_OUT/hr-9t.txt" 2>/dev/null)" "1"
 expect_not "r9-no-late-drop" "$V1_OUT/hr-9log.txt" "late source response dropped"
 # r10(F-1 · T-513 검토 후속): 확인을 건 **0~20 ms 안**에(답이 오기 전을 노림) 같은 객체를 탐색기에서 열기를 세 번 →
-#      매번 v1 탭 수 = 대조(hr8c · 확인 없이 같은 순서 = 2) · 종전 = 표식 요청 중이면 같은 이름 열기가 "중복"으로 버려져 탭이 안 열렸다
+#      매번 v1 탭 수 = 대조(hr8c · 확인 없이 같은 순서 = T-514 뒤 1) · 종전 = 표식 요청 중이면 같은 이름 열기가 "중복"으로 버려져 탭이 안 열렸다
 #      (SQLite는 답이 빨라 그 창을 못 잡을 수 있음 → 세 번 모두 같으면 PASS · 잡혔는지는 덤프로 가르지 못함 = 단위 시험이 덮음)
 CTRL=$(grep -c 'v1[.]sql' "$V1_OUT/hr-8cb.txt" 2>/dev/null)
 for k in 0 10 20; do
