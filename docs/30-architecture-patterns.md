@@ -119,7 +119,7 @@
 | **Runner + Opener + catch_unwind 워커** | `nsql-run` · `worker.rs` | 세션 소유 스레드 · 패닉 격리 · 빠른 판정 | 실행 |
 | **owned_by(소유 창) · rehover · wheel_event** | `winfocus.rs` · `input.rs` | 작업표시줄 1 · 모달 닫힘 뒤 hover · 스크롤 방향 한 곳 | 3창 |
 | **Timeline(Stage)** | `nsql-core` | 각 층이 자기 단계만 · 표시 시점 포맷 | `--timing` · 상태줄 |
-| **ConnTuning + HIDDEN 설정** | `conn_win.rs` · `nsql-settings` | 구현 상수 → 설정(비노출) 주입 | 접속 창 |
+| **ConnTuning · EditorTuning · GridTuning · LogTuning + HIDDEN 설정** | `conn_win.rs` · `editors.rs` · `grid.rs` · `log_win.rs` · `nsql-settings` | 구현 상수 → 설정(비노출) 주입 · 기본값 = 종전 상수(값 불변 · 시험 `tuning_defaults_match_registry`) · `Grid::fresh_like`가 tuning 복사 | 접속 창 · 편집기 · 그리드 · 로그 창(T-66 1차 11-24) |
 | **RowSource 포트 · ResultData(Arc 세그먼트) · View(인덱스 투영)** | `nsql-core` · `nsql-io` | 결과 **한 세트** · 형식별 사본 0 · 렌더러 하나(`render_block`/`generate_src`) · NULL 글자 설정 1 | 그리드 · 텍스트 보기 7종 · 복사 · SQL 복사 · CLI(DR-33) |
 | **ToolDock · ToolGroup · DockLayout · ToolItem::separator + ToolFloatWin** | nexa-ctl `tooldock` · `toolfloat.rs` | 목적별 그룹(아이콘·구분자 계층) · 그립 드래그 순서 · 떼어 내기 = 액션만(창은 호스트) · 배치 문자열 1키 · 툴바 소유 한 곳 · ★ 11-23 **옆 띠(세로 도크 · T-105 · D-497)** = `DockSide` Left/Right · `Toolbar::set_vertical` · 배치 `id@L`/`id@R` · 가장자리 영역에 끌어 놓으면 붙음 · 떼어 내면 띠 소속 해제 | 상단 툴바(09-17) · 결과 도구줄 후보 |
 
@@ -145,7 +145,7 @@
 | A | 창 3개(접속·로그·색)가 softbuffer/RasterCtx/이벤트 변환(`to_input`)/틱을 **복사**해 갖고 있다(≈300줄×3) | **WindowHost** 부품(nexa-clip 창 골격 이식): 창 생성·표면·배율·입력 변환·틱·페인트 프레임을 한 타입으로, 창은 `layout/route/paint`만 구현 | **T-65** |
 | B | `conn_win.rs` 2.5k줄 — 목록 모델(정렬·필터·열)·행 버튼·폼·프로브 표시·메뉴가 한 파일 | 목록을 **nexa-grid `ConnectionGrid`**(U-3 · dir2 rows 이식)로 · 프로브 표시는 `RowSource` 장식 · 창은 조립만 | T-31b·U-3 |
 | C | 확장점 중 드라이버 RPC·WASM 플러그인이 설계만 있음 | [22](22-driver-extensions.md) T-27~30 · 규약 버전 필드부터 | T-27 |
-| D | 접속 창 조정값은 설정화됐지만 편집기·그리드·로그 창 상수는 아직 코드 | `EditorTuning/GridTuning`으로 같은 방식(비노출) | **T-66** |
+| D | 접속 창 조정값은 설정화됐지만 편집기·그리드·로그 창 상수는 아직 코드 → ★ 11-24 1차 끝 = 비노출 26키(`log.*` 10 · `editor.*` 6 · `grid.*` 10) + 결과 탭 메뉴 폭 · 값 불변(8045acdc · 0c6021a2) · 남음 = 2차 후보(칩 안쪽 여백 · 깔때기 비율 · 메뉴 폭 하한 · grip/최소 폭/끌기 문턱 · `bar()`/`page_box()` · condbar/valuepick/output) | `EditorTuning/GridTuning/LogTuning`(비노출) | **T-66** |
 | E | 명령 id·단축키·메뉴가 문자열로 흩어져 있음 | **Command 레지스트리**(id · 라벨 Msg · 기본 키 · 핸들러) 하나 → 메뉴·팔레트·툴바·키맵이 같은 표를 읽는다 | **T-67**(T-53 선행) |
 | F | 워커 `Cmd/ConnOutcome/RunEvent` 셋이 각각 자람 | 실행 계층 **메시지 규약 문서화**(버전 · 큐/스레드 소유권 표) — RPC 드라이버 규약과 맞춘다 | **T-68** |
 
