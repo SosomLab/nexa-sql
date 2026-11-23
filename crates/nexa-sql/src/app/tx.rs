@@ -12,7 +12,7 @@ impl App {
         // ★ 사용자가 직접 실행한 COMMIT/ROLLBACK(09-27 사용자 실기): 서버는 끝냈는데 툴바·"N pending"·트랜잭션 로그는
         //   툴바 버튼 경로(`tx_close`)만 알아 그대로 남았다 → 같은 경로로 닫는다(러너의 `TxControl::End`와 같은 판정).
         if let Some(commit) = sessions::user_tx_end(stmt) {
-            let open = !self.sess.tx_pending.is_empty() || self.sess.tx_dirty || self.sess.tx_read;
+            let open = !self.sess.tx_none() || self.sess.tx_dirty || self.sess.tx_read;
             if open {
                 self.tx_close(if commit {
                     TxOutcome::Committed
@@ -24,7 +24,7 @@ impl App {
             return;
         }
         if implicit_commit(self.sess.dialect, stmt) {
-            if !self.sess.tx_pending.is_empty() {
+            if !self.sess.tx_none() {
                 let w = first_word(stmt);
                 self.log_win
                     .push(LogEntry::new(LogKind::Info, tf(Msg::StTxImplicit, &[&w])));
@@ -60,7 +60,7 @@ impl App {
             .select_session(self.sess.id)
             .attach_tx(index, stamp, true);
         self.txlog_win.redraw();
-        self.sess.tx_pending.push(TxItem {
+        self.sess.tx_add(TxItem {
             editor: self.sess.run_editor,
             at: Instant::now(),
             when,
@@ -123,7 +123,7 @@ impl App {
                 self.txlog
                     .select_session(self.sess.id)
                     .attach_tx(h.index, stamp.clone(), true);
-                self.sess.tx_pending.push(TxItem {
+                self.sess.tx_add(TxItem {
                     editor: ed,
                     at: Instant::now(),
                     when: when.clone(),
@@ -228,7 +228,7 @@ impl App {
             .sess
             .prod_held
             .as_ref()
-            .map_or((self.sess.tx_pending.len(), 0), |h| (h.stmts, h.total_rows));
+            .map_or((self.sess.tx_count(), 0), |h| (h.stmts, h.total_rows));
         let left = self.sess.commit_armed.map_or(confirm_ms, |t0| {
             confirm_ms.saturating_sub(t0.elapsed().as_millis() as u64)
         });
@@ -256,7 +256,7 @@ impl App {
             return Some(t(Msg::StReadOnlyBlocked).to_string());
         }
         let held = self.sess.prod_held.is_some();
-        let tx_open = held || !self.sess.tx_pending.is_empty() || self.sess.tx_dirty;
+        let tx_open = held || !self.sess.tx_none() || self.sess.tx_dirty;
         let dialect = self.sess.dialect;
         let has_change = items
             .iter()
@@ -471,7 +471,7 @@ impl App {
         };
         format!(
             "pending={}|held={}|armed={}|autocommit={}|tool_arm={}|run_arm={}|txlog_updates={}\n",
-            self.sess.tx_pending.len(),
+            self.sess.tx_count(),
             held,
             self.sess.commit_armed.is_some(),
             self.settings.flag("session.autocommit"),
@@ -491,7 +491,7 @@ impl App {
         self.toasts.dismiss_action("hold.commit_go");
         self.sess.tx_blockers = 0;
         self.sess.tx_blocker_who.clear();
-        self.sess.tx_pending.clear();
+        self.sess.tx_items_clear();
         self.sess.tx_read = false;
         self.sess.tx_settled = false;
         self.sess.tx_dirty = false;
@@ -504,10 +504,10 @@ impl App {
     /// "호출 안에서 끝남"), 상태줄·로그로 알리고, 다음 서버 문장까지 Rollback을 비활성으로 둔다. 운영 보류 중에는 오지 않는다(러너).
     pub(crate) fn tx_on_call_clean(&mut self, index: usize) {
         let _ = index;
-        if self.settings.flag("session.autocommit") && self.sess.tx_pending.is_empty() {
+        if self.settings.flag("session.autocommit") && self.sess.tx_none() {
             return;
         }
-        let open = !self.sess.tx_pending.is_empty() || self.sess.tx_dirty || self.sess.tx_read;
+        let open = !self.sess.tx_none() || self.sess.tx_dirty || self.sess.tx_read;
         if open {
             self.tx_close(TxOutcome::EndedInCall);
         }
@@ -556,7 +556,7 @@ impl App {
         let due: Vec<(u64, String, Option<ConnectSpec>)> = self
             .all_sess()
             .filter(|s| {
-                !s.tx_pending.is_empty()
+                !s.tx_none()
                     && !s.closing
                     && !s.tx_block_off
                     && s.connected
@@ -573,7 +573,7 @@ impl App {
             }
         }
         self.all_sess()
-            .filter(|s| !s.tx_pending.is_empty() && !s.tx_block_off && s.live_sid.is_some())
+            .filter(|s| !s.tx_none() && !s.tx_block_off && s.live_sid.is_some())
             .map(|s| s.tx_block_next)
             .min()
     }
@@ -582,7 +582,7 @@ impl App {
     fn tx_block_band_sync(&mut self) {
         let lines: Vec<String> = self
             .all_sess()
-            .filter(|s| !s.tx_pending.is_empty())
+            .filter(|s| !s.tx_none())
             .flat_map(|s| {
                 let name = if s.profile.is_empty() {
                     s.desc.clone()
@@ -614,9 +614,7 @@ impl App {
             match r {
                 Ok(list) => {
                     let prev = self.sess_by_id(id).map_or(0, |s| s.tx_blockers);
-                    let pending = self
-                        .sess_by_id(id)
-                        .is_some_and(|s| !s.tx_pending.is_empty());
+                    let pending = self.sess_by_id(id).is_some_and(|s| !s.tx_none());
                     let n = if pending { list.len() } else { 0 };
                     // 띠의 내용(누가 기다리는가)은 개수가 같아도 바뀔 수 있다 → 먼저 저장.
                     let who: Vec<String> = if pending { list.clone() } else { Vec::new() };
@@ -684,7 +682,7 @@ impl App {
         }
         let ids: Vec<u64> = self
             .all_sess()
-            .filter(|s| !s.tx_pending.is_empty() && !s.closing)
+            .filter(|s| !s.tx_none() && !s.closing)
             .map(|s| s.id)
             .collect();
         if ids.is_empty() {
@@ -722,8 +720,7 @@ impl App {
                 blocked: s.blocked(),
                 // ★ 기준 = 가장 오래된 미커밋 문장(10-16 사용자) · 없으면 마지막 실행.
                 idle: s
-                    .tx_pending
-                    .first()
+                    .tx_first()
                     .map_or(now.saturating_duration_since(s.last_exec), |f| {
                         now.saturating_duration_since(f.at)
                     }),
@@ -777,11 +774,7 @@ impl App {
     fn tx_warn_show(&mut self, id: u64, countdown: Option<(Instant, sessions::TxIdleAction)>) {
         let Some(s) = self.sess_by_id(id) else { return };
         let (title, n) = tx_warn_title(s);
-        let first = s
-            .tx_pending
-            .first()
-            .map(|i| i.summary.clone())
-            .unwrap_or_default();
+        let first = s.tx_first().map(|i| i.summary.clone()).unwrap_or_default();
         let note = t(Msg::TxWarnOldestNote);
         let detail = if s.desc.is_empty() {
             format!("{first} · {note}")
@@ -849,7 +842,7 @@ impl App {
                     let Some(pass) = a.sess.pass() else {
                         return;
                     };
-                    if a.sess.tx_pending.is_empty() {
+                    if a.sess.tx_none() {
                         return;
                     }
                     a.sess.submit(
@@ -891,16 +884,15 @@ impl App {
         let held = self.sess_by_id(id).is_some_and(|s| s.prod_held.is_some());
         let commit = action == sessions::TxIdleAction::Commit && !held;
         let done = self.with_sess(id, |a| {
-            if a.sess.blocked() || a.sess.tx_pending.is_empty() {
+            if a.sess.blocked() || a.sess.tx_none() {
                 a.sess.tx_countdown = None;
                 return None;
             }
-            let n = a.sess.tx_pending.len();
+            let n = a.sess.tx_count();
             // 기록되는 분 = 가장 오래된 문장 뒤 경과(10-16).
             let idle_min = a
                 .sess
-                .tx_pending
-                .first()
+                .tx_first()
                 .map_or(a.sess.last_exec.elapsed(), |f| f.at.elapsed())
                 .as_secs()
                 / 60;
@@ -961,7 +953,7 @@ impl App {
                 ),
             )
         });
-        if !self.sess.tx_pending.is_empty() {
+        if !self.sess.tx_none() {
             return;
         }
         self.sess.tx_read = false;
@@ -977,13 +969,13 @@ impl App {
     /// 트랜잭션 버튼 색·배지·툴팁(docs/44 §5): 자동 커밋 = 기본색·배지 없음 · 수동 = 가장 심각한 문장 종류의 색 + 대기 수.
     fn sync_tx_button(&mut self) {
         use nsql_core::TxClass;
-        let n = self.sess.tx_pending.len();
+        let n = self.sess.tx_count();
         // ★ 자동 커밋 모드라도 운영 보류로 대기가 있으면 배지·색·툴팁을 수동 모드처럼(10-16 사용자).
         let auto = self.settings.flag("session.autocommit") && n == 0;
         let mut inv = Invalidations::default();
         let top = self
             .sess
-            .tx_pending
+            .tx_items()
             .iter()
             .map(|i| i.class)
             .max_by_key(|c| c.severity())
@@ -1020,7 +1012,7 @@ impl App {
             t(Msg::TipTxLog).to_string()
         } else {
             let mut kinds: Vec<Msg> = Vec::new();
-            let mut seen: Vec<TxClass> = self.sess.tx_pending.iter().map(|i| i.class).collect();
+            let mut seen: Vec<TxClass> = self.sess.tx_items().iter().map(|i| i.class).collect();
             if self.sess.tx_read && seen.is_empty() {
                 seen.push(TxClass::Read);
             }
@@ -1041,8 +1033,7 @@ impl App {
             let list = kinds.iter().map(|m| t(*m)).collect::<Vec<_>>().join(" · ");
             let since = self
                 .sess
-                .tx_pending
-                .first()
+                .tx_first()
                 .map_or(String::new(), |f| f.when.clone());
             tf(Msg::TipTxState, &[&n.to_string(), &since, &list])
         };
@@ -1064,7 +1055,7 @@ impl App {
         // ★ 🔧 L2 가드 깨우기(10-15 · 운영 보류 한도 E2E가 찾은 기존 결함): 대기 문장이 없을 때 `tx_guard_tick`이 다음 점검을 **1시간 뒤**로
         //   미루는데, 그 뒤 대기 문장이 생겨도 아무도 그 시각을 당기지 않아 경고·카운트다운·한도 롤백이 한 시간 동안 멈췄다(수동 모드도 같음).
         //   대기 목록이 바뀌는 길은 전부 여기를 지나므로 여기서 5 s 안으로 당긴다.
-        if self.all_sess().any(|s| !s.tx_pending.is_empty()) {
+        if self.all_sess().any(|s| !s.tx_none()) {
             let soon = Instant::now() + Duration::from_secs(5);
             if self.tx_guard_next > soon {
                 self.tx_guard_next = soon;
@@ -1077,10 +1068,9 @@ impl App {
         let mut map: HashMap<u64, (usize, bool)> = HashMap::new();
         for s in self.all_sess() {
             let st = s
-                .tx_pending
-                .first()
+                .tx_first()
                 .is_some_and(|f| f.at.elapsed().as_secs() >= min * 60);
-            for it in &s.tx_pending {
+            for it in s.tx_items() {
                 let e = map.entry(it.editor).or_insert((0, st));
                 e.0 += 1;
                 e.1 = st;
@@ -1088,13 +1078,13 @@ impl App {
         }
         let mode = self.settings.get("tx.badge").unwrap_or("count").to_string();
         self.editors.set_tx_badges(map, &mode);
-        let has = !self.sess.tx_pending.is_empty();
+        let has = !self.sess.tx_none();
         // 툴바 Commit/Rollback = 지금 세션에 대기 문장이 있고 **세션이 한가할 때만**(통제 · docs/52 §3) · 색은 대기 여부 그대로.
         let open = self.gate().commit;
         let mut inv = Invalidations::default();
         // ★ Rollback = 서버가 "미커밋 변경 없음"을 확인해 준 동안은 비활성(11-15 · 호출 안에서 끝난 트랜잭션 · 순수 판정).
         let settled = self.sess.tx_settled;
-        let rollback_on = sessions::rollback_enabled(open, settled, self.sess.tx_pending.len());
+        let rollback_on = sessions::rollback_enabled(open, settled, self.sess.tx_count());
         if let Some(gid) = self.tool_dock.group_of("run.rollback").map(str::to_string) {
             let tip = if open && !rollback_on {
                 t(Msg::TipTxRollbackNone).to_string()
@@ -1148,14 +1138,13 @@ impl App {
     fn tx_is_stale(&self) -> bool {
         let min = self.settings.int("tx.stale_min").max(1) as u64;
         self.sess
-            .tx_pending
-            .first()
+            .tx_first()
             .is_some_and(|f| f.at.elapsed().as_secs() >= min * 60)
     }
 
     /// 오래된 미커밋 감시(about_to_wait · 1회 로그 + 배지 ⚠).
     pub(crate) fn tx_tick(&mut self) {
-        if self.sess.tx_pending.is_empty() || self.sess.tx_stale_logged || !self.tx_is_stale() {
+        if self.sess.tx_none() || self.sess.tx_stale_logged || !self.tx_is_stale() {
             return;
         }
         self.sess.tx_stale_logged = true;
@@ -1170,7 +1159,7 @@ impl App {
     pub(crate) fn open_tx_menu(&mut self) {
         use nexa_ctl::controls::ctxmenu::CtxItem;
         let auto = self.settings.flag("session.autocommit");
-        let n = self.sess.tx_pending.len();
+        let n = self.sess.tx_count();
         let mark = |on: bool, s: &str| {
             if on {
                 format!("✓ {s}")
@@ -1189,7 +1178,7 @@ impl App {
         ];
         if n > 0 {
             items.push(CtxItem::Separator);
-            for it in self.sess.tx_pending.iter().take(12) {
+            for it in self.sess.tx_items().iter().take(12) {
                 items.push(CtxItem::item(
                     "tx.noop",
                     format!("{}  {}", it.when, it.summary),
@@ -1202,7 +1191,7 @@ impl App {
     /// 잃는 순간의 확인 팝업(Commit / Rollback / Cancel) — 상태줄 트랜잭션 세그먼트 자리(없으면 창 가운데).
     pub(crate) fn open_tx_guard(&mut self, commit: Msg, rollback: Msg) {
         use nexa_ctl::controls::ctxmenu::CtxItem;
-        let n = self.sess.tx_pending.len().to_string();
+        let n = self.sess.tx_count().to_string();
         self.sess.status = tf(Msg::StTxGuard, &[&n]);
         let items = vec![
             CtxItem::item("tx.commit_then", t(commit)),
@@ -1271,7 +1260,7 @@ impl App {
 
     /// 모드 전환 — 수동 → 자동인데 대기 문장이 있으면 먼저 묻는다.
     fn set_autocommit(&mut self, on: bool) {
-        if on && !self.sess.tx_pending.is_empty() {
+        if on && !self.sess.tx_none() {
             self.tx_after = Some(TxAfter::SwitchAuto);
             self.open_tx_guard(Msg::MnTxCommitSwitch, Msg::MnTxRollbackSwitch);
             return;
@@ -1340,8 +1329,8 @@ impl App {
 
 /// 경고 카드 제목(10-16 사용자 "첫 트랜잭션 뒤 경과 시간") = "미커밋 N문장 · 첫 문장(HH:MM) 뒤 M분 경과" + 문장 수.
 fn tx_warn_title(s: &sessions::Sess) -> (String, usize) {
-    let n = s.tx_pending.len();
-    let (age_min, when) = s.tx_pending.first().map_or_else(
+    let n = s.tx_count();
+    let (age_min, when) = s.tx_first().map_or_else(
         || (s.last_exec.elapsed().as_secs() / 60, String::new()),
         |f| (f.at.elapsed().as_secs() / 60, f.when.clone()),
     );

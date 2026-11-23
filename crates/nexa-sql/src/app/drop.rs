@@ -515,10 +515,10 @@ impl App {
             lines.push(format!(
                 "  {}: {}",
                 t(Msg::OutConnTx),
-                if s.tx_pending.is_empty() {
+                if s.tx_none() {
                     t(Msg::OutConnTxNone).to_string()
                 } else {
-                    s.tx_pending.len().to_string()
+                    s.tx_count().to_string()
                 }
             ));
             if s.broken {

@@ -678,7 +678,7 @@ impl App {
                 attached.push((t(Msg::MnGeApply).to_string(), nsql_core::TxClass::Update));
             }
             for (summary, class) in attached {
-                self.sess.tx_pending.push(TxItem {
+                self.sess.tx_add(TxItem {
                     editor: self.sess.run_editor,
                     at: Instant::now(),
                     when: when.clone(),

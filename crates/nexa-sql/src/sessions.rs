@@ -106,7 +106,10 @@ pub(crate) struct Sess {
     pub status: String,
     // 트랜잭션(DR-30 · T-77) — 세션 단위.
     pub tx_dirty: bool,
-    pub tx_pending: Vec<TxItem>,
+    /// ★ 미커밋 문장 목록 — **이 모듈 밖에서는 접근 함수로만**(T-107b 1단계 · D-517 · 11-24): `tx_none` · `tx_count` ·
+    ///   `tx_first` · `tx_items` · `tx_add` · `tx_items_clear`. 원천을 거래 기록(TxLog)으로 바꾸는 다음 단계가 이 여섯 함수만
+    ///   고치면 되게 하려는 것 — 이번 단계는 감싸기만(값·동작 불변).
+    tx_pending: Vec<TxItem>,
     pub tx_read: bool,
     /// ★ 서버가 "미커밋 변경 없음"을 확인해 줬다(11-15 · 호출 뒤 확인 `RunEvent::CallTxClean`) — 다음 서버 문장이 나가거나
     /// 트랜잭션 상태가 정리될 때까지 Rollback을 비활성으로 둔다(되돌릴 것이 없다는 것을 버튼이 말한다).
@@ -217,6 +220,36 @@ pub(crate) struct Sess {
 }
 
 impl Sess {
+    /// 미커밋 문장이 **없다**(종전 `tx_pending.is_empty()`).
+    pub(crate) fn tx_none(&self) -> bool {
+        self.tx_pending.is_empty()
+    }
+
+    /// 미커밋 문장 수(종전 `tx_pending.len()` · 배지·확인 문구의 n).
+    pub(crate) fn tx_count(&self) -> usize {
+        self.tx_pending.len()
+    }
+
+    /// 가장 오래된 미커밋 문장(종전 `tx_pending.first()` · "since hh:mm" · 오래됨 판정의 기준).
+    pub(crate) fn tx_first(&self) -> Option<&TxItem> {
+        self.tx_pending.first()
+    }
+
+    /// 미커밋 문장 목록(등재 순 · 읽기 전용).
+    pub(crate) fn tx_items(&self) -> &[TxItem] {
+        &self.tx_pending
+    }
+
+    /// 미커밋 문장 한 건 등재(종전 `tx_pending.push`).
+    pub(crate) fn tx_add(&mut self, item: TxItem) {
+        self.tx_pending.push(item);
+    }
+
+    /// 미커밋 목록 비움(커밋·롤백·해제 뒤 — 호스트의 `App::tx_clear`가 부른다).
+    pub(crate) fn tx_items_clear(&mut self) {
+        self.tx_pending.clear();
+    }
+
     pub(crate) fn new(
         id: u64,
         owner: Option<u64>,

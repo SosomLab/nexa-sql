@@ -229,9 +229,9 @@ impl App {
         let sid = self.sess_id_for_tab(id);
         let n = self.sess_by_id(sid).map_or(0, |s| {
             if s.is_private() {
-                s.tx_pending.len()
+                s.tx_count()
             } else {
-                s.tx_pending.iter().filter(|t| t.editor == id).count()
+                s.tx_items().iter().filter(|t| t.editor == id).count()
             }
         });
         if n == 0 {
@@ -329,18 +329,18 @@ impl App {
         }
         self.exit_pending = false;
         self.exit_project_asked = false;
-        if self.sess.tx_pending.is_empty() {
+        if self.sess.tx_none() {
             // 잠든 세션에 미커밋이 있으면 그 탭을 앞으로 꺼내 거기서 묻는다(세션마다 한 번씩 · docs/52 §8).
             let tab = self
                 .parked
                 .iter()
-                .find(|s| !s.tx_pending.is_empty())
-                .map(|s| s.owner.unwrap_or(s.tx_pending[0].editor));
+                .find(|s| !s.tx_none())
+                .map(|s| s.owner.unwrap_or(s.tx_items()[0].editor));
             if let Some(tab) = tab {
                 self.editors.switch_to_id(tab);
                 self.sync_grid_tab();
             }
-            if self.sess.tx_pending.is_empty() {
+            if self.sess.tx_none() {
                 self.exit_requested = true;
                 return;
             }

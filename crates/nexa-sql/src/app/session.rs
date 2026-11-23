@@ -227,7 +227,7 @@ impl App {
             return;
         }
         self.with_sess(id, |a| {
-            if !a.sess.tx_pending.is_empty() {
+            if !a.sess.tx_none() {
                 // 다른 탭의 세션 — 확인 팝업은 그 탭을 앞에 두고 답해야 한다.
                 a.sess.status = t(Msg::StSessTxPending).into();
                 a.log_win
@@ -245,7 +245,7 @@ impl App {
     /// 모든 연결 해제(툴바 Disconnect 본체): 지금 세션에 미커밋이 있으면 묻고(DR-30) · 다른 세션은 미커밋이 있으면 남긴다(로그) ·
     /// 나머지는 전부 끊는다 → 전 탭이 미연결(공유 탭은 끊긴 공유 연결에 묶인 채 · 전용 탭은 세션 규칙대로).
     pub(crate) fn disconnect_all(&mut self) {
-        if !self.sess.tx_pending.is_empty() {
+        if !self.sess.tx_none() {
             self.tx_after = Some(TxAfter::Disconnect);
             self.open_tx_guard(Msg::MnTxCommitDisconnect, Msg::MnTxRollbackDisconnect);
             self.redraw();
@@ -258,10 +258,7 @@ impl App {
             .collect();
         let mut skipped = 0usize;
         for sid in ids {
-            if self
-                .sess_by_id(sid)
-                .is_some_and(|s| !s.tx_pending.is_empty())
-            {
+            if self.sess_by_id(sid).is_some_and(|s| !s.tx_none()) {
                 skipped += 1;
                 continue;
             }
@@ -904,7 +901,7 @@ impl App {
             self.sess.busy,
             self.sess.aux,
             self.editors.cur().has_multi(),
-            !self.sess.tx_pending.is_empty(),
+            !self.sess.tx_none(),
         )
     }
 
@@ -949,7 +946,7 @@ impl App {
                     connected: s.connected && s.spec.is_some(),
                     blocked: s.blocked(),
                     // 수동 커밋이면 조회만 했어도 트랜잭션이 열려 있을 수 있다 → 닫지 않는다.
-                    tx_open: !s.tx_pending.is_empty() || s.tx_dirty || (manual && s.tx_read),
+                    tx_open: !s.tx_none() || s.tx_dirty || (manual && s.tx_read),
                     stateful: s.stateful,
                     idle: now.saturating_duration_since(s.last_used),
                     limit_secs: limit,
@@ -1004,9 +1001,7 @@ impl App {
         };
         let per_editor = keep;
         // 미커밋이 있으면 먼저 묻는다(잃는 순간만 모달 · DR-30) — 답한 뒤 `disconnect_force`가 다시 여기로 온다.
-        let pending = self
-            .sess_by_id(id)
-            .is_some_and(|s| !s.tx_pending.is_empty());
+        let pending = self.sess_by_id(id).is_some_and(|s| !s.tx_none());
         let step = sessions::private_disconnect_step(self.sess.id == id, pending);
         if step == sessions::PrivateDisc::Ask {
             self.tx_after = Some(TxAfter::Disconnect);
@@ -1425,7 +1420,7 @@ impl App {
 
     fn disconnect_current(&mut self) {
         // 미커밋 문장이 있으면 먼저 묻는다(잃는 순간만 모달 · DR-30).
-        if !self.sess.tx_pending.is_empty() {
+        if !self.sess.tx_none() {
             self.tx_after = Some(TxAfter::Disconnect);
             self.open_tx_guard(Msg::MnTxCommitDisconnect, Msg::MnTxRollbackDisconnect);
             self.redraw();
@@ -1569,7 +1564,7 @@ impl App {
                 broken: s.broken,
                 busy: s.blocked(),
                 idle_secs: now.saturating_duration_since(s.last_used).as_secs(),
-                pending: s.tx_pending.len(),
+                pending: s.tx_count(),
             })
             .collect();
         // 접속 순(세션 id 순) · 같은 서버끼리는 창이 모은다.

@@ -3734,7 +3734,7 @@ impl App {
         if tool.name == "run_command" && ai::guard::is_disconnect_command(&arg) {
             let why = if self.sess.busy || self.sess.aux > 0 {
                 Some("the connection is busy (a statement is running)")
-            } else if !self.sess.tx_pending.is_empty() || self.sess.prod_held.is_some() {
+            } else if !self.sess.tx_none() || self.sess.prod_held.is_some() {
                 Some("the connection has uncommitted changes - the user must Commit or Rollback first (disconnecting could commit or lose them)")
             } else {
                 None
@@ -4458,7 +4458,7 @@ impl App {
                         if a.sess.busy || a.sess.aux > 0 {
                             return Some((desc, Err("busy - a statement is running")));
                         }
-                        if !a.sess.tx_pending.is_empty() || a.sess.prod_held.is_some() {
+                        if !a.sess.tx_none() || a.sess.prod_held.is_some() {
                             return Some((
                                 desc,
                                 Err("uncommitted changes - the user must Commit or Rollback first"),
@@ -4816,7 +4816,7 @@ impl App {
                     self.sess.cur_schema.clone().unwrap_or_default(),
                     self.sess.current_db.clone().unwrap_or_default(),
                     self.sess.busy,
-                    self.sess.tx_pending.len(),
+                    self.sess.tx_count(),
                     self.sess.desc
                 );
                 out.push_str("sessions (Nexa SQL app level; shared = any tab, private = owned by one editor tab):\n");

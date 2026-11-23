@@ -1285,7 +1285,7 @@ impl App {
             // ★ 운영 Commit = 빨간 2단(D-300): 보류가 있거나 운영 접속에 대기 문장이 있으면 확인 길로.
             "run.commit"
                 if self.sess.prod_held.is_some()
-                    || (!self.sess.tx_pending.is_empty()
+                    || (!self.sess.tx_none()
                         && self.sess.spec.as_ref().and_then(|sp| sp.env)
                             == Some(nsql_script::ConnEnv::Prod)) =>
             {
