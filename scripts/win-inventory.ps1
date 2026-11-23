@@ -18,6 +18,11 @@ param(
     [switch]$SkipCargo
 )
 $ErrorActionPreference = "Stop"
+# ★ T-467(11-24): nsql 출력(UTF-8)을 콘솔 기본(이 PC = CP949)으로 읽으면 한글 설명의 깨진 바이트가 줄바꿈을 먹어
+#   키 줄이 앞 줄에 붙는다(설정 키 733 ↔ 실제 890) → 이 스크립트 동안만 UTF-8로 읽고 끝(또는 오류)에서 원래 값으로 되돌린다.
+$prevOutEnc = [Console]::OutputEncoding
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new()
+trap { [Console]::OutputEncoding = $prevOutEnc; break }
 $root = Split-Path -Parent $PSScriptRoot
 if (-not $Exe) { $Exe = Join-Path $root "target\release\nexa-sql.exe" }
 if (-not $Cli) { $Cli = Join-Path $root "target\release\nsql.exe" }
@@ -155,3 +160,4 @@ if ($Out) {
     Set-Content -LiteralPath $Out -Value $lines -Encoding UTF8
     Write-Output ("-> " + $Out)
 }
+[Console]::OutputEncoding = $prevOutEnc
