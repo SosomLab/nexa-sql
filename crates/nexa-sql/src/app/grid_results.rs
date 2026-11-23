@@ -548,6 +548,10 @@ impl App {
             key_check: self.settings.flag("grid.edit_key_check"),
         };
         self.all_grids().for_each(|g| g.set_edit_cfg(cfg.clone()));
+        // ★ 조정값(T-66 · 비노출 설정 `grid.*`) — 모든 그리드(잠든 탭 포함)에 · 새 탭은 `fresh_like`가 복사한다.
+        let tun = grid_tuning(&self.settings);
+        self.all_grids().for_each(|g| g.set_tuning(tun));
+        crate::results::set_menu_w(self.settings.int("grid.result_menu_w").max(1) as i32);
         // 정규식 필터 값 목록 상한(사용자 09-30 · `grid.filter_list_max`) — 같은 적용 길에 얹는다(시작 · grid 편집 키 변경).
         let list_max = self.settings.int("grid.filter_list_max").max(1) as usize;
         self.all_grids()

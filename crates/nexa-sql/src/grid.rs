@@ -348,7 +348,50 @@ struct GridEdit {
     blobs: BlobMap,
 }
 
+/// ★ 결과 그리드 조정값(T-66 · D-515 · 접속 창 `ConnTuning`과 같은 방식): 구현 상수를 한곳에 모아 비노출 설정 `grid.*`에서
+/// 채운다(`main.rs::grid_tuning`). 기본값 = 종전 상수 그대로(값 불변 · 시험 `tuning_defaults_match_registry`).
+/// ⚠ 새 탭의 그리드는 `fresh_like`가 설정 필드를 하나씩 복사해 만든다 — 이 구조체도 거기서 복사한다(빠지면 새 탭부터 기본값).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct GridTuning {
+    /// 셀·푸터 글자 여백(논리 px · 인라인 편집기 여백도 같은 값 — 편집에 들어가도 글자가 제자리).
+    pub cell_pad: f32,
+    /// 필터 칩 줄 높이(논리 px).
+    pub chip_strip_h: f32,
+    /// 하단 행 수 입력란 폭(논리 px).
+    pub page_box_w: f32,
+    /// 추가 행 왼쪽 띠 폭(논리 px · 그릴 때 최소 2 px).
+    pub insert_band_w: f32,
+    /// 처음 표시할 때 열 폭을 재는 행 수.
+    pub autosize_rows: usize,
+    /// 열 경계 더블클릭 자동 맞춤이 재는 행 수.
+    pub autofit_rows: usize,
+    /// 값 유형(배지·열 종류) 추론 표본 행 수.
+    pub type_sample_rows: usize,
+    /// 그리드의 더블클릭 간격(ms · 값 보기 · 편집 진입 · 경계 자동 맞춤 — `ui.dblclick_ms`와 별개 = 값 불변).
+    pub dblclick_ms: u128,
+    /// 헤더 필터 표식 툴팁 머무름(ms).
+    pub mark_tip_ms: u64,
+}
+
+impl Default for GridTuning {
+    fn default() -> Self {
+        GridTuning {
+            cell_pad: 6.0,
+            chip_strip_h: 26.0,
+            page_box_w: 64.0,
+            insert_band_w: 3.0,
+            autosize_rows: 200,
+            autofit_rows: 5000,
+            type_sample_rows: 200,
+            dblclick_ms: 400,
+            mark_tip_ms: 450,
+        }
+    }
+}
+
 pub(crate) struct Grid {
+    /// 조정값(T-66 · 비노출 설정 `grid.*`).
+    tuning: GridTuning,
     pub bounds: Rect,
     /// ★ 결과 데이터 **한 세트**(DR-33) — 페치 세그먼트 `Arc`. 그리드·텍스트 보기 7종·복사·정렬은 전부 이것 하나에서
     ///   `View`(행·열 인덱스)로 파생한다(형식별 사본 0 · 변환 스레드 공유 복사 0).
@@ -663,6 +706,7 @@ pub(crate) struct Grid {
 impl Default for Grid {
     fn default() -> Self {
         let mut g = Grid {
+            tuning: GridTuning::default(),
             bounds: Rect::new(0, 0, 0, 0),
             rs: None,
             messages: Vec::new(),
@@ -897,6 +941,7 @@ impl Grid {
             // ★ 바깥 사각형(조건 바·칩 줄 포함)을 물려준다(10-11 사용자 실기 "조건 바 위 공백"): 새 그리드는 `strip_h = 0`으로 시작해
             //   결과가 오면 `sync_strip`이 조건 바 높이를 **다시 뺀다** — 안쪽 bounds를 물려주면 새 탭마다 그만큼(32 px) 줄어들어 누적됐다.
             bounds: self.outer_bounds(),
+            tuning: self.tuning,
             row_snap: self.row_snap,
             row_numbers: self.row_numbers,
             row_focus: self.row_focus,
@@ -1723,7 +1768,7 @@ impl Grid {
             replace,
             select_all,
             // 셀 글자 여백(페인트의 `pad = 6 × 배율`)과 같게 — 편집에 들어가도 글자가 제자리(사용자 09-26).
-            pad: Some((6.0 * scale).round() as i32),
+            pad: Some((self.tuning.cell_pad * scale).round() as i32),
         });
     }
 
@@ -3450,7 +3495,8 @@ impl Grid {
         }
         // ★ 필터 표식 툴팁(빗금 위에 머물렀을 때만 · 적용된 술어).
         if let Some((ci, since)) = self.mark_hover {
-            if self.now_ms.saturating_sub(since) >= MARK_TIP_MS && !self.menu.is_open() {
+            if self.now_ms.saturating_sub(since) >= self.tuning.mark_tip_ms && !self.menu.is_open()
+            {
                 if let (Some(text), Some(r)) = (self.filter_tip(ci), self.mark_rect_of(ci)) {
                     let clamp = dc
                         .surface_size()
@@ -4048,6 +4094,11 @@ impl Grid {
         }
     }
 
+    /// 조정값 주입(T-66 · 기동 때 모든 그리드에 · 비노출 설정 `grid.*`).
+    pub(crate) fn set_tuning(&mut self, t: GridTuning) {
+        self.tuning = t;
+    }
+
     /// 정규식 필터 값 목록 상한(설정 `grid.filter_list_max`).
     pub(crate) fn set_filter_list_max(&mut self, n: usize) {
         self.filter_list_max = n.max(1);
@@ -4574,7 +4625,7 @@ impl Grid {
             0
         };
         let chip_h = if self.rs.is_some() && self.filter_strip && !self.filters.is_empty() {
-            (26.0 * s).round() as i32
+            (self.tuning.chip_strip_h * s).round() as i32
         } else {
             0
         };
@@ -6311,7 +6362,7 @@ impl Grid {
             return;
         };
         if self.type_badges.len() != rs.columns().len() {
-            let n = rs.len().min(200);
+            let n = rs.len().min(self.tuning.type_sample_rows);
             let d = self.dialect;
             self.type_badges = rs
                 .columns()
@@ -6338,7 +6389,7 @@ impl Grid {
         let Some(c) = rs.columns().get(col) else {
             return ColKind::Text;
         };
-        let n = rs.len().min(200);
+        let n = rs.len().min(self.tuning.type_sample_rows);
         ColKind::infer(&c.type_name, (0..n).map(|r| rs.cell(r, col).clone()))
     }
 
@@ -6964,7 +7015,7 @@ impl Grid {
         // 표식 툴팁: 머무름 지연이 끝나는 순간 한 번 다시 그린다.
         let tip = self
             .mark_hover
-            .is_some_and(|(_, s)| now_ms.saturating_sub(s) < MARK_TIP_MS + 40);
+            .is_some_and(|(_, s)| now_ms.saturating_sub(s) < self.tuning.mark_tip_ms + 40);
         let a = self.bars.tick(now_ms) | tip;
         let b = self.hover.tick(now_ms);
         let c = self.poll_text();
@@ -7288,7 +7339,8 @@ impl Grid {
                         if shift && !primary {
                             let now = std::time::Instant::now();
                             let dbl = self.view_click.is_some_and(|(c, t0)| {
-                                c == cell && now.duration_since(t0).as_millis() < 400
+                                c == cell
+                                    && now.duration_since(t0).as_millis() < self.tuning.dblclick_ms
                             });
                             self.view_click = Some((cell, now));
                             if dbl {
@@ -7305,7 +7357,11 @@ impl Grid {
                         if !shift && !primary && self.edit.is_some() {
                             let now = std::time::Instant::now();
                             let dbl = self.edit.as_ref().and_then(|e| e.last_click).is_some_and(
-                                |(c, t0)| c == cell && now.duration_since(t0).as_millis() < 400,
+                                |(c, t0)| {
+                                    c == cell
+                                        && now.duration_since(t0).as_millis()
+                                            < self.tuning.dblclick_ms
+                                },
                             );
                             if let Some(e) = self.edit.as_mut() {
                                 e.last_click = Some((cell, now));
@@ -7504,7 +7560,7 @@ impl Grid {
                         // 같은 경계를 400ms 안에 다시 누르면 자동 맞춤(내용 폭 · 한계 안에서).
                         let now = std::time::Instant::now();
                         let dbl = self.edge_click.is_some_and(|(c, t)| {
-                            c == ci && now.duration_since(t).as_millis() < 400
+                            c == ci && now.duration_since(t).as_millis() < self.tuning.dblclick_ms
                         });
                         if dbl {
                             self.autofit = Some(ci);
@@ -7699,7 +7755,7 @@ impl Grid {
             dc.fill_rect(Rect::new(b.x, b.y, b.w, 1), th.border);
         }
         dc.select_font(FontSlot::Base, false);
-        let pad = (6.0 * s).round() as i32;
+        let pad = (self.tuning.cell_pad * s).round() as i32;
         // 행 높이 = 글꼴 높이 × 비율(설정 `grid.row_height_pct` · 기본 150% · 사용자 09-16 "폰트 크기에 적당한 비율") — 글자는
         // 잉크 기준 세로 중앙(`text_center_y`) · 헤더는 행보다 위아래 1px씩 2px 더.
         let th_px = dc.text_height();
@@ -7790,7 +7846,7 @@ impl Grid {
                 .enumerate()
                 .map(|(i, c)| {
                     let mut w = dc.text_width(&c.name) + fun;
-                    for row in rs.rows().take(200) {
+                    for row in rs.rows().take(self.tuning.autosize_rows) {
                         if let Some(v) = row.get(i) {
                             w = w.max(dc.text_width(&cell_text(v, &null)));
                         }
@@ -7816,7 +7872,7 @@ impl Grid {
                 };
                 w += g + gap + nw + if nw > 0 { gap } else { 0 };
             }
-            for row in rs.rows().take(5000) {
+            for row in rs.rows().take(self.tuning.autofit_rows) {
                 if let Some(v) = row.get(ci) {
                     w = w.max(dc.text_width(&cell_text(v, &null)));
                 }
@@ -7859,7 +7915,7 @@ impl Grid {
         let n_src = rs.len();
         let n = self.rows();
         let edit = self.edit.as_ref();
-        let band = (3.0 * s).round().max(2.0) as i32;
+        let band = (self.tuning.insert_band_w * s).round().max(2.0) as i32;
         for di in first..n {
             if y >= body.bottom() {
                 break;
@@ -8330,7 +8386,7 @@ impl Grid {
         last: usize,
         n: usize,
     ) {
-        let pad = (6.0 * s).round() as i32;
+        let pad = (self.tuning.cell_pad * s).round() as i32;
         dc.fill_rect(footer, th.chrome_bg);
         dc.fill_rect(Rect::new(footer.x, footer.y, footer.w, 1), th.border);
         let mut inv = Invalidations::default();
@@ -8362,7 +8418,7 @@ impl Grid {
         x += gap;
         self.page_box.set_scale(s);
         let pb_h = (self.row_h + 2).min(bar_h - 2);
-        let pb_w = (64.0 * s).round() as i32;
+        let pb_w = (self.tuning.page_box_w * s).round() as i32;
         self.page_box.set_bounds(
             Rect::new(x, bar_y + (bar_h - pb_h) / 2, pb_w, pb_h),
             &mut inv,
@@ -8611,9 +8667,6 @@ pub(crate) fn hex_dump(b: &[u8]) -> String {
     }
     out
 }
-
-/// 헤더 표식 툴팁 머무름(ms).
-const MARK_TIP_MS: u64 = 450;
 
 /// 부분 결과에 필터를 걸 때의 방식(설정 `grid.filter_server` · D-257).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

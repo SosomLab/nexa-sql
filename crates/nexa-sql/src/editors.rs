@@ -20,7 +20,7 @@ use nsql_i18n::{t, Msg};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// 탭 우클릭 메뉴 요청(호스트가 처리 · 09-17): 이름 바꾸기 · 닫기(왼쪽/오른쪽/전부) · 파일 위치 열기.
 /// ★ 편집기 탭 유형(사용자 09-22) — 활성 상단 줄 색 · 우클릭 메뉴 구성/활성의 **기준 데이터**.
@@ -82,8 +82,36 @@ pub(crate) enum TabMenuReq {
     RevealObject(usize),
 }
 
-/// ★ T-110 3-4: 섹션 헤더 재훑기 전 입력 멈춤 대기(ms · 타이핑 중 전체 훑기 방지).
-const SECTIONS_SETTLE_MS: u128 = 400;
+/// ★ 편집기 묶음 조정값(T-66 · D-515 · 접속 창 `ConnTuning`과 같은 방식): 구현 상수를 한곳에 모아 비노출 설정 `editor.*`에서
+/// 채운다(`main.rs::editor_tuning`). 기본값 = 종전 상수 그대로(값 불변 · 시험 `tuning_defaults_match_registry`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct EditorTuning {
+    /// 탭 툴팁 카드 지연(ms · 종전 `HOVER_MS`).
+    pub tab_tip_ms: u128,
+    /// 더러운 탭 2단 닫기의 유효 시간(ms · 종전 `CLOSE_CONFIRM` 3초 — 안내 문구의 "3초"와 짝).
+    pub close_confirm_ms: u128,
+    /// 섹션 헤더 재훑기 전 입력 멈춤 대기(ms · T-110 3-4 · 타이핑 중 전체 훑기 방지).
+    pub sections_settle_ms: u128,
+    /// 들여쓰기 감지가 보는 앞쪽 줄 수(큰 파일에서 전체를 훑지 않는다).
+    pub detect_lines: usize,
+    /// 탭 세션 표식 메뉴의 글 폭(논리 px).
+    pub badge_menu_w: f32,
+    /// 탭 우클릭 메뉴의 글 폭(논리 px).
+    pub tab_menu_w: f32,
+}
+
+impl Default for EditorTuning {
+    fn default() -> Self {
+        EditorTuning {
+            tab_tip_ms: 900,
+            close_confirm_ms: 3000,
+            sections_settle_ms: 400,
+            detect_lines: 2000,
+            badge_menu_w: 260.0,
+            tab_menu_w: 200.0,
+        }
+    }
+}
 
 /// ★ T-325 2차: 방언 강조를 어느 탭에 적용할지(공유 세션 = 전용 탭 제외 전부 · 전용 세션 = 그 탭만).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -93,6 +121,8 @@ pub(crate) enum SqlDialectScope {
 }
 
 pub(crate) struct Editors {
+    /// 조정값(T-66 · 비노출 설정 `editor.*`).
+    tuning: EditorTuning,
     tabs: TabBar,
     /// 탭 우클릭 메뉴(결과 탭과 같은 부품 · 팝업 층에 그린다).
     menu: CtxMenu,
@@ -302,11 +332,6 @@ pub(crate) struct Editors {
     notice: Option<Msg>,
 }
 
-/// 더러운 탭 닫기 확인 유효 시간.
-const CLOSE_CONFIRM: Duration = Duration::from_secs(3);
-
-const HOVER_MS: u128 = 900;
-
 impl Editors {
     pub(crate) fn new(
         line_numbers: bool,
@@ -413,6 +438,7 @@ impl Editors {
             new_tab_created: false,
             last_tab_click: None,
             dblclick_ms: 400,
+            tuning: EditorTuning::default(),
             sess_info: HashMap::new(),
             badge_req: None,
             menu_is_badge: false,
@@ -846,7 +872,7 @@ impl Editors {
         }
     }
 
-    /// ★ T-110 3-4: 틱 — 활성 탭의 본문 세대가 바뀐 뒤 `SECTIONS_SETTLE_MS` 동안 더 바뀌지 않으면 주석 구분선을 다시 훑어 미니맵 라벨로
+    /// ★ T-110 3-4: 틱 — 활성 탭의 본문 세대가 바뀐 뒤 `tuning.sections_settle_ms` 동안 더 바뀌지 않으면 주석 구분선을 다시 훑어 미니맵 라벨로
     ///   (타이핑마다 전체를 훑지 않는다 · 큰 파일 L1+는 건너뜀 · 다른 탭은 전환 뒤 첫 틱에). 돌려주는 값 = 라벨이 바뀌어 다시 그려야 하는가.
     pub(crate) fn minimap_sections_tick(&mut self) -> bool {
         if !self.minimap_sections {
@@ -863,7 +889,7 @@ impl Editors {
         let now = std::time::Instant::now();
         match self.sections_pending {
             Some((t, r, at)) if t == id && r == rev => {
-                if now.duration_since(at).as_millis() < SECTIONS_SETTLE_MS {
+                if now.duration_since(at).as_millis() < self.tuning.sections_settle_ms {
                     return false;
                 }
             }
@@ -1171,7 +1197,7 @@ impl Editors {
         self.menu_tab = Some(i);
         self.menu_is_badge = true;
         let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
-        let text_w = (260.0 * self.scale) as i32;
+        let text_w = (self.tuning.badge_menu_w * self.scale) as i32;
         crate::menu_icons::open_at(&mut self.menu, x, y, items, host, text_w);
     }
 
@@ -1180,7 +1206,7 @@ impl Editors {
         self.menu_tab = Some(i);
         self.menu_is_badge = true;
         let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
-        let text_w = (260.0 * self.scale) as i32;
+        let text_w = (self.tuning.badge_menu_w * self.scale) as i32;
         crate::menu_icons::open_at(
             &mut self.menu,
             anchor.x,
@@ -1335,7 +1361,7 @@ impl Editors {
     /// ★ T-69 잔여(10-30): 활성 탭 버퍼에서 들여쓰기를 감지해 그 탭 계층에 넣는다(팝업 "버퍼에서 감지") — 돌려주는 값 = 감지 결과.
     pub(crate) fn guess_indent_from_buffer(&mut self) -> Option<(u8, bool)> {
         let buf = self.cur().buf();
-        let n = buf.line_count().min(DETECT_LINES);
+        let n = buf.line_count().min(self.tuning.detect_lines);
         let lines: Vec<String> = (0..n)
             .map(|l| buf.slice_string(buf.line_start(l), buf.line_end(l)))
             .collect();
@@ -1639,7 +1665,7 @@ impl Editors {
         let name = file_title(path);
         // ★ T-69 잔여(10-30): 열 때 감지(`editor.detect_indent`) — 앞 2000줄만 · 그 탭 계층에만(Sublime `detect_indentation` 관례).
         let detected = if self.detect_indent {
-            detect_indent_in(text.lines().take(DETECT_LINES))
+            detect_indent_in(text.lines().take(self.tuning.detect_lines))
         } else {
             None
         };
@@ -1740,6 +1766,11 @@ impl Editors {
         let dbl = matches!(self.last_tab_click, Some((j, t0)) if j == i && now.duration_since(t0).as_millis() < self.dblclick_ms);
         self.last_tab_click = if dbl { None } else { Some((i, now)) };
         dbl
+    }
+
+    /// 조정값 주입(T-66 · 기동 때 한 번 · 비노출 설정 `editor.*`).
+    pub(crate) fn set_tuning(&mut self, t: EditorTuning) {
+        self.tuning = t;
     }
 
     pub(crate) fn set_dblclick_ms(&mut self, ms: u128) {
@@ -2617,8 +2648,7 @@ impl Editors {
 
     /// 종전의 2단 닫기(설정 `editor.close_unsaved = twice`): 같은 탭을 3초 안에 다시 닫으면 버린다.
     pub(crate) fn close_tab_two_step(&mut self, i: usize) {
-        let again =
-            matches!(self.pending_close, Some((j, t)) if j == i && t.elapsed() <= CLOSE_CONFIRM);
+        let again = matches!(self.pending_close, Some((j, t)) if j == i && t.elapsed().as_millis() <= self.tuning.close_confirm_ms);
         if again {
             self.close_tab_forced(i);
         } else {
@@ -3269,7 +3299,7 @@ impl Editors {
             items.push(CtxItem::maybe("reveal_object", label, on));
         }
         let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
-        let text_w = (200.0 * self.scale) as i32;
+        let text_w = (self.tuning.tab_menu_w * self.scale) as i32;
         crate::menu_icons::open_at(&mut self.menu, p.x, p.y, items, host, text_w);
     }
 
@@ -3343,7 +3373,8 @@ impl Editors {
 
     /// 툴팁 타이머 — 카드가 뜰 시각이 되면 true(호스트가 다시 그린다).
     pub(crate) fn tick(&self) -> bool {
-        matches!(self.hover, Some((_, t)) if t.elapsed().as_millis() >= HOVER_MS && t.elapsed().as_millis() < HOVER_MS + 40)
+        let tip = self.tuning.tab_tip_ms;
+        matches!(self.hover, Some((_, t)) if t.elapsed().as_millis() >= tip && t.elapsed().as_millis() < tip + 40)
     }
 
     pub(crate) fn tooltip_pending(&self) -> bool {
@@ -3357,7 +3388,7 @@ impl Editors {
     /// 툴팁 카드(최상위 — 호스트가 맨 마지막에 부른다).
     pub(crate) fn paint_tooltip(&self, dc: &mut dyn DrawCtx, th: &Theme, clamp_w: i32) {
         let Some((i, since)) = self.hover else { return };
-        if !self.tooltip_on || since.elapsed().as_millis() < HOVER_MS {
+        if !self.tooltip_on || since.elapsed().as_millis() < self.tuning.tab_tip_ms {
             return;
         }
         let Some(r) = self.tabs.tab_rect(i) else {
@@ -3449,9 +3480,6 @@ type TipSaved = (usize, Instant, (Msg, String));
 const DELETED_TAB_COLOR: nexa_ctl::Color = nexa_ctl::Color(0x00A5_1C1C);
 
 /// 경로 → 탭 제목(파일 이름 · 없으면 경로 전체).
-/// 감지가 보는 줄 수 상한(앞부분만 · 큰 파일에서 전체를 훑지 않는다).
-const DETECT_LINES: usize = 2000;
-
 /// ★ T-69 잔여(10-30 · docs/31 §17 세 제품 공통 `detect_indentation`): 줄들의 **앞 공백**에서 (탭 폭, 공백 여부)를 추정한다.
 /// 규칙 = 들여쓴 줄(공백/탭으로 시작 · 빈 줄 제외)이 3개 미만이면 `None` · 탭으로 시작하는 줄이 공백 줄보다 많으면 탭 ·
 /// 공백이면 이웃 줄과의 들여쓰기 **차이**(1~8)의 최빈값이 폭(차이가 하나도 없으면 공백 수의 최빈값 · 그래도 없으면 `None`).

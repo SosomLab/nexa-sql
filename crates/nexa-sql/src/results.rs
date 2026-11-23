@@ -62,6 +62,18 @@ pub(crate) enum PanelAction {
     },
 }
 
+/// 결과 탭 우클릭 메뉴의 글 폭(논리 px · T-66 · 비노출 설정 `grid.result_menu_w`) — 패널이 편집기 탭마다 생기므로 프로세스
+/// 한 값으로 둔다(`nexa_ctl::tokens::set_intent_ms`와 같은 방식 · 기동 때 한 번).
+static MENU_W: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(200);
+
+pub(crate) fn set_menu_w(px: i32) {
+    MENU_W.store(px.max(1), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn menu_w() -> f32 {
+    MENU_W.load(std::sync::atomic::Ordering::Relaxed) as f32
+}
+
 pub(crate) struct ResultPanel {
     pub tabs: Vec<ResultTab>,
     pub active: usize,
@@ -412,7 +424,7 @@ impl ResultPanel {
         ];
         // 창 크기를 모르는 자리 — 메뉴 부품이 그리는 시점에 표면 안으로 스스로 들어온다(nexa-ctl `place_popup` · 61 §2-2 팝업 규칙).
         let host = Rect::new(0, 0, i32::MAX / 2, i32::MAX / 2);
-        let text_w = (200.0 * self.scale) as i32;
+        let text_w = (menu_w() * self.scale) as i32;
         crate::menu_icons::open_at(&mut self.menu, p.x, p.y, items, host, text_w);
     }
 

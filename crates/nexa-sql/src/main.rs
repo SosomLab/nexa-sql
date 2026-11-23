@@ -3246,6 +3246,35 @@ mod bm_gutter_tests {
     }
 }
 
+/// 편집기 묶음 조정값(T-66 · 비노출 설정 `editor.*` → [`editors::EditorTuning`]).
+fn editor_tuning(settings: &Settings) -> editors::EditorTuning {
+    let i = |k: &str| settings.int(k);
+    editors::EditorTuning {
+        tab_tip_ms: i("editor.tab_tip_ms").max(0) as u128,
+        close_confirm_ms: i("editor.close_confirm_ms").max(0) as u128,
+        sections_settle_ms: i("editor.sections_settle_ms").max(0) as u128,
+        detect_lines: i("editor.detect_indent_lines").max(1) as usize,
+        badge_menu_w: i("editor.badge_menu_w").max(1) as f32,
+        tab_menu_w: i("editor.tab_menu_w").max(1) as f32,
+    }
+}
+
+/// 결과 그리드 조정값(T-66 · 비노출 설정 `grid.*` → [`grid::GridTuning`]).
+fn grid_tuning(settings: &Settings) -> grid::GridTuning {
+    let i = |k: &str| settings.int(k);
+    grid::GridTuning {
+        cell_pad: i("grid.cell_pad").max(0) as f32,
+        chip_strip_h: i("grid.chip_strip_h").max(1) as f32,
+        page_box_w: i("grid.page_box_w").max(1) as f32,
+        insert_band_w: i("grid.insert_band_w").max(1) as f32,
+        autosize_rows: i("grid.autosize_rows").max(1) as usize,
+        autofit_rows: i("grid.autofit_rows").max(1) as usize,
+        type_sample_rows: i("grid.type_sample_rows").max(1) as usize,
+        dblclick_ms: i("grid.dblclick_ms").max(1) as u128,
+        mark_tip_ms: i("grid.mark_tip_ms").max(0) as u64,
+    }
+}
+
 /// 로그 창 조정값(T-66 · 비노출 설정 `log.*` → [`log_win::LogTuning`]) — 순수 변환(범위는 레지스트리가 지킨다).
 fn log_tuning(settings: &Settings) -> log_win::LogTuning {
     let i = |k: &str| settings.int(k);
@@ -3274,6 +3303,9 @@ mod tuning_tests {
         // 없는 파일 = 레지스트리 기본값만(실제 설정 폴더를 읽지 않는다).
         let s = Settings::open(std::path::PathBuf::from("__tuning_test_nonexistent__.conf"));
         assert_eq!(log_tuning(&s), log_win::LogTuning::default());
+        assert_eq!(editor_tuning(&s), editors::EditorTuning::default());
+        assert_eq!(grid_tuning(&s), grid::GridTuning::default());
+        assert_eq!(s.int("grid.result_menu_w"), 200);
     }
 }
 

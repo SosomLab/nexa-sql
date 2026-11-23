@@ -263,6 +263,7 @@ impl App {
         self.conn_win.set_tuning(conn_tuning(&self.settings));
         // 로그 창 조정값(T-66 · 비노출 설정 `log.*`).
         self.log_win.set_tuning(log_tuning(&self.settings));
+        self.editors.set_tuning(editor_tuning(&self.settings));
         nexa_ctl::tokens::set_intent_ms(
             self.settings.int("ui.hover_intent_ms").clamp(0, 500) as u64
         );
