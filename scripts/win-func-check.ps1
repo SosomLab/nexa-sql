@@ -21,6 +21,12 @@ param(
 )
 if ($Headless) { $env:NSQL_HEADLESS = "1"; $env:NSQL_NO_ACTIVATE = "1" }
 $ErrorActionPreference = "Continue"
+# ★ D-532(11-24 · T-467과 같은 원인): nsql 출력(UTF-8)을 콘솔 기본(한글 Windows = CP949)으로 읽으면 한글이 깨져 보인다
+#   (판정에는 영향 없음 · 화면 표시만) → 이 스크립트 동안만 UTF-8로 읽고, 끝(또는 오류)에서 원래 값으로 되돌린다.
+#   중간의 `exit` 길은 되돌리지 않는다(`pwsh -File` 실행 = 프로세스가 끝나므로 남지 않는다).
+$prevOutEnc = [Console]::OutputEncoding
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new()
+trap { [Console]::OutputEncoding = $prevOutEnc; break }
 $root = Split-Path -Parent $PSScriptRoot
 # T-346 ①(10-15): 앱은 `NSQL_STARTUP_CMD` 안의 덤프 경로를 **자기 cwd 기준**으로 푼다 → 상대 -Out이면 다른 폴더에 써 S95 판정이 깨진다(125차 V3).
 #   세 경로를 호출 cwd 기준 절대 경로로 고정한다.
@@ -531,3 +537,4 @@ if (-not $Only -or (($Only.Split(",") | ForEach-Object { $_.Trim() }) -contains 
     Say ("  S95 check: " + $(if ($ok) { "PASS" } else { "FAIL" }) + " · " + $t)
 }
 Say ("== done " + (Get-Date -Format "HH:mm:ss"))
+[Console]::OutputEncoding = $prevOutEnc

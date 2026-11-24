@@ -367,7 +367,7 @@ pub(crate) struct GridTuning {
     pub autofit_rows: usize,
     /// 값 유형(배지·열 종류) 추론 표본 행 수.
     pub type_sample_rows: usize,
-    /// 그리드의 더블클릭 간격(ms · 값 보기 · 편집 진입 · 경계 자동 맞춤 — `ui.dblclick_ms`와 별개 = 값 불변).
+    /// 그리드의 더블클릭 간격(ms · 값 보기 · 편집 진입 · 경계 자동 맞춤 — `ui.dblclick_ms`와 별개 키 · 기본값은 같은 500 = D-529).
     pub dblclick_ms: u128,
     /// 헤더 필터 표식 툴팁 머무름(ms).
     pub mark_tip_ms: u64,
@@ -383,7 +383,7 @@ impl Default for GridTuning {
             autosize_rows: 200,
             autofit_rows: 5000,
             type_sample_rows: 200,
-            dblclick_ms: 400,
+            dblclick_ms: 500,
             mark_tip_ms: 450,
         }
     }

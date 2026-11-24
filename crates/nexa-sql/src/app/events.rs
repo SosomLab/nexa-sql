@@ -67,6 +67,13 @@ impl App {
                     }
                 }
                 let name = self.conn_win.panel.profile_name();
+                // ★ SSH 터널 = Pro 기능(D-41 표 · D-537 · 11-24): 게이트(`license.gates` · 기본 꺼짐 = 지금은 늘 통과)가 켜진
+                //   무료판에서는 터널 접속을 시작하지 않고 라이선스 안내를 연다(다른 Pro 기능과 같은 `lic_gate` 한 길).
+                if spec.ssh.is_some() && !self.lic_gate(nsql_license::Feature::SshTunnel) {
+                    let why = self.sess.status.clone();
+                    self.conn_win.panel.set_state(ConnState::Failed(why));
+                    return;
+                }
                 // 테스트 중인 프로필은 끝날 때까지 접속도 막는다(사용자 09-14).
                 if self.conn_win.is_testing(&name) {
                     self.sess.status = t(Msg::StTesting).into();

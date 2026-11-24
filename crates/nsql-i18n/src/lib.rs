@@ -2414,6 +2414,7 @@ pub enum Msg {
     BtnPreview,
     BtnReset,
     ColorsHint,
+    ColorsListOverflow,
     // 단축키(사용자 09-15 · Sublime Text 기본값 · 캡처 창)
     MnCloseTab,
     MnTabRename,
@@ -7953,6 +7954,7 @@ impl Msg {
             ],
             Msg::BtnPreview => ["Preview", "미리보기"],
             Msg::BtnReset => ["Reset", "초기화"],
+            Msg::ColorsListOverflow => ["Up to {0} colors here · saving drops {1}", "{0}색까지 편집 · 저장하면 {1}색 빠짐"],
             Msg::ColorsHint => [
                 "Pick a target, then choose a color.\nChanges apply live - hover or press the Preview button to see them.",
                 "대상을 고른 뒤 색을 선택하세요.\n바로 반영됩니다 - 미리보기 버튼에 마우스를 올리거나 눌러 확인하세요.",
@@ -13244,6 +13246,7 @@ impl Msg {
         Msg::BtnPreview,
         Msg::BtnReset,
         Msg::ColorsHint,
+        Msg::ColorsListOverflow,
         Msg::MnCloseTab,
         Msg::MnTabRename,
         Msg::MnTabCloseLeft,

@@ -23,12 +23,31 @@
 - 구성형 글자는 macOS 글꼴(Arial Black/Bold/Narrow Bold)로 래스터화해 이미지에 들어 있다(글꼴 파일 배포 아님).
 - 회사 로고 + 제품명 캡션형 중 회사 로고가 simple-icons(CC0)가 아닌 것: Microsoft 파비콘 4(synapse · fabric · sqlce · foxpro) · Google 그라데이션 1(alloydb) · Actian 로고 1(actianzen) · GitHub 아바타 2(KxSystems · marklogic) · devicon 1(firestore).
 
-### 2-1. devicon MIT 고지(배포물 포함용 · 원문 확인 필요)
+### 2-1. devicon MIT 고지(배포물 포함용 · 원문 = devicon 저장소 `LICENSE` · 11-24 확인 · D-539)
 
 ```text
 devicon — https://github.com/devicons/devicon
-MIT License · Copyright (c) 2015 konpa(및 기여자 — 원문 LICENSE의 저작권 줄을 그대로 옮길 것)
-Permission is hereby granted, free of charge, … (MIT 전문)
+
+The MIT License (MIT)
+
+Copyright (c) 2015 konpa
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
 ## 3. 후속 확인 과제

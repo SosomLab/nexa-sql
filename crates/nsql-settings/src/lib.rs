@@ -7389,7 +7389,8 @@ pub const REGISTRY: &[Entry] = &[
             min: 100,
             max: 1000,
         },
-        default: "400",
+        // 500 = `ui.dblclick_ms`와 같은 값(사용자 결정 D-529 · 11-24 · 종전 400).
+        default: "500",
     },
     Entry {
         key: "grid.mark_tip_ms",

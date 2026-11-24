@@ -552,7 +552,14 @@ impl TxLog {
                     return false;
                 }
             }
-            needle.is_empty() || e.text.to_lowercase().contains(&needle)
+            // ★ 바인드 변수의 이름·값도 찾는다(D-544 · 11-24): `:id`로 보낸 문장은 원문에 값이 없어 값(`1234`)으로는 찾지 못했다.
+            //   값을 넣은 치환 문장(③)은 찾지 않는다(행마다 다시 계산해야 한다 — 범위 밖).
+            needle.is_empty()
+                || e.text.to_lowercase().contains(&needle)
+                || e.binds.iter().any(|b| {
+                    b.name.to_lowercase().contains(&needle)
+                        || b.value.to_lowercase().contains(&needle)
+                })
         })
     }
 
@@ -746,5 +753,35 @@ mod tests {
         let got: Vec<usize> = l.entries(&f).map(|e| e.index).collect();
         assert_eq!(got, vec![39, 37, 35, 33, 31]);
         assert_eq!(one_line("SELECT *\n  FROM   t\r\n", 9), "SELECT *¶…");
+    }
+
+    /// ★ D-544: 검색이 바인드 변수의 이름·값도 찾는다 — `:id`로 보낸 문장은 원문에 값이 없다.
+    #[test]
+    fn filter_text_also_matches_bind_names_and_values() {
+        let mut l = TxLog::new(16);
+        l.begin(at(1), 1, Purpose::User, 1, "SELECT * FROM t WHERE k = :id");
+        l.set_binds(
+            1,
+            vec![TxBind {
+                name: "ID".into(),
+                ty: "Number".into(),
+                value: "1234".into(),
+                literal: "1234".into(),
+                out: false,
+            }],
+        );
+        l.begin(at(2), 1, Purpose::User, 2, "SELECT 1 FROM dual");
+        let find = |text: &str| -> Vec<usize> {
+            let f = TxFilter {
+                text: text.into(),
+                previous: true,
+                ..TxFilter::default()
+            };
+            l.entries(&f).map(|e| e.index).collect()
+        };
+        assert_eq!(find("1234"), vec![1], "값으로 찾는다");
+        assert_eq!(find("id"), vec![1], "이름·원문(대소문자 무시)");
+        assert_eq!(find("dual"), vec![2], "원문 검색은 그대로");
+        assert!(find("9999").is_empty());
     }
 }

@@ -15,6 +15,12 @@ param(
     [switch]$SkipCargo
 )
 $ErrorActionPreference = "Stop"
+# ★ D-532(11-24 · T-467과 같은 원인): nsql 출력(UTF-8)을 콘솔 기본(한글 Windows = CP949)으로 읽으면 한글이 깨져 보인다
+#   (판정에는 영향 없음 · 화면 표시만) → 이 스크립트 동안만 UTF-8로 읽고, 끝(또는 오류)에서 원래 값으로 되돌린다.
+#   중간의 `exit` 길은 되돌리지 않는다(`pwsh -File` 실행 = 프로세스가 끝나므로 남지 않는다).
+$prevOutEnc = [Console]::OutputEncoding
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new()
+trap { [Console]::OutputEncoding = $prevOutEnc; break }
 Set-Location (Join-Path $PSScriptRoot "..")
 if (-not $Target -and -not $ProfileName) { Write-Host "Target 또는 ProfileName 하나는 필요"; exit 2 }
 
@@ -73,3 +79,4 @@ $out = $sql | & target/debug/nsql.exe run -c $conn --no-prompt -f csv - 2>&1 | O
 Write-Host ($out.Trim() -replace '(?m)^', '   | ')
 if ($LASTEXITCODE -ne 0) { Write-Host "   CLI 왕복 실패(종료 $LASTEXITCODE)"; exit 1 }
 Write-Host "== 전부 통과"
+[Console]::OutputEncoding = $prevOutEnc

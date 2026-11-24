@@ -75,6 +75,9 @@ fn norm_hex(s: &str) -> Option<String> {
 pub(crate) struct ColorList {
     colors: Vec<String>,
     sel: usize,
+    /// 읽을 때 상한([`LIST_MAX`])을 넘어 **빠진 색 수**(D-546 · 11-24): 색 목록 자체(확장)는 개수 제한이 없어 글자로 9색
+    /// 이상을 넣을 수 있다 — 이 창은 8색까지만 편집하므로 저장하면 나머지가 사라진다는 것을 창 안에 알린다(종전 = 말없이 자름).
+    dropped: usize,
 }
 
 impl ColorList {
@@ -87,8 +90,13 @@ impl ColorList {
         if colors.is_empty() {
             colors.push("#808080".into());
         }
+        let dropped = colors.len().saturating_sub(LIST_MAX);
         colors.truncate(LIST_MAX);
-        ColorList { colors, sel: 0 }
+        ColorList {
+            colors,
+            sel: 0,
+            dropped,
+        }
     }
 
     /// 설정에 쓰는 글(`#RRGGBB,#RRGGBB,…`).
@@ -314,6 +322,9 @@ impl ColorsWin {
             .collect();
         self.key_mode = None;
         self.list = Some((key, ColorList::parse(spec, &default)));
+        // ★ 순서 이동 [▲][▼]은 연타가 뜻(D-542 · 11-24 · 순서 편집 창과 같게) — [+][−]는 연타 차단 그대로.
+        self.list_btns[2].set_rapid(true);
+        self.list_btns[3].set_rapid(true);
         self.target = ColorTarget::Key(key);
         self.sync_list_panel(th);
         self.layout();
@@ -375,9 +386,10 @@ impl ColorsWin {
     pub(crate) fn dump(&self) -> String {
         match (&self.list, &self.key_mode) {
             (Some((k, l)), _) => format!(
-                "mode=list key={k} sel={} n={} colors={}\n",
+                "mode=list key={k} sel={} n={} dropped={} colors={}\n",
                 l.sel,
                 l.colors.len(),
+                l.dropped,
                 l.join()
             ),
             (None, Some((k, v))) => {
@@ -728,6 +740,9 @@ impl ColorsWin {
         let hexes: Vec<String> = targets.iter().map(|&tg| self.value_of(th, tg)).collect();
         let list_view: Option<(Vec<String>, usize)> =
             self.list.as_ref().map(|(_, l)| (l.colors.clone(), l.sel));
+        let list_dropped = self.list.as_ref().map_or(0, |(_, l)| l.dropped);
+        // 안내 글 자리 = 아래 버튼 줄의 [미리보기]와 [초기화] 사이 빈 칸.
+        let (note_l, note_r) = (self.preview.bounds(), self.reset_btn.bounds());
         let (Some(win), Some(surface)) = (self.window.clone(), self.surface.as_mut()) else {
             return;
         };
@@ -820,6 +835,22 @@ impl ColorsWin {
                 for b in &self.list_btns {
                     b.paint(&mut dc, th);
                 }
+                // ★ 9색 이상이던 목록(D-546): 이 창은 8색까지 — 저장하면 나머지가 빠진다는 것을 알린다(닫으면 원래 값 그대로).
+                if list_dropped > 0 {
+                    let gap = (8.0 * s).round() as i32;
+                    let clip = Rect::new(
+                        note_l.right() + gap,
+                        note_l.y,
+                        (note_r.x - note_l.right() - gap * 2).max(0),
+                        note_l.h,
+                    );
+                    let msg = nsql_i18n::tf(
+                        Msg::ColorsListOverflow,
+                        &[&LIST_MAX.to_string(), &list_dropped.to_string()],
+                    );
+                    let ny = dc.text_center_y(clip.y, clip.h);
+                    dc.text(clip.x, ny, clip, &msg, th.warn);
+                }
             }
             // 안내(대상 모드만 — 목록 모드는 그 자리에 버튼 줄이 있다).
             if let Some(last) = targets
@@ -857,6 +888,11 @@ mod tests {
     #[test]
     fn color_list_model_round_trips_and_edits() {
         let default = vec!["#111111".to_string(), "#222222".to_string()];
+        // ★ D-546: 상한을 넘는 목록 = 앞 8색만 · 빠진 수를 기억(창이 알린다) · 상한 안이면 0.
+        let eleven: Vec<String> = (0..11).map(|i| format!("#0000{i:02X}")).collect();
+        let over = ColorList::parse(&eleven.join(","), &default);
+        assert_eq!((over.colors.len(), over.dropped), (LIST_MAX, 3));
+        assert_eq!(ColorList::parse("#010203", &default).dropped, 0);
         let l = ColorList::parse("", &default);
         assert_eq!(l.join(), "#111111,#222222");
         let mut l = ColorList::parse(" ff0000 , nope, #00ff0080,#12345", &default);
