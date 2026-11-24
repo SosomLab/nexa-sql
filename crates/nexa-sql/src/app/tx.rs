@@ -1051,6 +1051,29 @@ impl App {
     }
 
     /// 탭 배지 · 툴바 Commit/Rollback 활성·색 — 세 층이 같은 사실을 말한다.
+    /// ★ T-107b 대조 기간(D-551 · 11-25): 미커밋 수의 원천을 거래 기록(TxLog)으로 바꾸기 전에, 두 기록의 수가 **다른 순간**을
+    /// 로그 창에 한 줄 남긴다 — 화면 동작(배지 · 확인 · 버튼)은 그대로 옛 목록 기준이고 여기서는 견주기만 한다.
+    /// 대기 목록이 바뀌는 길은 전부 `sync_tx_ui`를 지나므로 거기서 부른다 · 같은 쌍은 한 번만 적는다.
+    fn tx_crosscheck(&mut self) {
+        let pending = self.sess.tx_count();
+        let logged = self.txlog.open_updates_of(self.sess.id);
+        if pending == logged {
+            self.sess.tx_diff_logged = None;
+            return;
+        }
+        if self.sess.tx_diff_logged == Some((pending, logged)) {
+            return;
+        }
+        self.sess.tx_diff_logged = Some((pending, logged));
+        self.log_win.push(LogEntry::new(
+            LogKind::Info,
+            format!(
+                "[tx-check] pending {pending} != txlog {logged} (session {})",
+                self.sess.id
+            ),
+        ));
+    }
+
     pub(crate) fn sync_tx_ui(&mut self) {
         // ★ 🔧 L2 가드 깨우기(10-15 · 운영 보류 한도 E2E가 찾은 기존 결함): 대기 문장이 없을 때 `tx_guard_tick`이 다음 점검을 **1시간 뒤**로
         //   미루는데, 그 뒤 대기 문장이 생겨도 아무도 그 시각을 당기지 않아 경고·카운트다운·한도 롤백이 한 시간 동안 멈췄다(수동 모드도 같음).
@@ -1062,6 +1085,7 @@ impl App {
             }
         }
         self.sync_tx_button();
+        self.tx_crosscheck();
         let stale = self.tx_is_stale();
         // 탭 배지는 **모든 세션**의 대기 문장을 모은다(전용 세션 탭도 자기 배지) · 오래됨은 세션별 첫 문장 기준.
         let min = self.settings.int("tx.stale_min").max(1) as u64;

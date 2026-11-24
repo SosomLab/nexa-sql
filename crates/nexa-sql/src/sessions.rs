@@ -120,6 +120,9 @@ pub(crate) struct Sess {
     /// 이번 실행이 끝날 때 상태줄 오류 요약 뒤에 이어 붙일 안내(호출 뒤 "미커밋 변경 없음" · 실행 끝에서 한 번 쓰고 비운다).
     pub run_note: Option<String>,
     pub tx_stale_logged: bool,
+    /// ★ T-107b 대조(D-551 · 11-25): 미커밋 목록 수 ↔ 거래 기록(TxLog)의 열린 구간 수가 **다를 때** 마지막으로 로그에 적은 쌍
+    ///   (같은 어긋남을 되풀이해 적지 않게 · 다시 같아지면 None).
+    pub tx_diff_logged: Option<(usize, usize)>,
     /// 이 세션에서 마지막으로 문장을 실행한 시각 — 유휴 미커밋 판정의 시계(docs/56 L2 · "그 세션의 문장 실행만" = 활동).
     pub last_exec: Instant,
     /// 마지막 미커밋 경고 시각(재알림 간격 `tx.remind_min`).
@@ -292,6 +295,7 @@ impl Sess {
             tx_done_index: None,
             run_note: None,
             tx_stale_logged: false,
+            tx_diff_logged: None,
             last_exec: Instant::now(),
             tx_warned_at: None,
             tx_snooze_until: None,

@@ -490,6 +490,15 @@ impl TxLog {
         true
     }
 
+    /// 세션 `session`의 **열린 트랜잭션**이 센 변경 문장 수(없으면 0) — [`Self::open_record`]와 달리 마지막에 고른 세션(`cur`)에
+    /// 기대지 않는다(T-107b 대조 · D-551: 호스트가 세션마다 미커밋 목록 수와 견준다).
+    #[must_use]
+    pub fn open_updates_of(&self, session: u64) -> usize {
+        self.open_of(session)
+            .and_then(|id| self.records.iter().find(|r| r.id == id))
+            .map_or(0, |r| r.updates)
+    }
+
     /// 열린 트랜잭션(있으면).
     #[must_use]
     pub fn open_record(&self) -> Option<&TxRecord> {
@@ -783,5 +792,24 @@ mod tests {
         assert_eq!(find("id"), vec![1], "이름·원문(대소문자 무시)");
         assert_eq!(find("dual"), vec![2], "원문 검색은 그대로");
         assert!(find("9999").is_empty());
+    }
+
+    /// ★ D-551: 세션별 열린 구간의 변경 문장 수 — 마지막에 고른 세션과 무관하게 그 세션 것만 · 닫으면 0.
+    #[test]
+    fn open_updates_of_is_per_session_and_zero_after_close() {
+        let mut l = TxLog::new(16);
+        l.select_session(1);
+        l.begin(at(1), 1, Purpose::User, 1, "UPDATE t SET v = 1");
+        l.attach_tx(1, at(1), true);
+        l.begin(at(2), 1, Purpose::User, 2, "UPDATE t SET v = 2");
+        l.attach_tx(2, at(2), true);
+        l.select_session(2);
+        l.begin(at(3), 2, Purpose::User, 3, "SELECT 1");
+        l.attach_tx(3, at(3), false);
+        assert_eq!((l.open_updates_of(1), l.open_updates_of(2)), (2, 0));
+        assert_eq!(l.open_updates_of(9), 0, "모르는 세션 = 0");
+        l.select_session(1);
+        l.close_tx(TxOutcome::Committed, at(4));
+        assert_eq!(l.open_updates_of(1), 0, "닫으면 0");
     }
 }
