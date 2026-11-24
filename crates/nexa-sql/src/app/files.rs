@@ -1299,7 +1299,10 @@ impl App {
         let res = std::fs::write(&tmp, &text).and_then(|()| std::fs::rename(&tmp, path));
         match res {
             Ok(()) => {
-                let was_untitled = self.editors.path_of(self.editors.active()).is_none();
+                let old_path = self.editors.path_of(self.editors.active());
+                let was_untitled = old_path.is_none();
+                // ★ 다른 이름으로 저장(D-195 · 74 §4-4 · 11-25): 파일 탭을 **다른 경로**로 저장했다.
+                let saved_as_other = old_path.as_deref().is_some_and(|p| p != path);
                 let obj_key = self.editors.doc_object(self.editors.active_id()).cloned();
                 self.editors.mark_saved(path);
                 // ★ 로컬 히스토리(C-1 · 19 §3): 저장 시점 스냅샷(같은 내용이면 건너뜀 · 설정 `history.*`).
@@ -1324,7 +1327,9 @@ impl App {
                 self.backup_forget(self.editors.active_id());
                 // ★ T-153 ③: 무제 탭이 파일이 되면 변수 표를 **그 파일 기준**(경로 해시 파일)으로 인수인계 — 프로젝트의 무제 탭 항목은
                 //   다음 프로젝트 저장 때 경로 탭이 되어 빠진다(사용자 10-26 "저장된 파일 기준에 변수가 인수인계").
-                if was_untitled {
+                // ★ D-195: 다른 이름으로 저장 = 변수 표를 새 경로 기록으로 **복사**(옛 경로의 기록은 그대로 둔다 = 원본 유지).
+                //   종전에는 새 경로 기록이 다음 실행이 변수를 바꿀 때에야 생겨, 그 전에 닫았다가 새 파일을 열면 표가 비어 있었다.
+                if was_untitled || saved_as_other {
                     let tab = self.editors.active_id();
                     if let Some(list) = self.tab_vars.get(&tab).cloned().filter(|l| !l.is_empty()) {
                         self.vars_persist_save(tab, &list);
