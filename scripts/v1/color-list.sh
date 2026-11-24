@@ -14,7 +14,7 @@ rm -f "$V1_OUT"/cl-*.txt
 v1_home en
 v1_gui cla "colors.open:$K,@after:900:colors.dump:$O/cl-a.txt,@after:1200:colors.op:set:#FF00FF,@after:1500:colors.dump:$O/cl-b.txt,@after:1900:file.exit" 20
 expect_re() { if grep -qE -- "$3" "$2" 2>/dev/null; then v1_pass "$1"; else v1_failmsg "$1" "/$3/ 없음 · $(head -c 200 "$2" 2>/dev/null | tr '\n' ' ')"; fi; }
-expect_re "a-list-mode" "$V1_OUT/cl-a.txt" "^mode=list key=$K sel=0 n=6 colors="
+expect_re "a-list-mode" "$V1_OUT/cl-a.txt" "^mode=list key=$K sel=0 n=6 dropped=0 colors="
 CB=$(conf "$V1_HOME")
 expect_re "b-dump-first-magenta" "$V1_OUT/cl-b.txt" 'colors=#FF00FF,'
 expect_eq "b-conf-6-items" "$(items "$CB")" "6"
