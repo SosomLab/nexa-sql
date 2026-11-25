@@ -1348,6 +1348,9 @@ cells={n}
             match what {
                 "ctrl_down" | "ctrl_up" => {
                     self.primary = what == "ctrl_down";
+                    // 시험의 Ctrl 홀드는 지연 없이 켠다(`objlink.hold_ms`는 실제 키 사건에만).
+                    self.primary_armed = self.primary;
+                    self.primary_chord = false;
                     self.objlink_sync();
                     self.inline_key.clear();
                     self.inline_sync();

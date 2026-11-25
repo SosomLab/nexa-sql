@@ -2160,11 +2160,19 @@ fn alias_table_scoped_src(ws: &[Word<'_>], pos: usize, src: Option<&str>) -> Vec
         let lv = if sub.len() == part.len() {
             alias_table_impl(part, true, 0, &ctes, src)
         } else {
-            // 가지 밖(첫 가지 앞의 `WITH`)에서 정의한 CTE는 모든 가지에서 보인다 → 층 전체에서 CTE만 얻어 넘긴다.
-            let level_ctes: Vec<Alias> = alias_table_impl(part, true, 0, &ctes, src)
-                .into_iter()
-                .filter(is_cte)
-                .collect();
+            // 가지 밖(첫 가지 앞의 `WITH`)에서 정의한 CTE는 모든 가지에서 보인다 → **첫 가지**에서 CTE만 얻어 넘긴다.
+            // ★ 종전 = 층 전체를 훑었다(11-25 사용자 "복사/붙여넣기 지연" 실측: PL/SQL 패키지 본문은 한 층에 `;` 문장이 수천 —
+            //   가지마다 층 전체 = 문서 크기의 제곱 · Debug 60 KB에 11 초). `WITH`는 가지의 맨 앞에만 올 수 있어 첫 가지로 충분하고,
+            //   뒤 가지가 스스로 정의한 CTE는 아래 그 가지 분석이 얻는다(다른 `;` 문장의 CTE가 새어 보이던 것도 함께 막힌다).
+            let first = branch_of(part, part.first().map_or(0, |w| w.start));
+            let level_ctes: Vec<Alias> = if std::ptr::eq(first.as_ptr(), sub.as_ptr()) {
+                Vec::new()
+            } else {
+                alias_table_impl(first, true, 0, &ctes, src)
+                    .into_iter()
+                    .filter(is_cte)
+                    .collect()
+            };
             let mut vis = ctes.clone();
             vis.extend(level_ctes.iter().cloned());
             let mut lv = alias_table_impl(sub, true, 0, &vis, src);

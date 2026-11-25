@@ -1916,6 +1916,16 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Int { min: 0, max: 65536 },
         default: "512",
     },
+    // ★ Ctrl 홀드 지연(사용자 11-25 "클립보드 복사/붙여넣기 지연이 너무 크다"): Ctrl을 누르는 순간마다 문서 전체를 분석하던 것을
+    //   "다른 키 없이 이만큼 누르고 있을 때 · 마우스가 움직이거나 눌릴 때"로 — 단축키(Ctrl+C·V·S…)는 분석을 시작하지 않는다.
+    Entry {
+        key: "objlink.hold_ms",
+        cat: Msg::CatObjLink,
+        label: Msg::LblObjLinkHoldMs,
+        desc: Msg::DescObjLinkHoldMs,
+        kind: SettingKind::Int { min: 0, max: 2000 },
+        default: "150",
+    },
     // ★ 확장 "SQL Formatter for kiros33"(`ext.sqlfmt_kiros33.*` · docs/95 §4): Basic이 못 다루는 규칙만.
     Entry {
         key: "ext.sqlfmt_kiros33.strict",
@@ -9505,6 +9515,7 @@ pub const DEPENDS: &[(&str, &str, Dep)] = &[
     ("objlink.bad_width", "objlink.enabled", Dep::On),
     ("objlink.bad_style", "objlink.enabled", Dep::On),
     ("objlink.max_kb", "objlink.enabled", Dep::On),
+    ("objlink.hold_ms", "objlink.enabled", Dep::On),
     ("intel.star_layout", "intel.insert_columns", Dep::On),
     ("intel.star_comma_space", "intel.insert_columns", Dep::On),
     // ★ 145차(사용자 10-27 "intel.insert_alias가 꺼지면 intel.alias_style을 못 바꾸게 · 선후/종속/상하 관계로 Enable 종속") — 마스터가 꺼지면

@@ -33,6 +33,9 @@ struct StmtScope<'t> {
     opens: Vec<usize>,
     /// 지금까지 지난 마지막 **가름 낱말**(`UNION`류 · `;`)의 색인 — 같은 괄호 층이라도 가지가 바뀌면 별칭 표가 다르다(11-19).
     sep: Option<usize>,
+    /// ★ 지금 `;` 문장의 첫 낱말 색인(괄호 밖 `;` 다음 · 11-25) — 별칭 표는 이 문장 구간만 넘겨 만든다(문서 전체가 한 단위인
+    ///   PL/SQL 패키지 본문에서 표 하나에 문서 전체를 훑던 것 = 크기의 제곱).
+    seg: usize,
     last: usize,
     cache: HashMap<(Option<usize>, Option<usize>), Vec<Alias>>,
     dialect: Option<nsql_core::Dialect>,
@@ -53,6 +56,7 @@ impl<'t> StmtScope<'t> {
             wi: 0,
             opens: Vec::new(),
             sep: None,
+            seg: 0,
             last: 0,
             cache: HashMap::new(),
             dialect,
@@ -66,6 +70,7 @@ impl<'t> StmtScope<'t> {
             self.wi = 0;
             self.opens.clear();
             self.sep = None;
+            self.seg = 0;
         }
         self.last = rel;
         while self.wi < self.ws.len() && self.ws[self.wi].start < rel {
@@ -77,6 +82,9 @@ impl<'t> StmtScope<'t> {
                 _ => {
                     if is_scope_separator(&self.ws[self.wi]) {
                         self.sep = Some(self.wi);
+                        if self.opens.is_empty() && self.ws[self.wi].text == ";" {
+                            self.seg = self.wi + 1;
+                        }
                     }
                 }
             }
@@ -85,9 +93,24 @@ impl<'t> StmtScope<'t> {
         // 열쇠 = (가장 안쪽 괄호, 마지막 가름 낱말) — 어느 층에서든 가지가 바뀌면 가름 낱말을 지나므로 열쇠가 달라진다.
         let key = (self.opens.last().copied(), self.sep);
         let (ws, dialect, src) = (&self.ws, self.dialect, self.src);
-        self.cache
-            .entry(key)
-            .or_insert_with(|| alias_table_scoped_in(ws, rel, dialect, src))
+        let (seg, wi, depth0) = (self.seg, self.wi, self.opens.len());
+        self.cache.entry(key).or_insert_with(|| {
+            // 문장 끝 = 지금 자리부터 괄호 밖 첫 `;`(없으면 끝).
+            let mut depth = depth0;
+            let mut end = ws.len();
+            for (j, w) in ws.iter().enumerate().skip(wi) {
+                match w.text {
+                    "(" => depth += 1,
+                    ")" => depth = depth.saturating_sub(1),
+                    ";" if depth == 0 && !w.quoted => {
+                        end = j;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            alias_table_scoped_in(&ws[seg.min(end)..end], rel, dialect, src)
+        })
     }
 }
 
@@ -1064,6 +1087,81 @@ impl App {
         self.settings.flag("objlink.enabled")
     }
 
+    /// ★ 링크 분석을 일으키는 "Ctrl 홀드"인가(11-25): Ctrl이 눌려 있고 켜진(`armed`) 상태 — 단축키(Ctrl+C·V…)의 Ctrl은 아니다.
+    pub(crate) fn link_primary(&self) -> bool {
+        self.primary && self.primary_armed
+    }
+
+    /// Ctrl 눌림이 바뀔 때(`ModifiersChanged`): 새로 눌렸으면 시각을 적고(지연 0 = 즉시 켬), 뗐으면 지운다. 반환 = 지연 마감(깨울 시각).
+    pub(crate) fn link_hold_set(&mut self, was: bool, now: Instant) {
+        if self.primary && !was {
+            self.primary_since = Some(now);
+            self.primary_chord = false;
+            self.primary_armed = self.link_hold_delay().is_zero();
+        } else if !self.primary {
+            self.primary_since = None;
+            self.primary_chord = false;
+            self.primary_armed = false;
+        }
+    }
+
+    fn link_hold_delay(&self) -> Duration {
+        Duration::from_millis(self.settings.int("objlink.hold_ms").clamp(0, 2000) as u64)
+    }
+
+    /// 명령·자체 시험이 "Ctrl을 잠시 누른 것으로 치고" 분석할 때: 눌림과 켜짐을 함께 올리고 종전 값을 돌려준다.
+    pub(crate) fn link_force_on(&mut self) -> (bool, bool) {
+        let was = (self.primary, self.primary_armed);
+        self.primary = true;
+        self.primary_armed = true;
+        was
+    }
+
+    pub(crate) fn link_force_restore(&mut self, was: (bool, bool)) {
+        (self.primary, self.primary_armed) = was;
+    }
+
+    /// 창 사건 하나를 본다: 수식키가 아닌 키 누름 = 단축키(이번 홀드는 분석하지 않는다 · 켜져 있었으면 걷는다) ·
+    /// 마우스 이동/누름 = 링크를 쓰려는 것(즉시 켠다 · Ctrl+클릭이 지연을 기다리지 않게).
+    pub(crate) fn link_hold_event(&mut self, ev: &WindowEvent) {
+        if !self.primary {
+            return;
+        }
+        match ev {
+            WindowEvent::KeyboardInput { event: k, .. }
+                if k.state == ElementState::Pressed && !is_modifier_key(&k.logical_key) =>
+            {
+                let was = self.primary_armed;
+                self.primary_chord = true;
+                self.primary_armed = false;
+                if was {
+                    self.objlink_sync();
+                }
+            }
+            WindowEvent::CursorMoved { .. } | WindowEvent::MouseInput { .. }
+                if !self.primary_armed && !self.primary_chord =>
+            {
+                self.primary_armed = true;
+                self.objlink_sync();
+            }
+            _ => {}
+        }
+    }
+
+    /// 틱: 지연이 지났으면 켜고 분석한다. 반환 = 아직 기다리는 중이면 마감 시각(이벤트 루프가 그때 깨운다).
+    pub(crate) fn link_hold_tick(&mut self, now: Instant) -> Option<Instant> {
+        if !self.primary || self.primary_armed || self.primary_chord {
+            return None;
+        }
+        let due = self.primary_since? + self.link_hold_delay();
+        if now >= due {
+            self.primary_armed = true;
+            self.objlink_sync();
+            return None;
+        }
+        Some(due)
+    }
+
     /// ★ hover 카드(설명 툴팁)를 쓸 수 있는가(사용자 10-13): 설정 `objlink.tooltip`(향상 모드 = FORCED off) · 큰 파일 모드 = 끔 ·
     /// 문서가 `ctrl.off_kb`(줄 끝 라벨과 같은 "끄는 용량" 단계 · 0 = 무제한)보다 크면 끔.
     pub(crate) fn objlink_tooltip_on(&self) -> bool {
@@ -1222,7 +1320,7 @@ impl App {
     /// ★ 수식키·탭·본문·설정이 바뀔 때 — Ctrl을 누르고 있고 쓸 수 있으면 링크 목록을 만들고, 아니면 걷는다.
     pub(crate) fn objlink_sync(&mut self) {
         // ★ 상시 줄 끝 설명(docs/111 `editor.desc_inline`)도 분석을 유지한다 — 밑줄은 Ctrl/머무름일 때만(`objlink_apply_marks`).
-        let want = (self.primary || self.objlinks.hover || self.inline_desc_always())
+        let want = (self.link_primary() || self.objlinks.hover || self.inline_desc_always())
             && self.objlink_enabled()
             && self.objlink_suitable();
         let tab = self.editors.active_id();
@@ -1265,6 +1363,10 @@ impl App {
         }
         let rev = self.editors.cur().rev();
         let partial = self.objlink_partial();
+        let _timer = AnalysisTimer {
+            at: Instant::now(),
+            kb: self.editors.cur().buf().len_bytes() / 1024,
+        };
         let display = self.objlink_display();
         // 부분 분석인데 아직 그린 적이 없으면(보이는 구간 모름) 다음 그리기 뒤 hover에서 다시 온다.
         let region = self.objlink_region(partial).unwrap_or((0, 0));
@@ -2541,8 +2643,7 @@ impl App {
         if self.focus != Focus::Editor {
             return;
         }
-        let was = self.primary;
-        self.primary = true;
+        let was = self.link_force_on();
         self.objlink_sync();
         let caret = self.editors.cur().caret();
         let hit = self
@@ -2568,8 +2669,8 @@ impl App {
                 self.redraw();
             }
         }
-        self.primary = was;
-        if !was {
+        self.link_force_restore(was);
+        if !(was.0 && was.1) {
             self.objlink_sync();
         }
     }
@@ -2577,12 +2678,11 @@ impl App {
     /// 자체 시험(기동 명령 `objlink.reveal:<이름>`): 분석된 링크 가운데 이름이 같은 첫 링크로 찾기.
     pub(crate) fn objlink_reveal_named(&mut self, name: &str) -> bool {
         // 링크는 Ctrl(⌘)을 누르는 동안만 분석된다 → 시험에서는 잠시 누른 것으로 치고 분석한 뒤 되돌린다.
-        let was = self.primary;
-        self.primary = true;
+        let was = self.link_force_on();
         self.objlink_sync();
         let ok = self.objlink_reveal_named_inner(name);
-        self.primary = was;
-        if !was {
+        self.link_force_restore(was);
+        if !(was.0 && was.1) {
             self.objlink_sync();
         }
         ok
@@ -2590,8 +2690,7 @@ impl App {
 
     /// 자체 시험(기동 명령 `objlink.dump:<파일>` · ㉙): 분석된 링크 한 줄씩 `종류|이름|known|설명`(Ctrl을 잠시 누른 것으로 치고 분석).
     pub(crate) fn objlink_dump_text(&mut self) -> String {
-        let was = self.primary;
-        self.primary = true;
+        let was = self.link_force_on();
         self.objlink_sync();
         let mut out = String::new();
         for k in 0..self.objlinks.links.len() {
@@ -2610,8 +2709,8 @@ impl App {
                 l.known
             ));
         }
-        self.primary = was;
-        if !was {
+        self.link_force_restore(was);
+        if !(was.0 && was.1) {
             self.objlink_sync();
         }
         out
@@ -2852,8 +2951,7 @@ impl App {
 
     /// 자체 시험(㉗-k): 이름으로 링크를 찾아 **우클릭한 것처럼** 메뉴를 연다(Ctrl을 잠시 누른 것으로 치고 분석).
     pub(crate) fn objlink_menu_named(&mut self, name: &str) -> bool {
-        let was = self.primary;
-        self.primary = true;
+        let was = self.link_force_on();
         self.objlink_sync();
         let found = self
             .objlinks
@@ -2882,7 +2980,7 @@ impl App {
             ),
         ));
         let Some(p) = pt else {
-            self.primary = was;
+            self.link_force_restore(was);
             return false;
         };
         let diag = {
@@ -2908,14 +3006,13 @@ impl App {
                 self.objlink_menu.is_open()
             ),
         ));
-        self.primary = was;
+        self.link_force_restore(was);
         ok
     }
 
     /// 자체 시험(㉗-k): 메뉴가 열린 채 재분석을 **강제**(선적재 응답으로 stamp가 바뀐 상황 흉내) — 메뉴 링크가 살아남아야 한다.
     pub(crate) fn objlink_resync_forced(&mut self) {
-        let was = self.primary;
-        self.primary = true;
+        let was = self.link_force_on();
         self.objlinks.stamp = u64::MAX;
         // 메뉴가 열려 있으면 미루는 규칙이 있으므로 여기서는 그 규칙을 지나쳐 재분석 본체만 돈다(최악 조건).
         let menu_was_open = self.objlink_menu.is_open();
@@ -2924,7 +3021,7 @@ impl App {
         }
         self.objlink_sync();
         self.objlink_menu_force_closed_for_resync = false;
-        self.primary = was;
+        self.link_force_restore(was);
     }
 
     /// 그릴 툴팁(커서 아래 링크의 설명 · 표시 설정 켜짐) — (본문, 링크 글자 사각형). 페인트가 표면을 빌리기 **전에** 셈한다.
@@ -3247,6 +3344,40 @@ fn ddl_head_kind(prev_up: &str) -> Option<LinkKind> {
     }
 }
 
+/// 수식키 자체의 누름인가(Ctrl·Shift·Alt·Super… — 단축키의 "다른 키"가 아니다).
+fn is_modifier_key(k: &Key) -> bool {
+    matches!(
+        k,
+        Key::Named(
+            NamedKey::Control
+                | NamedKey::Shift
+                | NamedKey::Alt
+                | NamedKey::AltGraph
+                | NamedKey::Super
+                | NamedKey::Meta
+                | NamedKey::Hyper
+                | NamedKey::CapsLock
+                | NamedKey::Fn
+        )
+    )
+}
+
+/// ★ 링크 분석 한 번의 시간(11-25 "복사/붙여넣기 지연"): 50 ms를 넘거나 `NSQL_TRACE_OBJLINK`가 있으면 stderr에 한 줄
+///   (`[objlink] analysis <ms> ms · <KB> KB`). 평소 비용 = 시각 두 번.
+struct AnalysisTimer {
+    at: Instant,
+    kb: usize,
+}
+
+impl Drop for AnalysisTimer {
+    fn drop(&mut self) {
+        let ms = self.at.elapsed().as_millis();
+        if ms >= 50 || std::env::var_os("NSQL_TRACE_OBJLINK").is_some() {
+            eprintln!("[objlink] analysis {ms} ms · {} KB", self.kb);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     /// T-153 ⑤: 변수 링크 = `:이름`·`&이름`(문자열·주석 밖 · `&&` · 숫자 바인드 제외) · 글자 인덱스(한글 앞머리) · known = 호스트 판정.
@@ -3393,6 +3524,44 @@ mod tests {
     /// ★ 10-21(134차 win · 사용자 "서브쿼리 안 `T1.컬럼`의 설명이 안 보인다" = 협업 진단 Column 링크 0): 바깥 SELECT로 감싼 서브쿼리 안의
     /// ★ 11-19(사용자 "한 문장인데 첫 서브쿼리에만 설명이 나온다"): 블록마다 같은 별칭 `A`가 다른 테이블 — 컬럼 링크의 주인이
     /// **그 블록의 테이블**이고, 가운데·바깥 블록의 인라인 뷰 컬럼은 원본 컬럼으로(이름을 바꾼 것 포함 · 집계는 링크 없음).
+    /// ★ 큰 PL/SQL 패키지 본문의 분석 시간(11-25 사용자 "복사/붙여넣기 지연"): 한 단위 안에 `;` 문장이 수천인 문서에서 별칭 표를
+    ///   문장마다 문서 전체로 만들던 것 = 크기의 제곱(Debug 60 KB에 11 초 · 200 KB는 끝나지 않음). 고친 뒤 200 KB ≈ 0.2 초 —
+    ///   넉넉한 상한(5 초)으로 제곱 회귀만 잡는다. 문장 안의 별칭은 그 문장에서만 풀려야 한다(구간을 문장으로 좁힌 것의 확인).
+    #[test]
+    fn scan_large_package_body_is_not_quadratic() {
+        let mut text = String::from(
+            "CREATE OR REPLACE PACKAGE BODY pkg_big IS
+",
+        );
+        let mut i = 0;
+        while text.len() < 200 * 1024 {
+            i += 1;
+            text.push_str(&format!(
+                "PROCEDURE cr_item_{i}(p_a VARCHAR2) IS
+  v_cnt NUMBER;
+BEGIN
+  SELECT COUNT(*) INTO v_cnt FROM emp a JOIN dept b ON a.deptno = b.deptno WHERE a.ename = p_a;
+  UPDATE emp e SET e.sal = v_cnt WHERE e.ename = p_a;
+  COMMIT;
+END cr_item_{i};
+
+"
+            ));
+        }
+        text.push_str(
+            "END pkg_big;
+/
+",
+        );
+        let t0 = std::time::Instant::now();
+        let v = scan(&text, Some(nsql_core::Dialect::Oracle), &Fake);
+        let ms = t0.elapsed().as_millis();
+        assert!(ms < 5000, "scan took {ms} ms for {} KB", text.len() / 1024);
+        // 문장마다 `emp`·`dept` 테이블 링크가 나온다(문장 수만큼 · 별칭 a/b/e는 그 문장 안에서만 풀린다).
+        let tables = v.iter().filter(|l| l.kind == LinkKind::Table).count();
+        assert!(tables >= 3 * i, "table links {tables} for {i} procedures");
+    }
+
     #[test]
     fn same_alias_in_each_block_links_to_its_own_table() {
         let text = "SELECT * FROM ( \

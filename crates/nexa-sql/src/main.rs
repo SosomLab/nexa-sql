@@ -897,6 +897,11 @@ struct App {
     cursor: (i32, i32),
     shift: bool,
     primary: bool,
+    /// ★ Ctrl 홀드(객체 링크 · 11-25): 누른 시각 · 이번 홀드에 다른 키가 눌렸는가(= 단축키) · 링크 분석을 켰는가.
+    ///   분석은 `armed`일 때만(`link_primary`) — Ctrl+C·V가 문서 전체 분석을 일으키지 않게.
+    primary_since: Option<Instant>,
+    primary_chord: bool,
+    primary_armed: bool,
     alt: bool,
     /// 마지막 마우스 위치(창 좌표 · 휠의 안/밖 판정 — 휠 사건에는 좌표가 없다 · 09-24).
     pointer: Option<Point>,
@@ -2393,6 +2398,9 @@ fn main() {
         tab_obj_target: HashMap::new(),
         mem_heap: None,
         col_right_drag: false,
+        primary_since: None,
+        primary_chord: false,
+        primary_armed: false,
         ctrl_raw: false,
         ctrl_mac: false,
         started: Instant::now(),

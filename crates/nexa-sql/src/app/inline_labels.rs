@@ -319,7 +319,7 @@ impl App {
             "{}|{}|{}|{:?}|{caret}|{stamp}|{}",
             self.editors.active_id(),
             tb.rev(),
-            self.primary,
+            self.link_primary(),
             tb.visible_range(),
             self.objlinks.links.len()
         );
@@ -340,7 +340,7 @@ impl App {
     pub(crate) fn inline_sync(&mut self) {
         let i = self.editors.active();
         let cfg = self.inline_cfg();
-        let want = wanted(&cfg, self.primary);
+        let want = wanted(&cfg, self.link_primary());
         let mut lines: BTreeMap<usize, (Option<String>, Vec<String>)> = BTreeMap::new();
         if let Some(sc) = want.bookmarks {
             let cap = self.settings.int("bookmark.inline_label_chars").max(8) as usize;

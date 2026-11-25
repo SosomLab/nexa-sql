@@ -828,6 +828,10 @@ impl ApplicationHandler<Wake> for App {
         if let Some(t) = self.ai_tick_due(now) {
             next = next.min(t);
         }
+        // ★ Ctrl 홀드 지연 마감(11-25) — 지났으면 링크 분석, 아니면 그때 깨운다.
+        if let Some(t) = self.link_hold_tick(now) {
+            next = next.min(t);
+        }
         el.set_control_flow(ControlFlow::WaitUntil(next));
     }
 
@@ -851,6 +855,7 @@ impl ApplicationHandler<Wake> for App {
         //   ① winit은 창이 포커스를 얻을 때 **이미 눌려 있는 키**를 합성 누름(`is_synthetic`)으로 보낸다 → 어느 창이든 버린다
         //   (사용자가 새로 누른 것이 아니다 · 수식키 상태는 `ModifiersChanged`가 따로 알린다) ② 계속 누르고 있으면 OS 자동 반복이
         //   새 창으로 온다 → 입력 창을 닫은 뒤 그 키가 떼어질 때까지의 반복 누름을 버린다(`key_guard_step`).
+        self.link_hold_event(&event);
         if let WindowEvent::KeyboardInput {
             event: k,
             is_synthetic,
@@ -1039,11 +1044,14 @@ impl ApplicationHandler<Wake> for App {
                 if self.explorer.set_shift(self.shift) {
                     self.redraw();
                 }
+                let was_primary = self.primary;
                 self.primary = if cfg!(target_os = "macos") {
                     m.state().super_key()
                 } else {
                     m.state().control_key()
                 };
+                // ★ Ctrl 홀드(11-25): 누르는 순간 분석하지 않는다 — 지연 뒤 · 마우스 이동/누름 때(`link_hold_tick`/`link_hold_event`).
+                self.link_hold_set(was_primary, Instant::now());
                 // macOS Control(⌘와 별개 · Sublime `ctrl+cmd+g`) — 다른 OS에선 늘 false.
                 self.ctrl_mac = cfg!(target_os = "macos") && m.state().control_key();
                 self.alt = m.state().alt_key();
