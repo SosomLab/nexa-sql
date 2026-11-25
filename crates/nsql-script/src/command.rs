@@ -383,8 +383,14 @@ pub fn parse_command(text: &str) -> Result<Option<Command>, String> {
         },
         "WHENEVER" => {
             let r = rest.to_ascii_uppercase();
-            Command::Whenever {
-                on_error_exit: r.starts_with("SQLERROR EXIT"),
+            // ★ `WHENEVER OSERROR …`는 구현하지 않는다(11-25 · T-509 조사에서 발견): 종전 = `SQLERROR EXIT`가 아니라는 이유로
+            //   **앞서 켠 `WHENEVER SQLERROR EXIT`를 꺼 버렸다**(오류 뒤에도 스크립트가 계속 돈다) → 아무 일도 하지 않는 줄로.
+            if r.starts_with("OSERROR") {
+                Command::Remark
+            } else {
+                Command::Whenever {
+                    on_error_exit: r.starts_with("SQLERROR EXIT"),
+                }
             }
         }
         _ => return Ok(None),
@@ -984,6 +990,27 @@ GO
 
 #[cfg(test)]
 mod tests {
+    /// `WHENEVER OSERROR …`는 `SQLERROR EXIT` 설정을 건드리지 않는다(11-25 · 종전 = 꺼 버렸다).
+    #[test]
+    fn whenever_oserror_does_not_reset_sqlerror_exit() {
+        assert!(matches!(
+            parse_command("WHENEVER SQLERROR EXIT"),
+            Ok(Some(Command::Whenever {
+                on_error_exit: true
+            }))
+        ));
+        assert!(matches!(
+            parse_command("WHENEVER SQLERROR CONTINUE"),
+            Ok(Some(Command::Whenever {
+                on_error_exit: false
+            }))
+        ));
+        assert!(matches!(
+            parse_command("WHENEVER OSERROR EXIT"),
+            Ok(Some(Command::Remark))
+        ));
+    }
+
     /// T-153 — `COLUMN … NEW_VALUE`: 줄임말(`COL` · `NEW_V`) · 표시 옵션은 무시 · CLEAR · 이름 없음 = 오류.
     #[test]
     fn column_new_value_command() {

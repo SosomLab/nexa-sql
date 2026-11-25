@@ -2536,7 +2536,7 @@ impl Runner {
         }
         // ★ **같은 서버·계정**에 다시 `CONNECT` = 자격을 바꿔 다시 붙겠다는 뜻(사용자 09-21 · SQL*Plus와 같다): 기존 접속을
         //   **먼저 닫는다** → 새 자격이 거부되면 옛 자격의 세션이 살아남지 않는다("연결 없음"으로 끝난다). 다른 서버로의
-        //   `CONNECT`가 실패한 경우는 종전대로 옛 접속을 유지한다.
+        //   `CONNECT`는 시도한 뒤 **실패했을 때** 옛 접속을 닫는다(T-509 · 11-25 · 아래 `Err` 갈래 · 종전 = 유지).
         let same_target = self.connected_to.as_ref().is_some_and(|c| {
             c.dialect == spec.dialect
                 && c.host == spec.host
@@ -2643,7 +2643,17 @@ impl Runner {
                 true
             }
             Err(e) => {
-                if closed_first {
+                // ★ **다른 대상**으로의 `CONNECT`가 실패해도 옛 접속을 닫는다(T-509 · D-557 · 11-25 · SQL*Plus와 같다 = 실패한
+                //   CONNECT 뒤에는 접속 없음). 종전 = 옛 접속 유지 → 뒤 문장들이 **원래 서버에서** 그대로 실행됐다(다른 DB에
+                //   보내려던 문장이 원래 DB — 운영일 수도 — 에서 돈다 · GUI는 대상 정보가 이미 새 것으로 바뀌어 운영 확인 판정도
+                //   어긋날 수 있었다). 이제 뒤 문장은 "not connected"로 실패한다. 옛 접속의 작업은 위에서 이미 커밋됐다.
+                let closed_other = !closed_first && self.session.take().is_some();
+                if closed_other {
+                    self.connection = None;
+                    self.connected_to = None;
+                    self.note_tx_ended();
+                }
+                if closed_first || closed_other {
                     emit(RunEvent::ConnectionClosed);
                 }
                 // 접속 거부가 드라이버 제약(OS 인증 · 11g · NNE)이면 제약 안내도(세션이 없으므로 드라이버 이름 = 메시지 머리).
@@ -4600,14 +4610,16 @@ mod tests {
         assert!(r.session.is_none() && r.connection.is_none());
         assert!(matches!(ev.first(), Some(RunEvent::ConnectionClosed)));
         assert!(matches!(ev.get(1), Some(RunEvent::Error { .. })));
-        // 다른 서버로의 실패 = 옛 접속 유지(종전 동작).
+        // 다른 서버로의 실패 = 옛 접속도 닫는다(T-509 · D-557 · 종전 = 유지 → 뒤 문장이 원래 서버에서 실행됐다).
         fail.set(false);
         assert!(r.connect(&a, &mut |_| {}));
         fail.set(true);
         ev.clear();
         let other = ConnectSpec::parse("oracle://u:pw@other:1521/svc").unwrap();
         assert!(!r.connect(&other, &mut |e| ev.push(e)));
-        assert!(r.session.is_some());
+        assert!(r.session.is_none() && r.connection.is_none());
+        assert!(matches!(ev.first(), Some(RunEvent::ConnectionClosed)));
+        assert!(ev.iter().any(|e| matches!(e, RunEvent::Error { .. })));
         assert!(!ev.iter().any(|e| matches!(e, RunEvent::Disconnected)));
     }
 
