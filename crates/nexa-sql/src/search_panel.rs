@@ -94,6 +94,22 @@ pub(crate) fn parse_where(
     spec
 }
 
+/// ★ Where 글이 **범위를 스스로 정하는가**(D-555 · 사용자 11-25): 폴더/파일 경로 · `<open files>` · `<current file>` 가운데
+/// 하나라도 있으면 true — 비었거나 패턴(`*.sql` · `+x` · `-x`)뿐이면 false(= 기본 범위 전체로 퍼진다). AI 도구 `search_files`는
+/// false면 실행하지 않는다(프로젝트 전체 훑기 금지 · 사용자 패널은 종전 그대로). [`parse_where`]의 `any_scope`와 같은 판정.
+pub(crate) fn where_names_scope(text: &str) -> bool {
+    text.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .any(|it| {
+            let low = it.to_ascii_lowercase();
+            matches!(
+                low.as_str(),
+                "<open files>" | "<open tabs>" | "<current file>" | "<current folder>"
+            ) || !(it.starts_with('-') || it.starts_with('+') || is_glob_token(it))
+        })
+}
+
 /// 글롭 토큰인가 — `*`/`?`가 들어 있고 드라이브·절대 경로 꼴이 아닌 것(`*.sql` · `src/**/*.txt` · `test?.sql`).
 fn is_glob_token(s: &str) -> bool {
     if !(s.contains('*') || s.contains('?')) {
@@ -1674,6 +1690,23 @@ mod tests {
 
     /// ←/→ 규칙(사용자 10-20): 일치 행 ← = 부모 파일 · 펼친 파일 ← = 접기 · 접힌 파일 ← = 없음 · 접힌 파일 → = 펼치기 ·
     /// 펼친 파일 → = 없음 · 제외 줄 ← = 제외 머리 · 제외 머리 접기/펼치기.
+    /// D-555: AI 파일 검색은 범위가 특정될 때만 — 빈 글·패턴뿐 = false · 경로·열린 탭·현재 파일 = true.
+    #[test]
+    fn where_names_scope_needs_a_path_or_scope_token() {
+        for w in ["", "  ", "*.sql", "*.sql, -*_test.sql", "+pkg", "-target"] {
+            assert!(!where_names_scope(w), "{w:?}");
+        }
+        for w in [
+            "docs",
+            r"D:\proj\sql, *.sql",
+            "<open files>",
+            "*.sql, <current file>",
+            r#""C:\my folder""#,
+        ] {
+            assert!(where_names_scope(w), "{w:?}");
+        }
+    }
+
     #[test]
     fn fold_step_rules() {
         let rows = [

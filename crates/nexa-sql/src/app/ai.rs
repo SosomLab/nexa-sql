@@ -2574,6 +2574,13 @@ impl App {
         // ★ 어시스턴트가 돌린 문장이 아직 DB에서 도는 중이면 **그 실행도 취소**한다(협업 V1 11-13: ■ 뒤에도 긴 조회가 계속 돌아
         //   세션이 묶였다 · 편집기 ■와 같은 길 `stop_run` — 두 번째 ■ = 강제 중지 규칙도 그대로).
         let cancel_db = self.sess.busy && self.ai.pending.as_ref().is_some_and(|p| p.silent);
+        // ★ 파일 검색을 기다리던 중이면 그 검색도 멈춘다(T-518 · 종전 = ■ 뒤에도 패널 검색이 끝까지 돌았다).
+        if matches!(
+            self.ai.pending.as_ref().and_then(|p| p.wait_ui.as_ref()),
+            Some(AiWait::Search { .. })
+        ) {
+            self.search.cancel();
+        }
         if let Some(mut p) = self.ai.pending.take() {
             if let Some(r) = p.reply.take() {
                 let _ = r.send(ToolReply {
@@ -4613,6 +4620,10 @@ impl App {
                     err("empty query".into())
                 } else if self.ai.pending.is_some() {
                     err("busy - another tool is still waiting".into())
+                } else if !crate::search_panel::where_names_scope(&g("where")) {
+                    // ★ D-555(사용자 11-25): 범위(폴더·파일 · 열린 탭)가 특정되지 않으면 파일 검색을 하지 않는다 — 종전 = 빈 `where`가
+                    //   프로젝트 전체(8천여 파일 · 150 초 넘음)를 훑고 사용자 검색 패널을 차지했다(T-518).
+                    err("search_files was NOT run: `where` must name a specific folder or file (or `<open files>` / `<current file>`); patterns alone are not enough. Do not scan the whole project. For database columns, tables or routines use search_objects / describe_object instead. If a file search is really needed and you do not know which folder holds that kind of information, ask the user for the folder.".into())
                 } else {
                     // 검색 패널을 보이게 하고(값·결과가 화면에 남는다 · 사용자 11-14 "Search에 값을 입력하고 조회까지") 값을 넣어 실행.
                     if !self.search.is_visible() {
@@ -5152,6 +5163,8 @@ impl App {
             match w {
                 // 파일 검색: 워커가 끝나면(또는 상한 시간) 결과 줄을 답한다.
                 AiWait::Search { limit } => (!self.search.searching() || timeout).then(|| {
+                    // 상한 시간에 닿았으면 검색을 멈추고(T-518 · 종전 = 답한 뒤에도 계속 돌았다) 그때까지의 결과로 답한다.
+                    self.search.cancel();
                     (
                         self.search.ai_results(*limit),
                         self.search.ai_error().is_none(),

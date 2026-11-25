@@ -202,14 +202,14 @@ pub(crate) const TOOLS: &[Tool] = &[
     },
     Tool {
         name: "search_files",
-        desc: "Search file CONTENTS (the app's Find in Files): sets the query and options, runs the search and returns `path:line:column<TAB>line text` rows (first line = summary). `where` uses the panel syntax: comma-separated folders/files, `*.sql` or `+pattern` to include, `-pattern` to exclude, `<open files>`, `<current file>`; empty = open tabs + the project/folder root. Then use open_file with line to go to a hit. (list_files only matches path names.)",
+        desc: "Search file CONTENTS (the app's Find in Files): sets the query and options, runs the search and returns `path:line:column<TAB>line text` rows (first line = summary). `where` uses the panel syntax: comma-separated folders/files, `*.sql` or `+pattern` to include, `-pattern` to exclude, `<open files>`, `<current file>`. `where` MUST name at least one specific folder or file (or `<open files>` / `<current file>`): a call without one is rejected, the whole project is never scanned. Use this only when the answer is expected to be in files and you know which folder holds that kind of information; for database columns, tables or routines use search_objects / describe_object, and ask the user for the folder when you do not know it. Then use open_file with line to go to a hit. (list_files only matches path names.)",
         write: false,
         props: &[
             ("query", "string", "Text or regular expression to find", true),
             ("case", "boolean", "Match case (default false)", false),
             ("word", "boolean", "Whole word (default false)", false),
             ("regex", "boolean", "Query is a regular expression (default false)", false),
-            ("where", "string", "Scope / include / exclude patterns (panel syntax)", false),
+            ("where", "string", "Scope: at least one folder/file path (or <open files> / <current file>), plus optional include / exclude patterns (panel syntax)", true),
             ("where_case", "boolean", "Case-sensitive path patterns (default false)", false),
             ("limit", "integer", "Max result rows (default 100)", false),
         ],
