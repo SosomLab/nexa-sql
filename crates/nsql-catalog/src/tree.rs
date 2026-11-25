@@ -561,27 +561,84 @@ pub fn sub_items(
         SubKind::Methods => methods(s, d, schema, name),
         SubKind::Procedures | SubKind::Functions => {
             let want_proc = sub == SubKind::Procedures;
-            Ok(package_members(s, schema, name)?
-                .into_iter()
-                .filter(|m| {
-                    let is_proc = m.data_type.eq_ignore_ascii_case("PROCEDURE");
-                    is_proc == want_proc
-                })
+            let icon = if want_proc {
+                SubIcon::Procedure
+            } else {
+                SubIcon::Function
+            };
+            let public = package_members(s, schema, name)?;
+            // ★ 본문 전용(비공개) 멤버(사용자 11-25 "구현이 Body에 반영되어 목록에 보이지 않는 버그"): `ALL_PROCEDURES`는 스펙에
+            //   선언된 것만 준다 → 본문 소스(`ALL_SOURCE`)를 읽어 아웃라인으로 뽑아 덧붙인다. 본문이 없거나 읽을 권한이 없거나
+            //   감싸진(wrapped) 본문이면 공개 멤버만(실패를 목록 오류로 올리지 않는다). 폴더를 펼칠 때만 읽는다(지연 로딩).
+            let body = super::source_with(
+                s,
+                schema,
+                super::ObjectKind::PackageBody,
+                name,
+                super::SourceOpts { qualify: false },
+            )
+            .unwrap_or_default();
+            let public_names: Vec<&str> = public.iter().map(|m| m.name.as_str()).collect();
+            let private = private_members(&body, &public_names);
+            let mut out: Vec<SubItem> = public
+                .iter()
+                .filter(|m| m.data_type.eq_ignore_ascii_case("PROCEDURE") == want_proc)
                 .map(|m| {
-                    let icon = if want_proc {
-                        SubIcon::Procedure
-                    } else {
-                        SubIcon::Function
-                    };
                     item(
-                        m.name,
+                        m.name.clone(),
                         member_detail(want_proc, &m.data_type, &m.overload),
                         icon,
                     )
                 })
-                .collect())
+                .collect();
+            out.extend(
+                private
+                    .into_iter()
+                    .filter(|(_, is_proc)| *is_proc == want_proc)
+                    .map(|(n, _)| SubItem {
+                        status: PRIVATE_MEMBER.to_string(),
+                        ..item(n, "", icon)
+                    }),
+            );
+            Ok(out)
         }
     }
+}
+
+/// 본문 전용(비공개) 패키지 멤버 잎의 `status` 값 — 밖에서 부를 수 없고 `ALL_ARGUMENTS`에 인자가 없다(탐색기는 이 잎을 펼치지 않는다).
+pub const PRIVATE_MEMBER: &str = "private";
+
+/// 패키지 **본문 소스**에서 본문 전용 멤버를 뽑는다(순수 · 11-25): 패키지 바로 아래의 `PROCEDURE`/`FUNCTION`(전방 선언 · 구현 모두 ·
+/// 서브프로그램 안의 로컬 것은 제외) 중 공개 이름(`public` · 대소문자 무시)에 없는 것 — 이름은 대문자로, 같은 이름은 한 번만(나온 순서).
+/// 반환 = (이름, 프로시저인가).
+#[must_use]
+pub fn private_members(body_src: &str, public: &[&str]) -> Vec<(String, bool)> {
+    use nsql_script::outline::{outline, SymKind};
+    let o = outline(body_src, Some(nsql_core::Dialect::Oracle));
+    let Some(pkg) = o
+        .symbols
+        .iter()
+        .position(|s| s.kind == SymKind::PackageBody)
+    else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, bool)> = Vec::new();
+    for s in &o.symbols {
+        let is_proc = match s.kind {
+            SymKind::Procedure => true,
+            SymKind::Function => false,
+            _ => continue,
+        };
+        if s.parent != Some(pkg) {
+            continue;
+        }
+        let n = s.name.trim_matches('"').to_uppercase();
+        if public.iter().any(|p| p.eq_ignore_ascii_case(&n)) || out.iter().any(|(x, _)| *x == n) {
+            continue;
+        }
+        out.push((n, is_proc));
+    }
+    out
 }
 
 /// 패키지 멤버 잎의 흐린 글(10-10): 프로시저 = 빈 글 또는 `#n` · 함수 = `FUNCTION → T`[` #n`]. `#n`은 오버로드일 때만(ALL_PROCEDURES
@@ -857,6 +914,43 @@ mod tests {
     use super::*;
 
     /// `member_detail` ↔ `member_overload` 왕복(프로시저·함수 · 오버로드 유무).
+    #[test]
+    fn private_members_from_body_source() {
+        // 전방 선언 + 구현(같은 이름 한 번) · 공개 이름 제외 · 로컬 서브프로그램 제외 · 함수/프로시저 구분.
+        let src = "CREATE OR REPLACE PACKAGE BODY pkg_x IS
+            PROCEDURE cr_item(p_a VARCHAR2, p_b VARCHAR2);
+            FUNCTION calc(p_a NUMBER) RETURN NUMBER;
+            PROCEDURE run(p_a VARCHAR2) IS
+              PROCEDURE local_helper IS BEGIN NULL; END local_helper;
+            BEGIN
+  cr_item(p_a, 'x');
+END run;
+            PROCEDURE cr_item(p_a VARCHAR2, p_b VARCHAR2) IS
+BEGIN
+  NULL;
+END cr_item;
+            FUNCTION calc(p_a NUMBER) RETURN NUMBER IS
+BEGIN
+  RETURN p_a;
+END calc;
+            END pkg_x;
+/
+";
+        assert_eq!(
+            private_members(src, &["RUN"]),
+            vec![("CR_ITEM".to_string(), true), ("CALC".to_string(), false)]
+        );
+        // 본문이 없거나(빈 글) 패키지 본문이 아니면 빈 목록.
+        assert!(private_members("", &[]).is_empty());
+        assert!(private_members(
+            "CREATE OR REPLACE PROCEDURE p IS BEGIN NULL; END;
+/
+",
+            &[]
+        )
+        .is_empty());
+    }
+
     #[test]
     fn member_detail_overload_round_trip() {
         assert_eq!(member_detail(true, "PROCEDURE", ""), "");

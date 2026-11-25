@@ -4996,7 +4996,13 @@ impl Explorer {
                             };
                             let kids: Vec<Node> = list
                                 .into_iter()
-                                .map(|it| Node {
+                                .map(|it| {
+                                    // 본문 전용(비공개) 멤버는 `ALL_ARGUMENTS`에 인자가 없다 → 펼치지 않는다(11-25).
+                                    let expandable =
+                                        expandable && it.status != nsql_catalog::PRIVATE_MEMBER;
+                                    (it, expandable)
+                                })
+                                .map(|(it, expandable)| Node {
                                     kind: NodeKind::Item(it),
                                     depth,
                                     children: Vec::new(),

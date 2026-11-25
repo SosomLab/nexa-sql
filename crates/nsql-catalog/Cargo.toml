@@ -13,3 +13,4 @@ workspace = true
 
 [dependencies]
 nsql-core.workspace = true
+nsql-script.workspace = true

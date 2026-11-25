@@ -821,7 +821,10 @@ pub use detail::{
     column_details, object_details, render_table, DetailSection, HeaderId, SectionId,
 };
 pub mod tree;
-pub use tree::{member_object, member_sub_kinds, sub_items, sub_kinds, SubIcon, SubItem, SubKind};
+pub use tree::{
+    member_object, member_sub_kinds, private_members, sub_items, sub_kinds, SubIcon, SubItem,
+    SubKind, PRIVATE_MEMBER,
+};
 /// ★ 객체 찾기 창의 컬럼·소스 본문 검색(docs/113 §4 · 10-15).
 pub mod find;
 pub mod gen;

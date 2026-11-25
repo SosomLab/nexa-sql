@@ -2377,6 +2377,7 @@ name = "nsql-catalog"
 version = "0.10.0"
 dependencies = [
  "nsql-core",
+ "nsql-script",
 ]
 
 [[package]]
