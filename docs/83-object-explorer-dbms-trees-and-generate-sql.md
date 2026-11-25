@@ -90,6 +90,7 @@ Package Bodies 폴더는 뗀다(DBeaver와 같이 패키지 노드 아래 멤버
 
 ## 5-1. 패키지 스펙·본문(D-202 후속 · §213)
 - Package Bodies 폴더는 두지 않는다(D-202). 패키지 노드 우클릭 = **Open source**(스펙) · **Open body**(본문 = `CREATE OR REPLACE PACKAGE BODY` 새 탭 · 제목 `NAME.body.sql`) · 수정 = 탭에서 고쳐 실행(컴파일) → `SHOW ERRORS`/새로 고침 · Generate SQL ▸ DDL = 스펙+본문.
+- **본문 전용(비공개) 멤버(11-25 · T-519)**: Procedures/Functions 폴더는 스펙의 공개 멤버(`ALL_PROCEDURES`) 뒤에 **본문에만 있는** 프로시저·함수를 덧붙인다(흐린 글 `private`) — 폴더를 펼칠 때 본문 소스를 읽어 아웃라인으로 뽑는다(패키지 바로 아래 것만 · 로컬 서브프로그램 제외). 본문이 없거나 읽을 수 없거나 감싸져 있으면 공개 멤버만. 비공개 멤버는 인자 메타가 없어 펼치지 않는다.
 
 - **DDL 종결자(§214 ①)**: PL/SQL 종류(PACKAGE·PACKAGE_BODY·PROCEDURE·FUNCTION·TRIGGER·TYPE)의 Generate SQL ▸ DDL은 `gen::plsql_terminate`가 **블록마다 `/`** + 블록 사이 빈 줄로 정리한다(SQL*Plus 형식) — 스펙+본문을 그대로 붙여 실행하면 분할기가 `/`에서 나눠 둘 다 컴파일된다. `;`만 있던 종전 출력은 두 블록이 한 문장으로 가서 본문이 반영되지 않았다.
 

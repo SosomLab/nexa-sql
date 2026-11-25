@@ -75,6 +75,8 @@
 - **향상 모드**: `perf` FORCED에 `ctrl.bookmark_label=off` · `ctrl.desc_inline=off`(강제값 > 개별 값 · 39 §4-6 · 설정 창은 FORCED 잠금 그대로). 기존 `bookmark.inline_label`의 강제 off(69 §설정 끝)와 같은 줄.
 - 큰 파일 모드 = Ctrl 표시 둘 다 꺼짐(objlink와 같은 규칙).
 
+- **Ctrl 홀드 지연 `objlink.hold_ms`(기본 150 · 0 = 즉시 · 11-25 D-556)**: 링크 분석은 Ctrl을 다른 키 없이 이만큼 누르고 있을 때 또는 마우스가 움직이거나 눌릴 때 시작한다 — 단축키(Ctrl+C·V·S…)의 Ctrl은 분석을 일으키지 않고, 떠 있던 링크는 다른 키를 누르면 그 홀드 동안 걷는다(큰 PL/SQL 문서에서 복사/붙여넣기마다 분석이 돌던 것 · T-520). 분석이 50 ms를 넘으면 stderr `[objlink] analysis <ms> ms · <KB> KB`.
+
 ## §6. 표시 모양(88 · 머티리얼)
 - 북마크 라벨 = 지금 그대로(`◆ 라벨` · 흐린 색).
 - 설명 = `» 설명`(흐린 색) · 북마크 라벨이 있으면 그 뒤 ` · `.
