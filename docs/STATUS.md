@@ -2,6 +2,8 @@
 
 > 시간 역순. 상세는 [journal](journal/), 여기는 요약.
 >
+> ★ **11-25 오전 · v0.10.0 + drivers-v0.1.15 공개**([journal 11-25 §6](journal/2026-11-25.md)) = 게이트 ✓(verify full · 풀 테스트 · V1 전부 · 통합은 CI로 갈음) · drivers.yml 45524768263 ✓(pre-release · 자산 125 · 색인 9f6f007a) · 태그 v0.10.0 = 9f6f007a · release.yml 45527383614 ✓ · 공개 2026-11-25T02:09:55Z(Latest · lite) · 채널 = winget PR #488827(검수 대기) · choco 0.10.0 push(검수 대기) · Homebrew e7fa457 · linux-repo 0.10.0 · **다음 세션 시작점** = 채널 검수 확인 · T-517 더블클릭 회신 · T-518/D-555 AI 파일 검색 보완 · 결정 대기(T-107b 교체 조건 · T-509 · T-72 · 위키 게시 · 요청 묶음 6)
+>
 > ★ **11-16 새벽 · v0.8.2 + drivers-v0.1.13 공개**([journal 11-16 §8](journal/2026-11-16.md)) = 게이트 ✓ · drivers.yml 43737920926 ✓(pre-release · 색인 f6c6b530) · 태그 v0.8.2 = f6c6b530 · release.yml 43738800003 ✓ · 공개 2026-11-15T17:24:20Z(Latest) · 채널 = winget PR #480985(검수 대기) · choco 0.8.2 제출(검수 대기 · 0.8.1 건너뜀) · Homebrew 0a26b62 · pkg.sosomlab.com APT·RPM 0.8.2 ✓ · 자산 URL 6/6 200
 >
 > ★ **11-16 · 맥 실기 수정 묶음 마감(미커밋)**([journal 11-16 §7](journal/2026-11-16.md)) = 항목 16건(한글 조합 확정 · AI 팝업 · 활동 탭 분리 · Codex 모델·노력도 보정 · Claude CLI 재기동/세대) · 최종 V2 ✓(fmt · clippy 0 · nexa-sql 643/0/6 · nsql-i18n 9/0 · nexa-ctl 484/0/1 · nexa-dlg 14/0 · 통합 47/0/1 · check-3os --quick ✓) · 실기 Debug PID 87475 · 커밋·push = 사용자 지시 대기
