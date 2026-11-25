@@ -2,6 +2,7 @@
 
 > 시간 역순. 상세는 journal.
 
+- **2026-11-25 밤 (Windows · 수정판 릴리스 · 개발 세션)** — **v0.10.2 공개**(2026-11-25T14:45:48Z · lite · 드라이버 변경 없음) = T-517 더블클릭(OS 사건 시각 · 소스 우선) · T-518 AI 파일 검색(범위 필수 · 패널 분리 · ■ 멈춤 · D-558·D-559) · T-509 `CONNECT` 실패 = 옛 접속 닫음(D-557) · `WHENEVER OSERROR` · T-505 = 관찰 유지 · CI ✓ · release.yml 45635390445 ✓ · 채널 = winget #489306 · choco 0.10.2 · Homebrew ee08261 · linux-repo 0.10.2 · [journal 11-25 §11~§13](journal/2026-11-25.md)
 - **2026-11-25 저녁 (Windows · 수정판 릴리스 · 개발 세션)** — **v0.10.1 공개**(2026-11-25T09:27:55Z · lite · 드라이버 변경 없음) = T-519 패키지 본문 전용 멤버 · T-520 복사/붙여넣기 지연(D-556) · CI ✓ · release.yml 45581996778 ✓ · 채널 = choco 0.10.1 · Homebrew 318f9a0 · linux-repo 0.10.1 · winget 건너뜀(#488827 대기) · [journal 11-25 §8·§9](journal/2026-11-25.md)
 - **2026-11-25 오전 (Windows · 릴리스 · 개발 세션)** — **v0.10.0 + drivers-v0.1.15 공개**(2026-11-25T02:09:55Z · lite · v0.9.0 뒤 219커밋) · 게이트 = verify full ✓(통합은 CI 45524761096 ✓로 갈음) · drivers.yml 45524768263 ✓ · release.yml 45527383614 ✓ · 채널 = winget #488827 · choco 0.10.0 · Homebrew e7fa457 · linux-repo 0.10.0 · T-518/D-555 기록(AI 파일 검색 보완 대기) · [journal 11-25 §5·§6](journal/2026-11-25.md)
 - **2026-11-22 오후 3 (Windows · 묶음 4 검증 · T-172 자리 탭 본문 · T-507 잔여)** — 자리 탭 = 보관된 미저장 본문을 읽기 전용으로 · 삭제 파일 탭 색 · 탭 ×도 `close_tab_guarded`(종전 = 바로 닫아 실행 중·자리 탭 확인이 빠짐) · 편집기 탭 닫기 = 딸린 결과 탭 미적용 편집이면 한 번 더 닫기 · 못 찾은 등록 폴더 알림 · verify v2 ✓(682/0/6 · build 194 s · V1 project-paths 83/0 · 새 tab-close-rdirty 11/0 · rclose 6/0) · 실기 Debug PID 47348 · CI 7ea89b41 ✓ — [journal 11-22 §12](journal/2026-11-22.md)
