@@ -688,6 +688,9 @@ struct App {
     detail_key: Option<String>,
     /// 파일 검색 패널(활동 막대 두 번째 · T-81a · docs/36).
     search: SearchPanel,
+    /// ★ AI 도구 `search_files` 전용 검색기(11-25 사용자 결정 D-559 "분리 — 패널을 건드리지 않음"): 그리지 않는 패널 객체 하나 —
+    ///   검색·수신·결과 글은 사용자 패널과 같은 코드, 화면·검색어 칸·프로젝트 저장은 사용자 패널(`search`)만.
+    ai_search: SearchPanel,
     /// 프로젝트 탐색기(docs/67 §4) · 열린 프로젝트(없으면 기본 워크스페이스).
     project_panel: project_panel::ProjectPanel,
     /// 북마크(docs/69 · T-167).
@@ -1976,6 +1979,7 @@ fn main() {
     let editors = Editors::new(ed_line_numbers, ed_multi, ed_tooltip, syntax_reg.clone());
     mark(&mut marks, "editors");
     let search = SearchPanel::new();
+    let ai_search = SearchPanel::new();
     mark(&mut marks, "search");
     let project_panel = project_panel::ProjectPanel::new();
     let bm_panel = bookmarks_panel::BookmarksPanel::new();
@@ -2274,6 +2278,7 @@ fn main() {
         grid_tab: 0,
         explorer,
         search,
+        ai_search,
         project_panel,
         bookmarks: bookmarks::Bookmarks::new(),
         bm_panel,

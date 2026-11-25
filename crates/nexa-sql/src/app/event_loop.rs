@@ -400,6 +400,8 @@ impl ApplicationHandler<Wake> for App {
         //   검색이 영영 "검색 중…"이었다(협업 V1 comet_15s · 단락 평가 결함).
         let search_tick = self.search.tick(now_ms);
         let search_poll = self.search.poll();
+        // AI 전용 검색기(화면 없음) — 결과만 받는다(완료 판정은 `ai_tick_pending`).
+        self.ai_search.poll();
         if search_tick || search_poll {
             self.redraw();
         }

@@ -176,6 +176,8 @@ pub(crate) struct AiState {
     pub source_wait: Option<(String, String, nsql_catalog::ObjectKind, Instant)>,
     /// 가로챈 소스 글(또는 실패 글) — `ai_tick_pending`이 꺼내 도구 답으로 보낸다.
     pub source_got: Option<(String, bool)>,
+    /// 자체 시험(기동 명령 `ai.tool:<이름>|<k=v;k=v>|<파일>` · 11-25): 도구 답을 받아 파일에 적는다(백엔드 없이 도구만 돌린다).
+    pub test_reply: Option<(mpsc::Receiver<ToolReply>, std::path::PathBuf)>,
     /// ★ 두 번 눌러 허용하는 카드의 첫 누름 시각(`ApprovalReply::Api::twice` · 시간이 지나면 `ai_tick_due`가 비운다).
     pub armed: Option<Instant>,
     pub fmt_orig: Option<(String, usize, String)>,
@@ -2579,7 +2581,7 @@ impl App {
             self.ai.pending.as_ref().and_then(|p| p.wait_ui.as_ref()),
             Some(AiWait::Search { .. })
         ) {
-            self.search.cancel();
+            self.ai_search.cancel();
         }
         if let Some(mut p) = self.ai.pending.take() {
             if let Some(r) = p.reply.take() {
@@ -2652,6 +2654,20 @@ impl App {
         }
         if self.ai_tick_pending() {
             changed = true;
+        }
+        // 자체 시험 `ai.tool:` — 답이 오면 `ok=<bool>` 한 줄 + 출력 글을 파일에.
+        if let Some((rx, path)) = &self.ai.test_reply {
+            if let Ok(r) = rx.try_recv() {
+                let _ = std::fs::write(
+                    path,
+                    format!(
+                        "ok={}
+{}",
+                        r.ok, r.output
+                    ),
+                );
+                self.ai.test_reply = None;
+            }
         }
         if self.ai_drain_send_queue() {
             changed = true;
@@ -4625,25 +4641,25 @@ impl App {
                     //   프로젝트 전체(8천여 파일 · 150 초 넘음)를 훑고 사용자 검색 패널을 차지했다(T-518).
                     err("search_files was NOT run: `where` must name a specific folder or file (or `<open files>` / `<current file>`); patterns alone are not enough. Do not scan the whole project. For database columns, tables or routines use search_objects / describe_object instead. If a file search is really needed and you do not know which folder holds that kind of information, ask the user for the folder.".into())
                 } else {
-                    // 검색 패널을 보이게 하고(값·결과가 화면에 남는다 · 사용자 11-14 "Search에 값을 입력하고 조회까지") 값을 넣어 실행.
-                    if !self.search.is_visible() {
-                        self.menu_action("view.search");
-                    }
+                    // ★ 사용자 검색 패널과 **분리**(11-25 사용자 결정 D-559 · 11-14 "Search에 값을 입력하고 조회까지"의 번복):
+                    //   종전 = 패널을 열고 검색어·범위 칸을 덮어쓰고 사용자가 돌리던 검색을 취소했다(검색어가 프로젝트 파일에도
+                    //   저장됐다). 이제 화면 없는 전용 검색기가 돌고 결과는 AI에게만 간다.
                     let flag = |k: &str| {
                         matches!(
                             g(k).to_ascii_lowercase().as_str(),
                             "true" | "1" | "yes" | "on"
                         )
                     };
-                    self.search.set_toggles(
+                    self.ai_search.set_toggles(
                         flag("case"),
                         flag("word"),
                         flag("regex"),
                         flag("where_case"),
                     );
-                    self.search.run_query(&q, Some(&g("where")));
-                    let _ = self.search.take_request();
-                    self.start_search();
+                    self.ai_search.run_query(&q, Some(&g("where")));
+                    let _ = self.ai_search.take_request();
+                    let ctx = self.search_ctx();
+                    self.ai_search.start(ctx);
                     let limit = gi("limit", 100).clamp(1, 1000) as usize;
                     self.ai.pending = Some(PendingTool {
                         reply: Some(reply),
@@ -5162,12 +5178,12 @@ impl App {
         let done_text: Option<(String, bool)> = if let Some(w) = &p.wait_ui {
             match w {
                 // 파일 검색: 워커가 끝나면(또는 상한 시간) 결과 줄을 답한다.
-                AiWait::Search { limit } => (!self.search.searching() || timeout).then(|| {
+                AiWait::Search { limit } => (!self.ai_search.searching() || timeout).then(|| {
                     // 상한 시간에 닿았으면 검색을 멈추고(T-518 · 종전 = 답한 뒤에도 계속 돌았다) 그때까지의 결과로 답한다.
-                    self.search.cancel();
+                    self.ai_search.cancel();
                     (
-                        self.search.ai_results(*limit),
-                        self.search.ai_error().is_none(),
+                        self.ai_search.ai_results(*limit),
+                        self.ai_search.ai_error().is_none(),
                     )
                 }),
                 // 탭 없이 읽는 객체 소스: 가로챈 글이 오면 답한다 · 안 오면(탐색기 요청이 밀려남 등) 시간 초과로 실패.
@@ -5852,6 +5868,28 @@ impl App {
         // ■(11-15 · T-480 ①): 헤드리스 시험이 멈춤 경로(대기 풀 되돌리기 · 자식 종료 · 늦은 사건 버리기)를 탈 수 있게.
         if id == "ai.stop" {
             self.ai_stop();
+            return true;
+        }
+        // ★ 자체 시험(11-25 · T-518 · D-559): `ai.tool:<이름>|<k=v;k=v 인자>|<결과 파일>` = AI 백엔드 없이 도구 하나를 실행 경로
+        //   (`ai_exec_tool`)로 돌리고 답을 파일에 적는다(읽기 도구 판정용 · 승인 관문은 지나지 않는다 = 격리 홈에서만).
+        if let Some(rest) = id.strip_prefix("ai.tool:") {
+            if let (Some((name, tail)), true) =
+                (rest.split_once('|'), rest.matches('|').count() >= 2)
+            {
+                if let Some((json, file)) = tail.rsplit_once('|') {
+                    let (tx, rx) = mpsc::channel();
+                    self.ai.test_reply = Some((rx, std::path::PathBuf::from(file)));
+                    // 기동 명령은 `,`로 나뉘므로 JSON 대신 `k=v;k=v`(값 = 문자열)를 받아 JSON 객체로 만든다.
+                    let esc = |v: &str| v.replace('\\', "\\\\").replace('"', "\\\"");
+                    let body: Vec<String> = json
+                        .split(';')
+                        .filter_map(|kv| kv.split_once('='))
+                        .map(|(k, v)| format!("\"{}\":\"{}\"", esc(k.trim()), esc(v)))
+                        .collect();
+                    let json = format!("{{{}}}", body.join(","));
+                    self.ai_exec_tool(name, &json, tx);
+                }
+            }
             return true;
         }
         if let Some(text) = id.strip_prefix("ai.send:") {

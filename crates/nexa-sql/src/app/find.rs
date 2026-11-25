@@ -337,6 +337,13 @@ impl App {
 
     /// 검색 시작 — 열린 탭 본문 · 활성 파일 폴더 · 설정을 모아 패널에 넘긴다.
     pub(crate) fn start_search(&mut self) {
+        let ctx = self.search_ctx();
+        self.search.start(ctx);
+        self.redraw();
+    }
+
+    /// 검색 문맥(범위 기본값 · 제외 · 상한 · 변환기) — 사용자 패널과 AI 전용 검색기(`ai_search`)가 같이 쓴다.
+    pub(crate) fn search_ctx(&self) -> SearchCtx {
         let mut excludes: Vec<String> = self
             .settings
             .get("search.excludes")
@@ -386,7 +393,7 @@ impl App {
                 })
             });
         }
-        let ctx = SearchCtx {
+        SearchCtx {
             tabs: self.editors.tab_texts(),
             current_dir: self
                 .editors
@@ -404,9 +411,7 @@ impl App {
                     (!lossy).then(|| text.into_bytes())
                 },
             ))),
-        };
-        self.search.start(ctx);
-        self.redraw();
+        }
     }
 
     /// ★ T-81d(10-30 · 36 §1 "바꾸기 → 적용 = 파일 저장(탭에 열려 있으면 버퍼 갱신) · 백업"): 결과의 모든 파일에 바꾸기를 적용한다.
