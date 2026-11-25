@@ -7,6 +7,13 @@ use crate::*;
 impl App {
     /// 자체 캡처용 기동 명령 하나 — `open:<경로>` = 파일을 탭으로 · 나머지 = 명령 id.
     pub(crate) fn startup_cmd(&mut self, id: &str) {
+        // 기동 명령이 만든 합성 입력은 OS 큐를 지나지 않았다 — 사건 시각 보정(탐색기 더블클릭 · T-517)을 끈다.
+        crate::explorer::SYNTH_INPUT.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.startup_cmd_inner(id);
+        crate::explorer::SYNTH_INPUT.store(false, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn startup_cmd_inner(&mut self, id: &str) {
         // ★ AI 탭(docs/110 · 11-11): `ai.open` · `ai.panel` · `ai.send:<글>` · `ai.approve:<yes|no>` · `ai.dump:<파일>`.
         if self.ai_startup_cmd(id) {
             return;

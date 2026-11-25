@@ -1357,6 +1357,10 @@ fn req_label(r: &Req) -> String {
     }
 }
 
+/// 지금 처리 중인 입력이 기동 명령의 **합성 사건**인가(`App::startup_cmd`가 켠다) — OS 큐 대기 시간이 뜻 없는 값이라 보정하지 않는다.
+pub(crate) static SYNTH_INPUT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// 메타 워커 큐의 우선순위(낮을수록 먼저 · 09-23).
 fn req_prio(r: &Req) -> u8 {
     match r {
@@ -1368,8 +1372,10 @@ fn req_prio(r: &Req) -> u8 {
         | Req::GenSql { .. }
         | Req::Details { .. }
         | Req::Comments { .. }
-        | Req::Args { .. }
-        | Req::Source { .. } => 1,
+        | Req::Args { .. } => 1,
+        // ★ 소스 열기는 같은 급의 다른 요청보다 앞(T-517 · 11-25): 더블클릭의 **첫 클릭**이 보낸 상세·코멘트 조회(선택이 바뀌면
+        //   나간다) 뒤에 줄을 서서 "느리지만 열린다"였다 — 사용자가 기다리는 것은 소스다. 진행 중인 질의는 끊지 않는다.
+        Req::Source { .. } => 0,
         Req::ColumnsMeta { urgent: true, .. } | Req::DetailMeta { .. } => 1,
         // 검색 판정·중지 = 즉시(질의 없음 · ms 단위) · 인덱스 = 사용자 클릭(1) 다음 · 백그라운드 메타(3~5) 앞.
         Req::Search { .. }
@@ -9046,17 +9052,31 @@ impl Explorer {
                         * self.scale)
                         .round() as i32;
                 let glyph_w = (16.0 * self.scale).round() as i32;
-                let now = Instant::now();
-                let dbl = matches!(self.last_click, Some((j, t)) if j == i && now.duration_since(t).as_millis() < self.dblclick_ms);
+                // ★ 누른 시각 = **OS가 사건을 만든 시각**(T-517 · 11-25): 종전 = 처리 시점의 `Instant::now()` → 첫 클릭의 처리
+                //   (상세 패널 동기화 · 전체 그리기)가 길면 둘째 누름이 큐에서 기다린 만큼 간격이 길게 재져 더블클릭이 버려졌다
+                //   ("세 번 눌러야 열린다" = 둘째 클릭은 처리가 가벼워 2→3 간격만 제대로 재졌다). 큐 대기 시간(Windows
+                //   `GetMessageTime` · 그 밖 OS = 0)을 빼 사건 시각으로 되돌린다(상한 5 초 = 엉뚱한 값 방어).
+                let waited = if SYNTH_INPUT.load(std::sync::atomic::Ordering::Relaxed) {
+                    Duration::ZERO
+                } else {
+                    Duration::from_millis(u64::from(
+                        nexa_sys::last_message_age_ms().unwrap_or(0).min(5000),
+                    ))
+                };
+                let now = Instant::now()
+                    .checked_sub(waited)
+                    .unwrap_or_else(Instant::now);
+                let dbl = matches!(self.last_click, Some((j, t)) if j == i && now.saturating_duration_since(t).as_millis() < self.dblclick_ms);
                 // ★ 진단(사용자 11-24 "더블클릭이 안 열린다"): 더블클릭이 **될 뻔했는데 안 된** 경우를 로그 창에 한 줄 — 간격 초과
                 //   (판정 시간의 3배 안) · 두 클릭 사이에 다른 행(행이 밀렸거나 다른 줄을 누름). 원인이 설정인지 화면 밀림인지 가린다.
                 if !dbl {
                     if let Some((j, t0)) = self.last_click {
-                        let ms = now.duration_since(t0).as_millis();
+                        let ms = now.saturating_duration_since(t0).as_millis();
                         if j == i && ms < self.dblclick_ms * 3 {
                             self.actions.push(ExplorerAction::Log(format!(
-                                "[explorer] double-click missed: {ms} ms between clicks (limit {} ms · ui.dblclick_ms)",
-                                self.dblclick_ms
+                                "[explorer] double-click missed: {ms} ms between clicks (limit {} ms · ui.dblclick_ms · this click waited {} ms in the queue)",
+                                self.dblclick_ms,
+                                waited.as_millis()
                             )));
                         } else if j != i && ms < self.dblclick_ms {
                             self.actions.push(ExplorerAction::Log(format!(
