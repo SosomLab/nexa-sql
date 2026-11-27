@@ -1618,15 +1618,23 @@ pub fn object_sizes(
             //   "MV 0개인데 용량이 잡힌다" = 테이블 용량이 MV로 중복 집계).
             let types = "('TABLE', 'TABLE PARTITION', 'TABLE SUBPARTITION', 'NESTED TABLE')";
             let not = if kind == ObjectKind::MaterializedView { "" } else { "NOT " };
-            vec![
-                format!("SELECT s.segment_name, SUM(s.bytes) FROM dba_segments s WHERE s.owner = {sc} AND s.segment_type IN {types} AND s.segment_name {not}IN (SELECT m.mview_name FROM all_mviews m WHERE m.owner = {sc}) GROUP BY s.segment_name", sc = lit(schema)),
-                format!("SELECT s.segment_name, SUM(s.bytes) FROM user_segments s WHERE s.segment_type IN {types} AND USER = {sc} AND s.segment_name {not}IN (SELECT m.mview_name FROM user_mviews m) GROUP BY s.segment_name", sc = lit(schema)),
-            ]
+            let dba = format!("SELECT s.segment_name, SUM(s.bytes) FROM dba_segments s WHERE s.owner = {sc} AND s.segment_type IN {types} AND s.segment_name {not}IN (SELECT m.mview_name FROM all_mviews m WHERE m.owner = {sc}) GROUP BY s.segment_name", sc = lit(schema));
+            let usr = format!("SELECT s.segment_name, SUM(s.bytes) FROM user_segments s WHERE s.segment_type IN {types} AND USER = {sc} AND s.segment_name {not}IN (SELECT m.mview_name FROM user_mviews m) GROUP BY s.segment_name", sc = lit(schema));
+            // ★ 세그먼트가 아직 없는 테이블(지연 세그먼트 생성 · 11.2+ 기본 = 방금 만든 빈 테이블)은 `*_segments`에 행이 없다 →
+            //   `segment_created = 'NO'`를 0바이트로 붙인다(사용자 11-27 "새로 만든 테이블을 갱신해도 용량이 보이지 않음").
+            //   그 열이 없는 옛 서버(11.1 이하)는 질의가 실패하므로 종전 질의를 뒤에 그대로 둔다(차례로 시도).
+            let dba0 = format!("{dba} UNION ALL SELECT t.table_name, 0 FROM all_tables t WHERE t.owner = {sc} AND t.segment_created = 'NO' AND t.table_name {not}IN (SELECT m.mview_name FROM all_mviews m WHERE m.owner = {sc})", sc = lit(schema));
+            let usr0 = format!("{usr} UNION ALL SELECT t.table_name, 0 FROM user_tables t WHERE USER = {sc} AND t.segment_created = 'NO' AND t.table_name {not}IN (SELECT m.mview_name FROM user_mviews m)", sc = lit(schema));
+            vec![dba0, usr0, dba, usr]
         }
-        (Dialect::Oracle, ObjectKind::Index) => vec![
-            format!("SELECT segment_name, SUM(bytes) FROM dba_segments WHERE owner = {} AND segment_type IN ('INDEX', 'INDEX PARTITION', 'INDEX SUBPARTITION', 'LOBINDEX') GROUP BY segment_name", lit(schema)),
-            format!("SELECT segment_name, SUM(bytes) FROM user_segments WHERE segment_type IN ('INDEX', 'INDEX PARTITION', 'INDEX SUBPARTITION', 'LOBINDEX') AND USER = {} GROUP BY segment_name", lit(schema)),
-        ],
+        (Dialect::Oracle, ObjectKind::Index) => {
+            let dba = format!("SELECT segment_name, SUM(bytes) FROM dba_segments WHERE owner = {} AND segment_type IN ('INDEX', 'INDEX PARTITION', 'INDEX SUBPARTITION', 'LOBINDEX') GROUP BY segment_name", lit(schema));
+            let usr = format!("SELECT segment_name, SUM(bytes) FROM user_segments WHERE segment_type IN ('INDEX', 'INDEX PARTITION', 'INDEX SUBPARTITION', 'LOBINDEX') AND USER = {} GROUP BY segment_name", lit(schema));
+            // 세그먼트 없는 인덱스(빈 테이블의 PK 등)도 같은 규칙 = 0바이트.
+            let dba0 = format!("{dba} UNION ALL SELECT index_name, 0 FROM all_indexes WHERE owner = {} AND segment_created = 'NO'", lit(schema));
+            let usr0 = format!("{usr} UNION ALL SELECT index_name, 0 FROM user_indexes WHERE USER = {} AND segment_created = 'NO'", lit(schema));
+            vec![dba0, usr0, dba, usr]
+        }
         (Dialect::Postgres, ObjectKind::Table) => vec![format!(
             "SELECT c.relname, pg_total_relation_size(c.oid) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relkind IN ('r', 'p')",
             lit(schema)
@@ -1698,10 +1706,21 @@ pub fn object_size_detail(
     let dialect = s.dialect();
     // 각 질의 = (bytes, blocks, block_size) 세 열(없으면 NULL).
     let sqls: Vec<String> = match (dialect, kind) {
-        (Dialect::Oracle, _) => vec![
-            format!("SELECT SUM(s.bytes), SUM(s.blocks), MAX(t.block_size) FROM dba_segments s JOIN dba_tablespaces t ON t.tablespace_name = s.tablespace_name WHERE s.owner = {} AND s.segment_name = {}", lit(schema), lit(name)),
-            format!("SELECT SUM(s.bytes), SUM(s.blocks), MAX(t.block_size) FROM user_segments s JOIN user_tablespaces t ON t.tablespace_name = s.tablespace_name WHERE s.segment_name = {} AND USER = {}", lit(name), lit(schema)),
-        ],
+        (Dialect::Oracle, _) => {
+            // 끝의 둘 = 세그먼트가 아직 없는 객체(지연 세그먼트 생성 · `object_sizes`와 같은 규칙) → 0바이트. 앞의 둘이 값을 주면 거기서 끝난다
+            // (`SUM`은 행이 없으면 NULL 한 줄 → 다음 질의로 넘어간다). 그 열이 없는 옛 서버 = 질의 실패 = 종전대로 None.
+            let (view, col) = if kind == ObjectKind::Index {
+                ("indexes", "index_name")
+            } else {
+                ("tables", "table_name")
+            };
+            vec![
+                format!("SELECT SUM(s.bytes), SUM(s.blocks), MAX(t.block_size) FROM dba_segments s JOIN dba_tablespaces t ON t.tablespace_name = s.tablespace_name WHERE s.owner = {} AND s.segment_name = {}", lit(schema), lit(name)),
+                format!("SELECT SUM(s.bytes), SUM(s.blocks), MAX(t.block_size) FROM user_segments s JOIN user_tablespaces t ON t.tablespace_name = s.tablespace_name WHERE s.segment_name = {} AND USER = {}", lit(name), lit(schema)),
+                format!("SELECT 0, NULL, NULL FROM all_{view} WHERE owner = {} AND {col} = {} AND segment_created = 'NO'", lit(schema), lit(name)),
+                format!("SELECT 0, NULL, NULL FROM user_{view} WHERE USER = {} AND {col} = {} AND segment_created = 'NO'", lit(schema), lit(name)),
+            ]
+        }
         (Dialect::Postgres, ObjectKind::Index) => vec![format!(
             "SELECT pg_relation_size(c.oid), c.relpages, current_setting('block_size')::bigint FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = {} AND c.relname = {}",
             lit(schema), lit(name)
@@ -3223,9 +3242,9 @@ pub fn linked_server_script(i: &LinkedServerInfo) -> String {
             format!(" · {}", i.provider)
         }
     );
-    out.push_str("-- Nexa SQL: sys.servers · sys.linked_logins 재생성 스크립트. 그대로 실행하면 \"이미 있음\"으로 끝난다(보수적 생성).\n");
-    out.push_str("-- 바꾸려면 ① 아래 DROP 줄의 주석을 풀고 ② @rmtpassword 자리(********)를 채운 뒤 실행한다(비밀번호는 서버가 주지 않는다).\n");
-    out.push_str("-- sp_serveroption은 트랜잭션 안에서 실행할 수 없다 - 수동 커밋 모드면 자동 커밋(SET AUTOCOMMIT ON)으로 실행한다.\n");
+    out.push_str("-- Nexa SQL: script that re-creates this linked server from sys.servers and sys.linked_logins. Run as is, it ends with \"already exists\" (conservative generation).\n");
+    out.push_str("-- To change it: (1) uncomment the DROP line below, (2) fill in @rmtpassword (********), then run (the server does not return passwords).\n");
+    out.push_str("-- sp_serveroption cannot run inside a transaction - in manual commit mode, run with autocommit (SET AUTOCOMMIT ON).\n");
     out.push_str(&format!(
         "-- EXEC master.dbo.sp_dropserver @server = {}, @droplogins = 'droplogins';\n",
         n(&i.name)

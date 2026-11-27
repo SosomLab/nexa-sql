@@ -42,7 +42,7 @@ pub(crate) fn seal(domain: &[u8], secret: &[u8; 32], plain: &[u8]) -> io::Result
     let mut nonce = [0u8; NONCE_LEN];
     getrandom::getrandom(&mut salt)
         .and_then(|()| getrandom::getrandom(&mut nonce))
-        .map_err(|_| io::Error::other("OS 난수 실패"))?;
+        .map_err(|_| io::Error::other("OS random number generator failed"))?;
     let mut out = Vec::with_capacity(HEAD + NONCE_LEN + plain.len() + 16);
     out.extend_from_slice(&MAGIC);
     out.push(VER);
@@ -57,7 +57,7 @@ pub(crate) fn seal(domain: &[u8], secret: &[u8; 32], plain: &[u8]) -> io::Result
                 aad: &aad,
             },
         )
-        .map_err(|_| io::Error::other("AEAD 봉인 실패"))?;
+        .map_err(|_| io::Error::other("AEAD seal failed"))?;
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&ct);
     Ok(out)

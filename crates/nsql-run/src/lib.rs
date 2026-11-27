@@ -3708,8 +3708,9 @@ impl Runner {
                     .position
                     .and_then(|p| map_error_position(&request.sql, &item.text, p));
                 if mode == PrepareMode::DeclarePrepend {
-                    e.message
-                        .push_str(&format!(" (프리펜드 {line_offset}줄 보정 필요)"));
+                    e.message.push_str(&format!(
+                        " (line numbers are offset by {line_offset} prepended line(s))"
+                    ));
                 }
                 // ★ 실패한 실행이 드라이버 제약 때문이면(메시지 꼬리표 `driver limitation: …` · docs/110 §6) 오류와 함께 제약 안내도.
                 if let Some(l) = nsql_core::DriverLimit::find_in(&e.message) {

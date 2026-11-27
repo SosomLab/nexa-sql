@@ -132,15 +132,22 @@ pub(crate) fn codex_list_model_infos(
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
+    // Unix = 자기 프로세스 그룹의 머리로(본 CLI 경로와 같게 · 11-27 Linux 점검): 작업 개체가 없는 OS에서는 그룹째 끝내야
+    // app-server가 띄운 후손이 남지 않는다(종전 = 이 경로만 `child.kill()`뿐).
+    own_group(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| format!("{program}: {e}"))?;
     // 후손까지(T-479): 이 함수가 어떻게 끝나든(오류 길 포함) 묶음이 닫히며 app-server가 띄운 프로세스도 함께 끝난다.
     let job = KillJob::attach(&child);
     let (Some(mut stdin), Some(out)) = (child.stdin.take(), child.stdout.take()) else {
+        kill_group(&child);
         let _ = child.kill();
+        let _ = child.wait();
         return Err("no stdio".into());
     };
     if let Err(e) = write_line(&mut stdin, &codex::initialize(1)) {
+        kill_group(&child);
         let _ = child.kill();
+        let _ = child.wait();
         return Err(e);
     }
     let (tx, rx) = mpsc::channel::<Result<Vec<super::codex::ModelInfo>, String>>();
@@ -185,6 +192,7 @@ pub(crate) fn codex_list_model_infos(
         Ok(r) => r,
         Err(_) => Err("codex app-server: timeout".into()),
     };
+    kill_group(&child);
     job.kill();
     let _ = child.kill();
     let _ = child.wait();

@@ -965,7 +965,7 @@ impl Session for OracleSession {
         let Some(mut rc) = self.cursors.remove(&cursor.0) else {
             return Err(DbError {
                 code: None,
-                message: "REF CURSOR는 한 번만 PRINT할 수 있습니다(SQL*Plus 동일)".into(),
+                message: "A REF CURSOR can be printed only once (same as SQL*Plus)".into(),
                 position: None,
             });
         };

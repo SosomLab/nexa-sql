@@ -39,7 +39,8 @@ printf '# verify %s · level=%s · v1=%s · %s\n\n| 단계 | 결과 | 초 | 메�
 HIST="$ROOT/target/verify/history.tsv"; touch "$HIST"
 BID="verify-$STAMP"; SES="${BOARD_SESSION:-협업}"
 declare -A DEF=([fmt-ui]=120 [check3os]=1800 [todo]=60 [test]=1800 [clippy-newer]=3600 [it]=1200 [build]=1800 [v1]=900 [restart]=60)
-median() { awk -F'\t' -v l="$LEVEL" -v s="$1" '$1==l && $2==s {a[++n]=$3} END { if (!n) { print ""; exit } m=0; k=0; for (i=n; i>=1 && k<3; i--) b[++k]=a[i]; asort(b); print b[int((k+1)/2)] }' "$HIST"; }
+# 정렬은 손으로(최대 3개) — `asort`는 gawk 전용이라 mawk(Ubuntu 기본)에서 함수 없음 오류였다(11-27 Linux 첫 실행).
+median() { awk -F'\t' -v l="$LEVEL" -v s="$1" '$1==l && $2==s {a[++n]=$3} END { if (!n) { print ""; exit } m=0; k=0; for (i=n; i>=1 && k<3; i--) b[++k]=a[i]; for (i=2; i<=k; i++) { v=b[i]+0; for (j=i-1; j>=1 && b[j]+0>v; j--) b[j+1]=b[j]; b[j+1]=v } print b[int((k+1)/2)] }' "$HIST"; }
 # test 하한 300 s(11-24 · 처음부터 다시 컴파일하는 판이 121 s로 120 s 상한에 걸려 TIMEOUT — 재실행은 rc 0).
 # 단계별 하한(11-22 · v1은 시나리오가 늘면 지난 이력 × 3이 모자라 TIMEOUT — 9개 시나리오 판이 120 s에 잘림 · 하한 600 s).
 declare -A MINS=([v1]=600 [build]=900 [test]=300)

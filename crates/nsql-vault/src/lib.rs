@@ -30,7 +30,8 @@ mod sealed;
 /// OS 난수 `n`바이트(PKCE 검증자 · OAuth state 같은 1회용 값 · nexa-sql AI WIF 로그인 11-11).
 pub fn random_bytes(n: usize) -> io::Result<Vec<u8>> {
     let mut v = vec![0u8; n];
-    getrandom::getrandom(&mut v).map_err(|_| io::Error::other("OS 난수 실패"))?;
+    getrandom::getrandom(&mut v)
+        .map_err(|_| io::Error::other("OS random number generator failed"))?;
     Ok(v)
 }
 pub mod session;
@@ -148,7 +149,7 @@ impl Vault {
     pub fn open_default() -> io::Result<Vault> {
         let dir = Self::default_dir().ok_or_else(|| {
             io::Error::other(
-                "사용자 설정 폴더를 알 수 없습니다(APPDATA/HOME 없음) - NSQL_HOME을 지정하세요",
+                "cannot determine the user settings folder (no APPDATA/HOME) - set NSQL_HOME",
             )
         })?;
         Self::open(dir)

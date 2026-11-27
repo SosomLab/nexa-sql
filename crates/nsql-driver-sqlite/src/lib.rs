@@ -531,7 +531,7 @@ impl Session for SqliteSession {
     fn fetch_cursor(&mut self, _cursor: CursorId) -> Result<ResultSet, DbError> {
         Err(DbError {
             code: None,
-            message: "SQLite에는 REF CURSOR가 없습니다".into(),
+            message: "SQLite has no REF CURSOR".into(),
             position: None,
         })
     }

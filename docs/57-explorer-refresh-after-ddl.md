@@ -109,6 +109,13 @@
 - 용량 조회 실패를 진단 출력(`eprintln`)에 남긴다(종전 = 조용히 삼킴) · 테이블 아래 **Indexes** 폴더 = 조용한 갱신 때 인덱스 용량도 다시 읽는다(종전 = 처음 한 번).
 - 검증 = V2(nexa-sql 657/0/6) · **실서버 CTAS 용량 판정은 아직**(사용자 실기 또는 실서버 V1).
 
+### 6-1. Oracle — 세그먼트가 아직 없는 객체 = `0B`(11-27 · 사용자 "새로 만든 테이블을 갱신해도 용량이 보이지 않음" · T-522 · [journal 11-27 §3](journal/2026-11-27.md))
+
+- **문제(종전)**: 위 11-19 수정은 CTAS처럼 **행이 들어가 세그먼트가 생기는** 경로만 닫았다. Oracle은 `deferred_segment_creation = TRUE`(11gR2부터 기본)면 빈 `CREATE TABLE`과 그 PK 인덱스의 세그먼트를 **첫 행이 들어갈 때** 만든다 → `*_segments`에 행이 없어, 새로 고침을 해도 용량 칸이 구조적으로 빈 칸이었다.
+- **수정(nsql-catalog `object_sizes` · `object_size_detail`)**: `all_tables` / `all_indexes`(권한이 없으면 `user_*`)에서 `segment_created = 'NO'`인 객체를 **0바이트 행**으로 `UNION ALL`한다. 질의 순서 = [`dba_segments` + 0행, `user_segments` + 0행, `dba_segments`(종전), `user_segments`(종전)] — 앞의 둘이 실패하는 서버(그 열이 없는 옛 판)는 종전 질의로 내려간다. 테이블 쪽 0행 질의는 MV 이름을 빼고(MV 폴더는 MV만) · 객체 하나의 상세(`SizeOne`)는 세그먼트 질의 둘이 값을 못 주면 0행 질의 둘을 더 본다.
+- **무인 추천안(사용자 부재 · 11-27)** = "세그먼트 없음 = `0B` 표시" · **전역 임시 테이블의 빈 칸은 의도대로 둔다**(영구 세그먼트가 없는 객체 = 용량 개념 없음 · `0B`로 바꾸지 않는다).
+- **검증(실서버 Oracle 19c · 지연 세그먼트 TRUE · Linux Debug · 헤드리스)**: 임시 테이블 `NSQLT_SZ_<pid>`(PK 하나) 생성 → `user_tables.segment_created = NO` 확인 → 탐색기 덤프에서 테이블 행과 인덱스 행(`TABLE.INDEX`)이 모두 `0B`(판정 4/4) → `DROP … PURGE`. 같은 스키마 Tables 폴더 = 값 있는 행 752(그중 `0B` 161) · 빈 칸 2(전역 임시 테이블) · Indexes 폴더 빈 칸 0 · 새 질의 네 꼴 모두 정상 종료. 이 판정 스크립트는 `scripts/v1`에 올리지 않았다(시나리오 후보 = T-524). 위 "실서버 CTAS 용량 판정"은 여전히 남는다.
+
 ## 출처
 
 - DataGrip: [Metadata and introspection(smart refresh · incremental)](https://www.jetbrains.com/help/datagrip/introspection.html) · [Introspection levels](https://www.jetbrains.com/help/datagrip/introspection-levels.html) · [Cannot find a database object in Database Explorer](https://www.jetbrains.com/help/datagrip/cannot-find-a-database-object-in-the-database-tree-view.html)

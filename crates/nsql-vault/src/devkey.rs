@@ -16,7 +16,8 @@ const VER: u8 = 1;
 
 pub(crate) fn random32() -> io::Result<[u8; 32]> {
     let mut k = [0u8; 32];
-    getrandom::getrandom(&mut k).map_err(|_| io::Error::other("OS 난수 실패"))?;
+    getrandom::getrandom(&mut k)
+        .map_err(|_| io::Error::other("OS random number generator failed"))?;
     Ok(k)
 }
 
@@ -32,7 +33,7 @@ fn decode(bytes: &[u8], path: &Path) -> io::Result<[u8; 32]> {
         {
             let plain = dpapi::unprotect(&bytes[5..]).map_err(|e| {
                 io::Error::other(format!(
-                    "{}: 기기 키를 풀 수 없습니다(다른 Windows 계정·PC에서 만든 키) - {e}",
+                    "{}: cannot unprotect the device key (created by another Windows account or PC) - {e}",
                     path.display()
                 ))
             })?;
@@ -45,14 +46,14 @@ fn decode(bytes: &[u8], path: &Path) -> io::Result<[u8; 32]> {
         #[cfg(not(windows))]
         {
             return Err(io::Error::other(format!(
-                "{}: Windows DPAPI로 보호된 기기 키는 이 OS에서 열 수 없습니다",
+                "{}: a device key protected by Windows DPAPI cannot be opened on this OS",
                 path.display()
             )));
         }
     }
     // 길이·형식이 틀린 파일은 손상 — 덮지 않고 실패한다(fail-closed · 보관 정책은 호출측).
     Err(io::Error::other(format!(
-        "{} 손상(길이 {})",
+        "{} is corrupt (length {})",
         path.display(),
         bytes.len()
     )))
@@ -118,7 +119,7 @@ pub(crate) fn load_or_create(path: &Path) -> io::Result<[u8; 32]> {
         }
     }
     Err(io::Error::other(format!(
-        "{}: 기기 키 생성 대기 초과(다른 인스턴스가 쓰는 중)",
+        "{}: timed out waiting for the device key (another instance is writing it)",
         path.display()
     )))
 }
@@ -202,7 +203,9 @@ mod dpapi {
         };
         if ok == 0 {
             let code = unsafe { GetLastError() };
-            return Err(io::Error::other(format!("CryptProtectData 실패({code})")));
+            return Err(io::Error::other(format!(
+                "CryptProtectData failed ({code})"
+            )));
         }
         Ok(unsafe { take(out) })
     }
@@ -228,7 +231,9 @@ mod dpapi {
         };
         if ok == 0 {
             let code = unsafe { GetLastError() };
-            return Err(io::Error::other(format!("CryptUnprotectData 실패({code})")));
+            return Err(io::Error::other(format!(
+                "CryptUnprotectData failed ({code})"
+            )));
         }
         Ok(unsafe { take(out) })
     }
