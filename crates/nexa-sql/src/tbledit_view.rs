@@ -780,13 +780,7 @@ impl TableEditView {
                 let Some(k) = self.edit.keys.get(row) else {
                     return false;
                 };
-                let locked = k
-                    .origin
-                    .as_deref()
-                    .is_some_and(|o| self.locked_keys.iter().any(|l| l == o));
-                let fixed = k.origin.is_some()
-                    && matches!(k.kind, KeyKind::Foreign | KeyKind::Check)
-                    && (!self.keys_complete || locked);
+                let fixed = self.key_fixed(row);
                 match col {
                     0 => true,
                     1 => k.origin.is_none(),
@@ -795,6 +789,21 @@ impl TableEditView {
                 }
             }
         }
+    }
+
+    /// 서버에서 읽은 외래 키·체크 제약 가운데 **이름·삭제만** 되는 줄인가: 덧붙은 속성(규칙 · 식)을 읽지 못한 방언이거나, 표현하지
+    /// 못하는 속성(지연 검사 · 비활성 등)이 있어 잠긴 제약이다(D-563).
+    fn key_fixed(&self, row: usize) -> bool {
+        let Some(k) = self.edit.keys.get(row) else {
+            return false;
+        };
+        let locked = k
+            .origin
+            .as_deref()
+            .is_some_and(|o| self.locked_keys.iter().any(|l| l == o));
+        k.origin.is_some()
+            && matches!(k.kind, KeyKind::Foreign | KeyKind::Check)
+            && (!self.keys_complete || locked)
     }
 
     /// 칸에 글을 넣는다(편집 확정 · 시험 명령 공용). 바뀌었으면 true.
@@ -1909,6 +1918,10 @@ impl TableEditView {
             };
             notes.push((tf(m, &[&bl.what]), true));
         }
+        // 잠긴 제약 줄을 고르고 있으면 까닭을 알린다(편집이 먹지 않는 이유 — 11-28 협업 소견).
+        if self.section == Section::Keys && self.key_fixed(self.sel_row) {
+            notes.insert(0, (t(Msg::TbeKeyLocked).to_string(), false));
+        }
         notes.truncate(4);
         let notes_h = notes.len() as i32 * (lh + self.s(2.0));
         let ddl_h = ((b.bottom() - y) / 3).max(lh * 4);
@@ -2157,6 +2170,9 @@ impl TableEditView {
                 self.row_mark(r),
                 cells.join("|")
             ));
+            if self.section == Section::Keys && self.key_fixed(r) {
+                s.push_str(&format!("locked|{r}\n"));
+            }
         }
         if !self.undo.is_empty() || !self.redo.is_empty() {
             s.push_str(&format!("hist|{}|{}\n", self.undo.len(), self.redo.len()));
@@ -2444,6 +2460,12 @@ mod tests {
 
     #[test]
     fn locked_server_constraint_stays_name_only_even_when_attributes_were_read() {
+        // 덤프에 잠금 줄이 찍힌다(판정용).
+        let mut d = sample();
+        d.set_key_lock(true, vec!["ITEM_FK".to_string()]);
+        d.set_section(Section::Keys);
+        assert!(d.dump().contains("locked|0\n"));
+
         let mut v = sample();
         v.set_key_lock(true, vec!["ITEM_FK".to_string()]);
         v.set_section(Section::Keys);

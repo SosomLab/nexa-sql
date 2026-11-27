@@ -94,7 +94,7 @@ Oracle · PostgreSQL · SQL Server · MySQL/MariaDB · SQLite에서 동작합니
 - **테이블 재생성은 하지 않습니다.** 테이블을 지우고 다시 만들어야 하는 변경은 적용하지 않고 경고 줄에 적습니다.
   - 컬럼 자리 옮기기: 문장으로 되는 것은 MySQL/MariaDB뿐입니다.
   - SQLite: 컬럼의 타입 · NOT NULL · 기본값 · 제약 변경은 막힙니다(컬럼 추가 · 이름 바꾸기는 됩니다). SQLite에는 코멘트가 없습니다.
-- **서버에서 읽은 외래 키와 CHECK** — Oracle · PostgreSQL · SQL Server · MySQL에서는 컬럼과 정의를 고칠 수 있고, 변경은 `DROP` 뒤 `ADD`로 적용됩니다(*적용* 참고). 편집기가 다시 적어 줄 수 없는 속성이 있는 제약은 **잠깁니다** — 컬럼 칸과 정의 칸이 흐리게 나오고 이름 바꾸기와 삭제만 됩니다: 지연 검사(DEFERRABLE) · 비활성 또는 미검증(`DISABLE` · `NOVALIDATE` · `NOT VALID` · `NOCHECK` · `NOT ENFORCED`) · PostgreSQL `MATCH FULL` · SQL Server `NOT FOR REPLICATION`. 잠긴 제약을 바꾸려면 지운 뒤 편집기에서 직접 다시 만드세요. 그 밖의 데이터베이스이거나 속성을 읽지 못했으면 서버에서 읽은 외래 키와 CHECK는 모두 이름 바꾸기와 삭제만 됩니다. 새 외래 키와 CHECK는 자유롭게 적습니다.
+- **서버에서 읽은 외래 키와 CHECK** — Oracle · PostgreSQL · SQL Server · MySQL에서는 컬럼과 정의를 고칠 수 있고, 변경은 `DROP` 뒤 `ADD`로 적용됩니다(*적용* 참고). 편집기가 다시 적어 줄 수 없는 속성이 있는 제약은 **잠깁니다** — 컬럼 칸과 정의 칸이 흐리게 나오고 이름 바꾸기와 삭제만 됩니다: 지연 검사(DEFERRABLE) · 비활성 또는 미검증(`DISABLE` · `NOVALIDATE` · `NOT VALID` · `NOCHECK` · `NOT ENFORCED`) · PostgreSQL `MATCH FULL` · SQL Server `NOT FOR REPLICATION`. 잠긴 제약을 고르면 그리드 아래에 이름 바꾸기와 삭제만 된다는 안내 한 줄이 나옵니다. 잠긴 제약을 바꾸려면 지운 뒤 편집기에서 직접 다시 만드세요. 그 밖의 데이터베이스이거나 속성을 읽지 못했으면 서버에서 읽은 외래 키와 CHECK는 모두 이름 바꾸기와 삭제만 됩니다. 새 외래 키와 CHECK는 자유롭게 적습니다.
 - 기본 키나 유니크 제약을 받치기만 하는 인덱스는 인덱스가 아니라 키·제약 섹션에 나옵니다.
 - 이 버전에 없는 것: 뷰 · 시퀀스 · 파티션 · 저장 옵션.
 
