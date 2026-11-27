@@ -217,9 +217,9 @@
 4. 미리보기 편집본을 그대로 실행할지(권장 = 그대로 · 파서 검증 1회) vs 편집하면 "편집기로 보내기"만 허용할지.
 5. 라이선스 안내 모달 빈도 = 앱 실행마다 첫 열기 1회(권장) vs 탭을 열 때마다(D-328 비고).
 
-## 10. 구현 현황(11-27 1차 · 2차 · 11-28 3차 · T-525)
+## 10. 구현 현황(11-27 1차 · 2차 · 11-28 3차 · 4차 · T-525)
 
-> 무인 진행(§7 권장안 + D-563 ~ D-566 · D-568 · D-569)으로 넣은 1차 배선(§10-1 ~ §10-4) · 2차(§10-5) · 3차(§10-6). 결정은 전부 **사용자 확인 대기** — 바꿀 항목은 그 단계에서 반영한다. 검증 = §10-4 · §10-5 · §10-6 · [journal 11-27 §10 · §11](journal/2026-11-27.md) · [journal 11-28 §1](journal/2026-11-28.md).
+> 무인 진행(§7 권장안 + D-563 ~ D-566 · D-568 ~ D-570)으로 넣은 1차 배선(§10-1 ~ §10-4) · 2차(§10-5) · 3차(§10-6) · 4차(§10-7). 결정은 전부 **사용자 확인 대기** — 바꿀 항목은 그 단계에서 반영한다. 검증 = §10-4 ~ §10-7 · [journal 11-27 §10 · §11](journal/2026-11-27.md) · [journal 11-28 §1 · §2](journal/2026-11-28.md).
 
 ### 10-1. 들어간 것
 
@@ -243,20 +243,24 @@
 - 테이블 재생성 없음(D-318) — 재생성이 필요한 변경은 적용하지 않고 경고 줄에 적는다.
 - 컬럼 순서 이동 = MySQL/MariaDB만 문장으로 된다(그 밖 = 막힘).
 - SQLite = 타입 · NULL · 기본값 · 제약 변경 막힘(추가 · 이름 바꾸기는 됨) · 코멘트 미지원.
-- 서버에서 읽은 FK · CHECK = 이름 바꾸기 · 삭제만(읽지 않은 속성 보호 · D-563).
+- 서버에서 읽은 FK · CHECK = 1차 ~ 3차는 이름 바꾸기 · 삭제만(읽지 않은 속성 보호 · D-563) → **4차부터** 규칙 · 식을 읽은 방언(Oracle · PostgreSQL · SQL Server · MySQL)의 **잠기지 않은** 제약은 컬럼 · 정의 편집 가능(`DROP` → `ADD`) · 잠긴 제약(지연 검사 · 비활성 · 미검증 등)과 속성을 못 읽은 방언 = 종전대로 이름 바꾸기 · 삭제만(§10-7).
 - PK/UK와 같은 이름의 인덱스는 인덱스 목록에서 숨긴다(키 섹션에만).
 - 새 이름 = 방언 접힘 · 행 추가 = 맨 끝(D-564).
 
-### 10-3. 아직 없는 것(= TODO T-525 "남음" · 3차 반영)
+### 10-3. 아직 없는 것(= TODO T-525 "남음" · 4차 반영)
 
-2차(§10-5)에 들어간 것 = 라이선스 안내(F-17 · D-328 — 모달 창이 아니라 탭 안 안내 판 · D-566) · 타입 완성 목록 · 미적용 변경이 있는 탭의 닫기 확인 · 언와인드 경계(D-329의 절반). 3차(§10-6)에 들어간 것 = 셀 단위 되돌리기(Ctrl+Z · 다시 실행) · 미리보기 편집본 실행(§9 질문 4 · D-568) · 기록 섹션 F-15 · `_applied.sql` 보관(F-9 ④). 남은 것:
+2차(§10-5)에 들어간 것 = 라이선스 안내(F-17 · D-328 — 모달 창이 아니라 탭 안 안내 판 · D-566) · 타입 완성 목록 · 미적용 변경이 있는 탭의 닫기 확인 · 언와인드 경계(D-329의 절반). 3차(§10-6)에 들어간 것 = 셀 단위 되돌리기(Ctrl+Z · 다시 실행) · 미리보기 편집본 실행(§9 질문 4 · D-568) · 기록 섹션 F-15 · `_applied.sql` 보관(F-9 ④). 4차(§10-7)에 들어간 것 = FK 삭제 · 갱신 규칙 · CHECK 식 읽기 + 서버에서 읽은 FK / CHECK 편집(제약 단위 잠금 · D-563 갱신) · 재생성 주의 문구(D-570). 남은 것:
 
 1. D-329의 나머지 = Release `panic = "unwind"` **전역 전환**(§5-4) — 경계는 들어갔지만 Release는 아직 `panic = "abort"`라 Debug에서만 작동한다 · 전환 여부 = 실측(§10-5) 뒤 **사용자 결정**(D-567 후보).
 2. 메모리 원장 `Cat::TableEdit` · `tbledit.idle_secs` · `tbledit.max_tabs`(유휴 회수).
 3. 상세 패널 · Ctrl 링크 카드의 진입 버튼.
-4. CHECK 식 · FK 삭제 규칙 · identity 읽기(카탈로그 확장 — 들어오면 D-563 완화).
+4. identity 읽기(카탈로그 확장) — CHECK 식 · FK 삭제 / 갱신 규칙은 4차에 들어갔다(§10-7).
 5. 오류 경계의 보고 파일(`crash/…txt` · [보고 파일 열기] · §5-4 ①-a) — 지금 = stderr 한 줄 + 토스트.
 6. 2단계(E-5) = 뷰 · 시퀀스 · 파티션 · 저장 옵션 · SQLite 재생성.
+7. 적용 기록 파일(`_applied.sql`)의 구분 표시 — 미리보기에서 **고친 스크립트로 실행한 것**인지 머리 주석에 나오지 않아 생성 문장 실행분과 구분되지 않는다 · 고친 글의 주석 줄은 보관 파일에 남지 않는다(주석뿐인 조각을 빼기 때문 · 3차 검증 소견 · §10-6).
+8. 고친 스크립트가 **그리드에서 편집 중인 항목 자체**를 서버에서 바꾼 경우(예: 편집 중인 컬럼을 스크립트가 다른 이름으로 바꿈) — 다시 읽은 뒤 남은 편집이 옛 이름을 가리킨다 · 코드로 읽기에는 다음 적용 문장이 실패할 뿐이나 **실행으로 확인하지 않았다**(판정 추가 + 필요하면 남은 편집 정리 · 3차 검증 소견).
+9. 잠긴 제약의 **이유 표시** — 잠긴 줄은 흐린 글일 뿐, 왜 잠겼는지(지연 검사 · 비활성 · 미검증 …)가 칸 · 상태줄 어디에도 나오지 않는다(4차 재검증 소견 · 명령 길에서 `tbledit.set`이 조용히 무시됨 = 상태줄 글 변화 없음). 잠긴 속성을 유지한 채 다시 만드는 편집(예: `DEFERRABLE` FK의 삭제 규칙만 바꾸기)은 하지 않는다(= 지우고 편집기에서 직접 다시 만든다).
+10. Generate DDL · 객체 백업 DDL의 FK 규칙 — 생성기(`nsql-catalog` `gen.rs`)가 FK에 `ON DELETE` · `ON UPDATE`를 싣지 않는다(SQL Server 객체 백업에서 확인 · §10-7 소견) → **T-526**(편집기 밖 · 보수적 생성 원칙).
 
 검증에서 남은 둘(§10-4) = 구조 편집 탭 상태줄 `Read-only` 칸 · SQL Server 인덱스 종속 NOT NULL 사전 경고.
 
@@ -382,3 +386,67 @@
 | 끝 | `DROP TABLE` | 남은 수 0 · 격리 홈(프로필 사본) 삭제 |
 
 **확인하지 않은 것(3차)** = 미리보기 창에서 글을 직접 고쳐 [Apply]를 누르는 화면 조작(판정 명령은 창을 거치지 않고 같은 함수로 들어간다 — 창의 글을 거두는 `sqlprev_win.text()` 자리는 실기 대상) · Ctrl+Z 키 입력(판정 = 명령) · 칸 편집 중 입력 상자의 되돌리기 · History 줄 더블클릭 / Enter로 파일 열기(화면 조작) · SQL Server `GO` 배치 실행 · Oracle 실서버(둘 다 3차에서는 단위 시험까지) · 고친 스크립트가 **편집 중인 항목 자체를 서버에서 바꾼 경우**(예: 화면에서 이름을 바꾸는 중인 컬럼을 스크립트가 다른 이름으로 바꿈)의 다시 읽기 결과 · 보관 실패 길(쓰기 불가 폴더) · 운영 프로필 경로 · MySQL/MariaDB · Windows · macOS 실기.
+
+### 10-7. 4차(11-28 새벽 · 제약 속성 읽기 + 서버에서 읽은 FK / CHECK 편집 · 작업 트리 = 1eb34709 + 4차)
+
+| # | 들어간 것 | 어떻게 |
+|---|---|---|
+| ① | 제약 속성 읽기 | `nsql-catalog` `KeyExtra { name, kind(R / C), on_delete, check, on_update, locked, ref_table }` · `TableEditData.key_extra: Option<Vec<KeyExtra>>`(**`None` = 못 읽음** — 지원하지 않는 방언이거나 질의 실패) · `key_extras()` = 방언별 **한 질의 7열**(이름 · 종류 · 삭제 규칙 · 식 · 갱신 규칙 · 잠금 Y/N · 다른 스키마 대상) · Oracle · PostgreSQL · SQL Server · MySQL · 그 밖(SQLite 등) = `None` · `NO ACTION` = 빈 글 |
+| ② | 서버에서 읽은 FK / CHECK 편집 | 속성을 읽었고(`key_extra` 있음) **잠기지 않은** 제약 = 컬럼 칸 · 정의 칸 편집 가능 · 바뀐 제약 = `DROP CONSTRAINT` → `ADD CONSTRAINT`(MySQL = `DROP FOREIGN KEY` / `DROP CHECK`) · 정의 칸 글 = FK `대상(컬럼, …) [ON DELETE 규칙] [ON UPDATE 규칙]`(두 규칙은 순서 무관으로 읽음 · `NO ACTION` · 빈 값 = 생략 · Oracle = 문법에 없어 `ON UPDATE` 늘 생략) · CHECK = 식 그대로 · `nsql-ddl` `Key.on_update`(차이 비교 포함) |
+| ③ | 제약 단위 잠금 | `set_key_lock(complete, 잠긴 이름들)` — 잠긴 제약은 속성을 읽은 방언에서도 **이름 바꾸기 · 삭제만**(컬럼 칸 · 정의 칸 = 흐린 글 · 편집 거부) · 조건 = 아래 표 · 시험 `locked_server_constraint_stays_name_only_even_when_attributes_were_read` |
+| ④ | 다른 스키마의 참조 대상 | 참조 테이블이 다른 스키마면 `스키마.테이블`로 읽어 `ADD CONSTRAINT … REFERENCES 스키마.테이블`이 되게(PostgreSQL = `rn.nspname \|\| '.' \|\| rt.relname` · SQL Server = `OBJECT_SCHEMA_NAME` · MySQL = `unique_constraint_schema` · Oracle = `table_detail`의 `소유자.테이블`) · 같은 스키마 = 이름만 |
+| ⑤ | 재생성 주의 문구(D-570) | 미리보기 머리 주석 — 문장에 `DROP CONSTRAINT` / `DROP FOREIGN KEY` / `DROP CHECK` / `DROP PRIMARY KEY`가 있으면 `-- NOTE: a changed constraint is dropped and then added again. If the ADD fails on existing data, the script stops with the constraint dropped - fix the data or the definition and apply again (the object backup has the original).` · 문장 등급은 `Warn` 유지(`Danger` = "데이터가 사라진다"에만) |
+| ⑥ | 기존 결함 2건 수정(1차 ~ 3차 커밋판에도 있던 것) | PostgreSQL 제약 질의가 FK를 `F`로 돌려줘 **CHECK로 읽히던 것** → `CASE con.contype WHEN 'f' THEN 'R' …`(`table_detail` 소비자 전부 = 탐색기 트리 · 구조 편집기에 영향) · Oracle 참조 컬럼 맨 앞에 **참조 소유자가 섞이던 것**(질의 5번째 열 `r_owner`를 `fold_defs`가 참조 컬럼으로 읽음) → 비우고 다른 스키마 대상만 `소유자.테이블` |
+
+**잠금 규칙(③ · 편집기가 다시 적어 줄 수 없는 속성이 있으면 잠근다)**
+
+| 방언 | 잠그는 조건(카탈로그) | 뜻 |
+|---|---|---|
+| Oracle | `deferrable = 'DEFERRABLE'` · `status = 'DISABLED'` · `validated = 'NOT VALIDATED'` | 지연 검사 · 비활성 · 미검증(`NOVALIDATE`) |
+| PostgreSQL | `condeferrable` · `NOT convalidated` · `confmatchtype = 'f'` | 지연 검사 · `NOT VALID` · `MATCH FULL` |
+| SQL Server | `is_disabled` · `is_not_trusted` · `is_not_for_replication` | `NOCHECK` · 신뢰되지 않음 · `NOT FOR REPLICATION` |
+| MySQL | CHECK `enforced = 'NO'` | `NOT ENFORCED` |
+| 그 밖 | — (`key_extra` = `None`) | 서버에서 읽은 FK · CHECK 전부 이름 바꾸기 · 삭제만(종전 D-563) |
+
+**속성 유실의 경위(데이터 보호 · 있는 그대로)** — 4차의 첫 판은 "삭제 규칙 · 식을 읽었으면 그 테이블의 FK · CHECK 전부 편집 가능"(테이블 단위 `keys_complete`)이었다. 요청받은 판정(a ~ e)은 다 통과했지만, 협업이 판정을 하나 더 얹어 **편집기가 읽지 않는 속성을 붙인 제약**을 고쳐 봤다(임시 자식 테이블 · FK 정의 `CASCADE` → `SET NULL` + CHECK 식 → `qty >= 1` · `Applied 4 of 4`):
+
+| 방언 | 처음(카탈로그) | 첫 판에서 적용한 뒤 |
+|---|---|---|
+| PostgreSQL | FK `ON UPDATE CASCADE ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED` · CHECK `NOT VALID` | FK `ON DELETE SET NULL`뿐(갱신 규칙 · 지연 검사 사라짐) · CHECK 검증된 상태로 |
+| Oracle | FK `DEFERRABLE` · `DEFERRED` · CHECK `DISABLED` · `NOT VALIDATED` | FK `NOT DEFERRABLE` · `IMMEDIATE` · CHECK `ENABLED` · `VALIDATED` |
+| SQL Server | FK 갱신 규칙 `CASCADE` · CHECK `is_disabled = 1` · `is_not_trusted = 1` | FK 갱신 규칙 `NO_ACTION` · CHECK `0` · `0` |
+
+키 섹션에는 세 방언 모두 `<부모>(id) ON DELETE CASCADE`만 보였고 경고도 없었다 = D-563이 막으려던 **조용한 구조 훼손** 그대로. 비활성 CHECK는 다시 만들 때 기존 행을 검증하므로, 위반 행이 있으면 "`DROP` 성공 · `ADD` 실패 → 제약 유실"로도 이어진다. 커밋 전에 개발이 고쳤다 = 갱신 규칙을 함께 읽어 정의에 싣고(②), 다시 적어 줄 수 없는 속성이 있는 제약은 제약 단위로 잠근다(③). 첫 판은 커밋되지 않았다.
+
+**실패 유도에서 본 것(중단 길의 실제 모습 · 3방언 같음 · ⑤의 근거)** — FK의 참조를 부모의 UNIQUE 컬럼으로 바꿔(기존 행이 위반) `DROP` 성공 · `ADD` 실패를 만들었다: 상태줄 `Stopped after 1 of 2 statement(s) - the rest was not applied. Nothing is rolled back automatically; see the object backup.` · **서버에서 FK가 실제로 사라진다** · 화면 = `dirty=true` · FK 줄 표식 `+` · 남은 문장 = `ADD CONSTRAINT` 하나(두 번째 `DROP` 없음) · 기록 = `Stopped after 1 of 2` · `_applied.sql` = `applied 1 of 2` + `-- STOPPED:` + 두 문장 · 객체 백업(첫 문장 앞)에 원래 FK가 있다 · 같은 탭에서 정의를 고쳐 다시 적용 = 문장 1(`ADD`만) → `Applied 1 of 1` · 카탈로그에 FK 복귀. 서버 오류 원문 = PostgreSQL `23503: insert or update on table "<T>" violates foreign key constraint "<T>_fk"` · Oracle `ORA-02298`(부모 키 없음) · SQL Server "ALTER TABLE 문이 FOREIGN KEY 제약 조건 … 과(와) 충돌했습니다".
+
+**검증(11-28 새벽 · Linux · 협업)**
+
+| 단계 | 첫 판(1eb34709 + 4차 3파일) | 고친 판(+ 잠금 · 갱신 규칙 · NOTE · 6파일 +324 / −34) |
+|---|---|---|
+| fmt(두 작업공간) · `check-3os --quick` · `todo-check` | ✓ · ✓ · ✓ | 개발 확인 ✓ |
+| 시험 | `cargo test --workspace` 1598 / 0 / 12 · 통합 48 / 0 / 1 | 바뀐 크레이트 = `nsql-ddl` + `nsql-catalog` 47 / 0 · `nexa-sql` 725 / 0 / 10(그중 `tbledit` 17) |
+| clippy | (verify 흐름에 포함) | `--workspace --all-targets -D warnings` ✓ |
+| V1 | 전체 31 = 698 / 3(알려진 제목 캡처 3 · T-524) · `tbledit` 31 / 0 | `tbledit` 31 / 0(전체 31은 다시 돌리지 않음) |
+| 실서버 a ~ d(속성 없는 FK · CHECK) | PostgreSQL 38 / 0 · Oracle 38 / 0 · SQL Server 37 / 1(1 = 판정 스크립트의 느슨한 정규식 · 제품 아님) | PostgreSQL 38 / 0(회귀 1회) |
+| 실서버 e(탐색기 트리) | 3방언 5 / 0 — PostgreSQL `Constraints` · `Foreign Keys` 아래 `FOREIGN KEY (pid) → <부모> (id)` · Oracle 참조 컬럼에 소유자 없음 | — |
+| 실서버 속성 판정 | 유실 확인(위 표) | PostgreSQL 20 / 0 · Oracle 9 / 0 · SQL Server 18 / 0(아래) |
+| 임시 객체 | 매 판 `DROP` 뒤 남은 수 0 | 같음 |
+
+**고친 판의 실서버 속성 판정(부모 · 자식 임시 테이블 · 격리 홈 · 키 · 마우스 주입 0)**
+
+| 판정 | PostgreSQL | Oracle | SQL Server |
+|---|---|---|---|
+| 정의 칸에 갱신 규칙 | `<부모>(id) ON DELETE CASCADE ON UPDATE CASCADE` ✓ | (문법에 없음) `<부모>(ID) ON DELETE CASCADE` | `<부모>(id) ON DELETE CASCADE ON UPDATE CASCADE` ✓ |
+| 잠긴 제약 | FK(`DEFERRABLE`) · CHECK(`NOT VALID`) | FK(`DEFERRABLE`) · CHECK(`DISABLED`) | CHECK(`NOCHECK`) |
+| 잠긴 줄에 `tbledit.set`(정의 · 컬럼) | 줄 불변 · 문장 0 · `dirty=false` ✓ | 같음 ✓ | 같음 ✓ |
+| 잠긴 줄의 이름 바꾸기 | `RENAME CONSTRAINT` 문장(Safe) ✓ | ✓ | `sp_rename` ✓ |
+| 잠기지 않은 FK → `… ON DELETE SET NULL ON UPDATE CASCADE` | 문장 2 = `DROP` → `ADD … ON DELETE SET NULL ON UPDATE CASCADE` · `Applied 2 of 2` · `dirty=false` · 카탈로그 `ON UPDATE CASCADE ON DELETE SET NULL` ✓ | (편집 가능한 제약 없음) | 같은 두 문장 · 카탈로그 `upd=CASCADE` · `del=SET_NULL` ✓ |
+| 그 뒤 잠긴 제약의 카탈로그 | 처음 그대로(`DEFERRABLE INITIALLY DEFERRED` · `NOT VALID`) ✓ | 처음 그대로 ✓ | 처음 그대로(`disabled=1` · `not_trusted=1`) ✓ |
+| 미리보기 `NOTE` 줄 | ✓(`WARNING` 줄 다음) | — | ✓ |
+| `key_extras` 질의 직접 실행(CLI) | 3행 · 6번째 열 = `Y` / `N` / `Y` · 7번째 열 = 같은 스키마라 전부 빈 글 ✓ | — | — |
+
+**소견(4차 · 남긴 것)** — ① SQL Server 객체 백업 DDL의 FK에 `ON DELETE`가 없다(`… REFERENCES dbo.<부모> ([id]);` · 실제는 `SET NULL`) — PostgreSQL · Oracle 백업은 규칙이 들어 있다 → **T-526** ② 잠긴 줄에 이유 표시가 없다(§10-3 9) ③ 같은 스키마의 참조 대상은 스키마 한정 없이 `REFERENCES <부모> (id)`로 나간다(PostgreSQL = 검색 경로 · SQL Server = 기본 스키마에 기댐 · 다른 스키마 대상만 한정) ④ Oracle의 시스템 이름 제약(`SYS_C…` · 컬럼 `NOT NULL` 포함)은 제약 목록 질의와 속성 질의가 같은 조건(`generated = 'USER NAME'`)으로 걸러 키 섹션에 나오지 않는다 = 편집 대상이 아니다(코드 읽기 · 종전부터).
+
+**확인하지 않은 것(4차)** = 다른 스키마를 참조하는 FK(스키마를 새로 만들어야 해서 실행하지 않음 — 7번째 열이 빈 글인 쪽만 확인) · 다중 컬럼 FK(판정 명령 값에 쉼표를 못 씀) · MySQL / MariaDB 실서버(MariaDB는 `enforced` 열이 없을 수 있다 — 질의가 실패하면 `None` = 이름 바꾸기 · 삭제만으로 떨어지는지 포함) · `MATCH FULL` · `NOT FOR REPLICATION` · 신뢰되지 않은 SQL Server FK의 잠금 · JOIN FK 완성 회귀(PostgreSQL 종류 글자 수정의 소비자) · 잠긴 줄의 화면 표시(흐린 글) · 화면 조작 경로 전부(판정 = 기동 명령) · 고친 판의 전체 시험 · V1 전체 31 · Windows · macOS.
+

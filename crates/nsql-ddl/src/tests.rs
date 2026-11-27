@@ -294,6 +294,30 @@ fn keys_and_indexes() {
     assert_eq!(rc.len(), 1);
     assert_eq!(rc[0].kind, CheckKind::DuplicateKeys);
     assert_eq!(rc[0].sql, "SELECT COUNT(*) FROM (SELECT NAME FROM APP.ITEM GROUP BY NAME HAVING COUNT(*) > 1) nsql_dup");
+    // 갱신 규칙: 정의에 실리고(Oracle은 문법에 없어 뺀다) · 규칙만 달라져도 변경이다.
+    let mut o4 = o.clone();
+    o4.keys.push(Key {
+        name: "ITEM_FK9".into(),
+        kind: KeyKind::Foreign,
+        cols: vec!["QTY".into()],
+        ref_table: "UNIT".into(),
+        ref_cols: vec!["ID".into()],
+        on_update: "CASCADE".into(),
+        ..Key::default()
+    });
+    let mut e4 = o4.editable();
+    assert!(diff(&o4, &e4).is_empty());
+    e4.keys[1].on_update = String::new();
+    assert_eq!(
+        sqls(Dialect::Postgres, &o4, &e4),
+        [
+            "ALTER TABLE \"APP\".\"ITEM\" DROP CONSTRAINT \"ITEM_FK9\"",
+            "ALTER TABLE \"APP\".\"ITEM\" ADD CONSTRAINT \"ITEM_FK9\" FOREIGN KEY (\"QTY\") REFERENCES \"UNIT\" (\"ID\")"
+        ]
+    );
+    e4.keys[1].on_update = "set null".into();
+    assert!(sqls(Dialect::Mssql, &o4, &e4)[1].ends_with("REFERENCES UNIT (ID) ON UPDATE SET NULL"));
+    assert!(sqls(Dialect::Oracle, &o4, &e4)[1].ends_with("REFERENCES UNIT (ID)"));
     // 제약 삭제: MySQL은 종류마다 다른 문장 · SQLite는 막힘.
     let mut e2 = o.editable();
     e2.keys.clear();

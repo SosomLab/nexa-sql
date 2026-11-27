@@ -1768,6 +1768,80 @@ pub struct TableEditData {
     pub cols: Vec<ColumnInfo>,
     pub detail: TableDetail,
     pub counts: Vec<Option<u64>>,
+    /// 외래 키의 삭제 규칙 · 체크 제약의 식(`table_detail`이 읽지 않는 것) — `None` = 읽지 못했다(그 방언은 지원하지 않거나 질의
+    /// 실패) → 편집기는 서버에서 읽은 외래 키·체크 제약을 이름·삭제만 허용한다(모르는 속성을 잃지 않게).
+    pub key_extra: Option<Vec<KeyExtra>>,
+}
+
+/// 제약 하나의 덧붙은 속성(`kind` = `R` 외래 키 · `C` 체크).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct KeyExtra {
+    pub name: String,
+    pub kind: char,
+    /// `CASCADE` · `SET NULL` · `SET DEFAULT` · `RESTRICT` · 빈 글(= 기본 NO ACTION).
+    pub on_delete: String,
+    /// 갱신 규칙(같은 낱말 · Oracle은 늘 빈 글).
+    pub on_update: String,
+    /// 체크 식(`CHECK` 낱말 없이).
+    pub check: String,
+    /// 외래 키의 대상이 **다른 스키마**면 `스키마.테이블`(같은 스키마 = 빈 글 → 제약 목록의 이름을 쓴다).
+    pub ref_table: String,
+    /// ★ 편집기가 표현하지 못하는 속성이 있다(지연 검사 DEFERRABLE · 비활성/NOT VALID/NOCHECK · MATCH FULL · NOT FOR REPLICATION) —
+    /// 이 제약을 지우고 다시 만들면 그 속성이 조용히 사라지므로 편집기는 **이름·삭제만** 허용한다(11-28 실서버 3방언 확인).
+    pub locked: bool,
+}
+
+/// 외래 키 규칙 · 체크 식을 한 질의로(방언별 사전) — 행 = (이름, 종류 R/C, 삭제 규칙, 식, 갱신 규칙, 잠금 Y/N, 다른 스키마 대상).
+/// SQLite·그 밖 = `None`.
+fn key_extras(s: &mut dyn Session, schema: &str, table: &str) -> Option<Vec<KeyExtra>> {
+    let dialect = s.dialect();
+    let sql = match dialect {
+        Dialect::Oracle => format!(
+            "SELECT constraint_name, constraint_type, delete_rule, search_condition, '', CASE WHEN deferrable = 'DEFERRABLE' OR status = 'DISABLED' OR validated = 'NOT VALIDATED' THEN 'Y' ELSE 'N' END, '' FROM all_constraints WHERE owner = {} AND table_name = {} AND constraint_type IN ('R', 'C') AND generated = 'USER NAME'",
+            lit(schema),
+            lit(table)
+        ),
+        Dialect::Postgres => format!(
+            "SELECT con.conname, CASE con.contype WHEN 'f' THEN 'R' ELSE 'C' END, CASE con.confdeltype WHEN 'c' THEN 'CASCADE' WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' WHEN 'r' THEN 'RESTRICT' ELSE '' END, CASE WHEN con.contype = 'c' THEN pg_get_expr(con.conbin, con.conrelid) ELSE '' END, CASE con.confupdtype WHEN 'c' THEN 'CASCADE' WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' WHEN 'r' THEN 'RESTRICT' ELSE '' END, CASE WHEN con.condeferrable OR NOT con.convalidated OR con.confmatchtype = 'f' THEN 'Y' ELSE 'N' END, CASE WHEN con.contype = 'f' AND rn.nspname <> n.nspname THEN rn.nspname || '.' || rt.relname ELSE '' END FROM pg_constraint con JOIN pg_class t ON t.oid = con.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace LEFT JOIN pg_class rt ON rt.oid = con.confrelid LEFT JOIN pg_namespace rn ON rn.oid = rt.relnamespace WHERE n.nspname = {} AND t.relname = {} AND con.contype IN ('f', 'c')",
+            lit(schema),
+            lit(table)
+        ),
+        Dialect::Mssql => {
+            let obj = lit(&format!("{}.{}", quote_ident(dialect, schema), quote_ident(dialect, table)));
+            format!(
+                "SELECT fk.name, 'R', REPLACE(fk.delete_referential_action_desc, '_', ' '), '', REPLACE(fk.update_referential_action_desc, '_', ' '), CASE WHEN fk.is_disabled = 1 OR fk.is_not_trusted = 1 OR fk.is_not_for_replication = 1 THEN 'Y' ELSE 'N' END, CASE WHEN OBJECT_SCHEMA_NAME(fk.referenced_object_id) <> OBJECT_SCHEMA_NAME(fk.parent_object_id) THEN OBJECT_SCHEMA_NAME(fk.referenced_object_id) + '.' + OBJECT_NAME(fk.referenced_object_id) ELSE '' END FROM sys.foreign_keys fk WHERE fk.parent_object_id = OBJECT_ID({obj}) UNION ALL SELECT cc.name, 'C', '', cc.definition, '', CASE WHEN cc.is_disabled = 1 OR cc.is_not_trusted = 1 OR cc.is_not_for_replication = 1 THEN 'Y' ELSE 'N' END, '' FROM sys.check_constraints cc WHERE cc.parent_object_id = OBJECT_ID({obj})"
+            )
+        }
+        Dialect::Mysql => format!(
+            "SELECT rc.constraint_name, 'R', rc.delete_rule, '', rc.update_rule, 'N', CASE WHEN rc.unique_constraint_schema <> rc.constraint_schema THEN CONCAT(rc.unique_constraint_schema, '.', rc.referenced_table_name) ELSE '' END FROM information_schema.referential_constraints rc WHERE rc.constraint_schema = {sc} AND rc.table_name = {tb} UNION ALL SELECT tc.constraint_name, 'C', '', cc.check_clause, '', CASE WHEN tc.enforced = 'NO' THEN 'Y' ELSE 'N' END, '' FROM information_schema.table_constraints tc JOIN information_schema.check_constraints cc ON cc.constraint_schema = tc.constraint_schema AND cc.constraint_name = tc.constraint_name WHERE tc.table_schema = {sc} AND tc.table_name = {tb} AND tc.constraint_type = 'CHECK'",
+            sc = lit(schema),
+            tb = lit(table)
+        ),
+        _ => return None,
+    };
+    let rs = query(s, &sql).ok()?;
+    let rule = |v: String| {
+        let v = v.trim().to_uppercase();
+        if v == "NO ACTION" {
+            String::new()
+        } else {
+            v
+        }
+    };
+    Some(
+        rs.rows
+            .iter()
+            .map(|r| KeyExtra {
+                name: col(r, 0),
+                kind: if col(r, 1).trim() == "R" { 'R' } else { 'C' },
+                on_delete: rule(col(r, 2)),
+                check: col(r, 3).trim().to_string(),
+                on_update: rule(col(r, 4)),
+                locked: col(r, 5).trim() == "Y",
+                ref_table: col(r, 6).trim().to_string(),
+            })
+            .collect(),
+    )
 }
 
 /// ★ 구조 편집기의 읽기 한 묶음(열기 · 새로 고침 · 적용 직전 재확인): `columns` + `table_detail` + `checks`의 `SELECT COUNT(*)`
@@ -1820,10 +1894,12 @@ pub fn table_edit_load(
                 .and_then(|rs| rs.rows.first().and_then(|r| r.first().and_then(value_u64)))
         })
         .collect();
+    let key_extra = key_extras(s, schema, table);
     Ok(TableEditData {
         cols,
         detail,
         counts,
+        key_extra,
     })
 }
 
@@ -2111,6 +2187,11 @@ pub fn table_detail(
                 lit(schema), lit(table)
             ))?;
             let mut keys = fold_defs(&cons.rows);
+            // ★ 이 질의의 5번째 열은 참조 **소유자**(`r_owner`)다 — `fold_defs`는 그 자리를 참조 컬럼으로 읽으므로 여기서 비운다
+            //   (11-28 실서버: 참조 컬럼 맨 앞에 스키마 이름이 섞여 `부모(스키마, ID)`로 보였다 · 진짜 참조 컬럼은 아래 질의가 채운다).
+            for k in &mut keys {
+                k.ref_cols.clear();
+            }
             // FK → (r_owner, r_constraint_name) → 대상 테이블(제약 이름별 1행).
             let mut refs: Vec<(String, String, String)> = Vec::new();
             for r in &cons.rows {
@@ -2136,7 +2217,12 @@ pub fn table_detail(
                         for (name, o, c) in &refs {
                             if *o == ro && *c == rc {
                                 if let Some(k) = keys.iter_mut().find(|k| k.name == *name) {
-                                    k.ref_table = Some(tn.clone());
+                                    // 다른 스키마의 테이블이면 `소유자.테이블`(Db2 질의와 같은 규칙 · 같은 스키마 = 이름만).
+                                    k.ref_table = Some(if ro == schema {
+                                        tn.clone()
+                                    } else {
+                                        format!("{ro}.{tn}")
+                                    });
                                     if !cn.is_empty() {
                                         k.ref_cols.push(cn.clone());
                                     }
@@ -2171,7 +2257,7 @@ pub fn table_detail(
         }
         Dialect::Postgres => (
             format!(
-                "SELECT UPPER(con.contype::text), con.conname, a.attname, COALESCE(rt.relname, ''), COALESCE(ra.attname, '') FROM pg_constraint con JOIN pg_class t ON t.oid = con.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace LEFT JOIN pg_class rt ON rt.oid = con.confrelid CROSS JOIN LATERAL unnest(con.conkey) WITH ORDINALITY k(attnum, ord) JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum LEFT JOIN pg_attribute ra ON ra.attrelid = con.confrelid AND ra.attnum = con.confkey[k.ord] WHERE n.nspname = {} AND t.relname = {} AND con.contype IN ('p','u','f','c') ORDER BY CASE con.contype WHEN 'p' THEN 0 WHEN 'u' THEN 1 WHEN 'f' THEN 2 ELSE 3 END, con.conname, k.ord",
+                "SELECT CASE con.contype WHEN 'f' THEN 'R' ELSE UPPER(con.contype::text) END, con.conname, a.attname, COALESCE(rt.relname, ''), COALESCE(ra.attname, '') FROM pg_constraint con JOIN pg_class t ON t.oid = con.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace LEFT JOIN pg_class rt ON rt.oid = con.confrelid CROSS JOIN LATERAL unnest(con.conkey) WITH ORDINALITY k(attnum, ord) JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum LEFT JOIN pg_attribute ra ON ra.attrelid = con.confrelid AND ra.attnum = con.confkey[k.ord] WHERE n.nspname = {} AND t.relname = {} AND con.contype IN ('p','u','f','c') ORDER BY CASE con.contype WHEN 'p' THEN 0 WHEN 'u' THEN 1 WHEN 'f' THEN 2 ELSE 3 END, con.conname, k.ord",
                 lit(schema), lit(table)
             ),
             format!(

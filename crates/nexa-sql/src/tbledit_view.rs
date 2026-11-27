@@ -186,34 +186,36 @@ fn split_list(d: Dialect, s: &str) -> Vec<String> {
         .collect()
 }
 
-/// 외래 키 정의 글 `대상(컬럼, …) [ON DELETE 규칙]` → (대상, 컬럼들, 삭제 규칙). 순수.
-pub(crate) fn parse_fk(d: Dialect, s: &str) -> (String, Vec<String>, String) {
+/// 외래 키 정의 글 `대상(컬럼, …) [ON DELETE 규칙] [ON UPDATE 규칙]` → (대상, 컬럼들, 삭제 규칙, 갱신 규칙). 순수.
+pub(crate) fn parse_fk(d: Dialect, s: &str) -> (String, Vec<String>, String, String) {
     let s = s.trim();
-    let upper = s.to_uppercase();
-    let (head, rule) = match upper.find(" ON DELETE ") {
-        Some(i) => (&s[..i], s[i + " ON DELETE ".len()..].trim().to_uppercase()),
-        None => (s, String::new()),
+    // ASCII만 대문자로(바이트 자리가 원문과 같다) → 두 규칙 낱말의 자리를 찾는다(순서 무관).
+    let upper = s.to_ascii_uppercase();
+    let (del, upd) = (upper.find(" ON DELETE "), upper.find(" ON UPDATE "));
+    let head_end = [del, upd].into_iter().flatten().min().unwrap_or(s.len());
+    let rule_at = |at: Option<usize>, other: Option<usize>| -> String {
+        let Some(i) = at else {
+            return String::new();
+        };
+        let from = i + " ON DELETE ".len();
+        let to = other.filter(|o| *o > i).unwrap_or(s.len());
+        s[from..to].trim().to_ascii_uppercase()
+    };
+    let (on_delete, on_update) = (rule_at(del, upd), rule_at(upd, del));
+    let head = &s[..head_end];
+    let fold_name = |t: &str| {
+        t.trim()
+            .split('.')
+            .map(|p| nsql_ddl::fold_new_name(d, p))
+            .collect::<Vec<_>>()
+            .join(".")
     };
     match head.split_once('(') {
         Some((tbl, rest)) => {
             let inside = rest.split(')').next().unwrap_or("");
-            let name = tbl
-                .trim()
-                .split('.')
-                .map(|p| nsql_ddl::fold_new_name(d, p))
-                .collect::<Vec<_>>()
-                .join(".");
-            (name, split_list(d, inside), rule)
+            (fold_name(tbl), split_list(d, inside), on_delete, on_update)
         }
-        None => (
-            head.trim()
-                .split('.')
-                .map(|p| nsql_ddl::fold_new_name(d, p))
-                .collect::<Vec<_>>()
-                .join("."),
-            Vec::new(),
-            rule,
-        ),
+        None => (fold_name(head), Vec::new(), on_delete, on_update),
     }
 }
 
@@ -311,6 +313,11 @@ pub(crate) struct TableEditView {
     /// ★ 라이선스 안내(D-328 · 안내 게이트): 떠 있는 동안 편집기 대신 안내만 보인다 — 값 = 뜬 시각([확인]은 그로부터
     /// [`NOTICE_SECS`]초 뒤에 켜진다).
     notice: Option<std::time::Instant>,
+    /// 서버에서 읽은 외래 키·체크 제약의 속성(삭제 규칙 · 식)을 **다 읽었는가** — 아니면 그 제약은 이름·삭제만(모르는 속성을
+    /// 잃지 않게 · D-563).
+    keys_complete: bool,
+    /// 표현하지 못하는 속성이 있어 **잠긴** 제약들(서버에서의 이름) — 속성을 다 읽은 방언에서도 이름·삭제만.
+    locked_keys: Vec<String>,
     /// 이 탭에서 적용한 스크립트(시각 · 결과 글 · 파일 경로) — 새 것이 위.
     history: Vec<[String; 3]>,
     /// ★ 되돌리기(Ctrl+Z · 다시 실행): 편집 모델의 지난 상태들 — 변경 하나(칸 확정 · 행 추가/삭제 · 체크 · 순서 · Revert)가 한 단계.
@@ -385,6 +392,8 @@ impl TableEditView {
             comment_rect: Rect::default(),
             ddl_rect: Rect::default(),
             notice: None,
+            keys_complete: false,
+            locked_keys: Vec::new(),
             history: Vec::new(),
             undo: Vec::new(),
             redo: Vec::new(),
@@ -526,6 +535,12 @@ impl TableEditView {
         } else {
             false
         }
+    }
+
+    /// `complete` = 제약의 덧붙은 속성(규칙 · 식)을 읽었다 · `locked` = 그래도 고치면 안 되는 제약들(지연 검사 · 비활성 등).
+    pub(crate) fn set_key_lock(&mut self, complete: bool, locked: Vec<String>) {
+        self.keys_complete = complete;
+        self.locked_keys = locked;
     }
 
     /// 적용 하나를 기록 섹션 맨 위에(시각 · 결과 글 · 보관한 스크립트 파일).
@@ -716,6 +731,9 @@ impl TableEditView {
                             if !k.on_delete.is_empty() {
                                 s.push_str(&format!(" ON DELETE {}", k.on_delete));
                             }
+                            if !k.on_update.is_empty() {
+                                s.push_str(&format!(" ON UPDATE {}", k.on_update));
+                            }
                             s
                         }
                         KeyKind::Check => k.check.clone(),
@@ -762,8 +780,13 @@ impl TableEditView {
                 let Some(k) = self.edit.keys.get(row) else {
                     return false;
                 };
-                let fixed =
-                    k.origin.is_some() && matches!(k.kind, KeyKind::Foreign | KeyKind::Check);
+                let locked = k
+                    .origin
+                    .as_deref()
+                    .is_some_and(|o| self.locked_keys.iter().any(|l| l == o));
+                let fixed = k.origin.is_some()
+                    && matches!(k.kind, KeyKind::Foreign | KeyKind::Check)
+                    && (!self.keys_complete || locked);
                 match col {
                     0 => true,
                     1 => k.origin.is_none(),
@@ -817,10 +840,11 @@ impl TableEditView {
                     0 => k.name = nsql_ddl::fold_new_name(d, text),
                     2 => k.cols = split_list(d, text),
                     3 if k.kind == KeyKind::Foreign => {
-                        let (tbl, cols, rule) = parse_fk(d, text);
+                        let (tbl, cols, rule, upd) = parse_fk(d, text);
                         k.ref_table = tbl;
                         k.ref_cols = cols;
                         k.on_delete = rule;
+                        k.on_update = upd;
                     }
                     3 if k.kind == KeyKind::Check => k.check = text.trim().to_string(),
                     _ => return false,
@@ -2372,18 +2396,64 @@ mod tests {
     }
 
     #[test]
+    fn server_read_fk_is_editable_once_its_attributes_were_read() {
+        let mut v = sample();
+        v.set_key_lock(true, Vec::new());
+        v.set_section(Section::Keys);
+        assert!(v.cell_editable(0, 2));
+        assert!(v.cell_editable(0, 3));
+        assert!(v.set_cell(0, 3, "UNIT(ID) ON DELETE CASCADE"));
+        // 바뀐 제약 = 지우고 다시 만든다(외래 키 삭제가 먼저 · 추가가 마지막).
+        let sqls: Vec<&str> = v.plan().stmts.iter().map(|s| s.sql.as_str()).collect();
+        assert_eq!(
+            sqls,
+            [
+                "ALTER TABLE APP.ITEM DROP CONSTRAINT ITEM_FK",
+                "ALTER TABLE APP.ITEM ADD CONSTRAINT ITEM_FK FOREIGN KEY (NAME) REFERENCES UNIT (ID) ON DELETE CASCADE"
+            ]
+        );
+    }
+
+    #[test]
     fn parse_fk_forms() {
         assert_eq!(
             parse_fk(Dialect::Oracle, "unit"),
-            ("UNIT".to_string(), vec![], String::new())
+            ("UNIT".to_string(), vec![], String::new(), String::new())
         );
         assert_eq!(
             parse_fk(Dialect::Mssql, "dbo.Unit(Id, Code) on delete set null"),
             (
                 "dbo.Unit".to_string(),
                 vec!["Id".to_string(), "Code".to_string()],
-                "SET NULL".to_string()
+                "SET NULL".to_string(),
+                String::new()
             )
         );
+        // 두 규칙 · 순서 무관.
+        let a = parse_fk(
+            Dialect::Postgres,
+            "unit(id) ON DELETE CASCADE ON UPDATE SET NULL",
+        );
+        let b = parse_fk(
+            Dialect::Postgres,
+            "unit(id) on update set null on delete cascade",
+        );
+        assert_eq!(a, b);
+        assert_eq!((a.2.as_str(), a.3.as_str()), ("CASCADE", "SET NULL"));
+    }
+
+    #[test]
+    fn locked_server_constraint_stays_name_only_even_when_attributes_were_read() {
+        let mut v = sample();
+        v.set_key_lock(true, vec!["ITEM_FK".to_string()]);
+        v.set_section(Section::Keys);
+        assert!(v.cell_editable(0, 0));
+        assert!(!v.cell_editable(0, 2));
+        assert!(!v.cell_editable(0, 3));
+        assert!(!v.set_cell(0, 3, "UNIT(ID) ON DELETE CASCADE"));
+        assert!(v.plan().stmts.is_empty());
+        // 새로 더한 제약은 잠금과 무관.
+        assert!(v.add_row());
+        assert!(v.cell_editable(1, 2));
     }
 }

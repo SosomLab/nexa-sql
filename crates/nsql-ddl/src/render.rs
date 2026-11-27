@@ -162,6 +162,10 @@ fn key_body(d: Dialect, k: &Key) -> String {
             if !od.is_empty() && !od.eq_ignore_ascii_case("NO ACTION") {
                 s.push_str(&format!(" ON DELETE {}", od.to_uppercase()));
             }
+            let ou = k.on_update.trim();
+            if !ou.is_empty() && !ou.eq_ignore_ascii_case("NO ACTION") && d != Dialect::Oracle {
+                s.push_str(&format!(" ON UPDATE {}", ou.to_uppercase()));
+            }
             s
         }
     }

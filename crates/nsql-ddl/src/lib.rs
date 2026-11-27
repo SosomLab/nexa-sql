@@ -51,6 +51,8 @@ pub struct Key {
     pub ref_table: String,
     pub ref_cols: Vec<String>,
     pub on_delete: String,
+    /// 외래 키의 갱신 규칙(빈 값 = 기본 · Oracle에는 없다).
+    pub on_update: String,
     pub check: String,
     pub origin: Option<String>,
 }
@@ -404,6 +406,7 @@ pub fn diff(orig: &Table, edit: &Table) -> Vec<Change> {
                     && o.ref_table == k.ref_table
                     && o.ref_cols == k.ref_cols
                     && o.on_delete.eq_ignore_ascii_case(&k.on_delete)
+                    && o.on_update.eq_ignore_ascii_case(&k.on_update)
                     && o.check.trim() == k.check.trim();
                 if !same {
                     out.push(Change::DropKey(o.clone()));

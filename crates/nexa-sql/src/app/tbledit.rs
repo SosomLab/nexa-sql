@@ -89,7 +89,12 @@ pub(crate) fn to_model(schema: &str, table: &str, d: &TableEditData) -> nsql_ddl
             origin: None,
         })
         .collect();
-    let keys: Vec<nsql_ddl::Key> = d
+    let extra = |name: &str| {
+        d.key_extra
+            .as_ref()
+            .and_then(|x| x.iter().find(|e| e.name == name))
+    };
+    let mut keys: Vec<nsql_ddl::Key> = d
         .detail
         .keys
         .iter()
@@ -102,11 +107,37 @@ pub(crate) fn to_model(schema: &str, table: &str, d: &TableEditData) -> nsql_ddl
                 _ => KeyKind::Check,
             },
             cols: k.cols.clone(),
-            ref_table: k.ref_table.clone().unwrap_or_default(),
+            // 다른 스키마의 대상이면 덧붙은 속성이 준 `스키마.테이블`을 쓴다(제약 목록 질의는 이름만 준다 — 그대로 다시 만들면 엉뚱한
+            // 스키마를 가리키거나 실패한다).
+            ref_table: extra(&k.name)
+                .map(|e| e.ref_table.clone())
+                .filter(|r| !r.is_empty())
+                .or_else(|| k.ref_table.clone())
+                .unwrap_or_default(),
             ref_cols: k.ref_cols.clone(),
+            on_delete: extra(&k.name)
+                .map(|e| e.on_delete.clone())
+                .unwrap_or_default(),
+            on_update: extra(&k.name)
+                .map(|e| e.on_update.clone())
+                .unwrap_or_default(),
+            check: extra(&k.name).map(|e| e.check.clone()).unwrap_or_default(),
             ..nsql_ddl::Key::default()
         })
         .collect();
+    // 제약 목록 질의에 안 나온 체크 제약(방언에 따라 키·외래 키만 준다)도 덧붙은 속성에 있으면 보인다 — 지우거나 고칠 수 있게.
+    if let Some(x) = &d.key_extra {
+        for e in x.iter().filter(|e| e.kind == 'C') {
+            if !keys.iter().any(|k| k.name == e.name) {
+                keys.push(nsql_ddl::Key {
+                    name: e.name.clone(),
+                    kind: KeyKind::Check,
+                    check: e.check.clone(),
+                    ..nsql_ddl::Key::default()
+                });
+            }
+        }
+    }
     let indexes = d
         .detail
         .indexes
@@ -132,6 +163,26 @@ pub(crate) fn to_model(schema: &str, table: &str, d: &TableEditData) -> nsql_ddl
         keys,
         indexes,
     }
+}
+
+/// 고치면 안 되는 제약들(표현 못 하는 속성이 있는 것)의 이름. 순수.
+pub(crate) fn locked_keys(d: &TableEditData) -> Vec<String> {
+    let Some(x) = d.key_extra.as_ref() else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = x
+        .iter()
+        .filter(|e| e.locked)
+        .map(|e| e.name.clone())
+        .collect();
+    // 제약 목록에는 있는데 덧붙은 속성이 없는 외래 키·체크(질의가 못 본 것 — 예: 이름이 자동으로 붙은 제약)도 잠근다:
+    // 식·규칙을 모르는 채로 다시 만들게 두지 않는다.
+    for k in d.detail.keys.iter().filter(|k| matches!(k.kind, 'R' | 'C')) {
+        if !x.iter().any(|e| e.name == k.name) && !out.contains(&k.name) {
+            out.push(k.name.clone());
+        }
+    }
+    out
 }
 
 /// 미리보기 머리 주석(영어 고정 = 스크립트의 일부 · 파일로 저장·보관된다): 위험 등급 · 0이 아닌 검사 결과 · 막힌 변경. 순수.
@@ -183,6 +234,16 @@ pub(crate) fn preview_header(
                 ));
             }
         }
+    }
+    // 제약을 고치면 DROP 뒤 ADD로 나간다 — ADD가 기존 데이터 때문에 실패하면 제약이 **없는 채로** 멈춘다(11-28 실서버 3방언).
+    if plan.stmts.iter().any(|st| {
+        let u = st.sql.to_ascii_uppercase();
+        u.contains(" DROP CONSTRAINT ")
+            || u.contains(" DROP FOREIGN KEY ")
+            || u.contains(" DROP CHECK ")
+            || u.contains(" DROP PRIMARY KEY")
+    }) {
+        s.push_str("-- NOTE: a changed constraint is dropped and then added again. If the ADD fails on existing data, the script stops with the constraint dropped - fix the data or the definition and apply again (the object backup has the original).\n");
     }
     for b in &plan.blocked {
         s.push_str(&match b.reason {
@@ -432,8 +493,16 @@ impl App {
         let model = to_model(schema, table, &data);
         match why {
             TbPending::None => {}
-            TbPending::Load | TbPending::Reload { ok: true } => tab.view.load(model),
-            TbPending::Reload { ok: false } => tab.view.rebase(model),
+            TbPending::Load | TbPending::Reload { ok: true } => {
+                tab.view
+                    .set_key_lock(data.key_extra.is_some(), locked_keys(&data));
+                tab.view.load(model);
+            }
+            TbPending::Reload { ok: false } => {
+                tab.view
+                    .set_key_lock(data.key_extra.is_some(), locked_keys(&data));
+                tab.view.rebase(model);
+            }
             TbPending::PreApply => {
                 // F-13: 열어 본 뒤 다른 세션이 구조를 바꿨으면 적용하지 않는다(사용자가 본 차이가 더는 맞지 않는다).
                 if model != *tab.view.orig() {
@@ -1043,6 +1112,7 @@ mod tests {
                 col_comments: vec![("NAME".into(), "nm".into())],
             },
             counts: vec![],
+            key_extra: None,
         }
     }
 
@@ -1129,6 +1199,55 @@ mod tests {
         let bad = applied_script("APP", "T", "x", 1, 3, false, "A;\nB;\n");
         assert!(bad.contains("applied 1 of 3"));
         assert!(bad.contains("-- STOPPED: the last statement below failed"));
+    }
+
+    #[test]
+    fn model_takes_fk_rule_and_check_expression_from_extras() {
+        let mut d = data();
+        d.detail.keys.push(KeyDef {
+            name: "T_FK".into(),
+            kind: 'R',
+            cols: vec!["ID".into()],
+            ref_table: Some("P".into()),
+            ref_cols: vec!["ID".into()],
+        });
+        d.key_extra = Some(vec![
+            nsql_catalog::KeyExtra {
+                name: "T_FK".into(),
+                kind: 'R',
+                on_delete: "CASCADE".into(),
+                on_update: "SET NULL".into(),
+                ref_table: "OTHER.P".into(),
+                ..nsql_catalog::KeyExtra::default()
+            },
+            nsql_catalog::KeyExtra {
+                name: "T_CK".into(),
+                kind: 'C',
+                check: "ID > 0".into(),
+                locked: true,
+                ..nsql_catalog::KeyExtra::default()
+            },
+        ]);
+        let m = to_model("APP", "T", &d);
+        let fk = m.keys.iter().find(|k| k.name == "T_FK").expect("fk");
+        assert_eq!(fk.on_delete, "CASCADE");
+        assert_eq!(fk.on_update, "SET NULL");
+        // 다른 스키마의 대상 = 덧붙은 속성의 `스키마.테이블`이 이긴다.
+        assert_eq!(fk.ref_table, "OTHER.P");
+        // 표현 못 하는 속성이 있는 제약만 잠긴다.
+        assert_eq!(locked_keys(&d), ["T_CK"]);
+        // 속성 항목이 없는 기존 외래 키·체크도 잠긴다(모르는 채로 다시 만들지 않는다).
+        d.detail.keys.push(KeyDef {
+            name: "SYS_C001".into(),
+            kind: 'C',
+            cols: vec!["ID".into()],
+            ref_table: None,
+            ref_cols: vec![],
+        });
+        assert_eq!(locked_keys(&d), ["T_CK", "SYS_C001"]);
+        // 제약 목록에 없던 체크 제약도 들어온다.
+        let ck = m.keys.iter().find(|k| k.name == "T_CK").expect("ck");
+        assert_eq!((ck.kind, ck.check.as_str()), (KeyKind::Check, "ID > 0"));
     }
 
     #[test]

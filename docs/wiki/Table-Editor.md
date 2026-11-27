@@ -50,14 +50,16 @@ The table editor is a licensed feature. Without a license it still works (free f
 - **Closing a tab with unapplied changes** — the first close keeps the tab and the status bar says "Unapplied table changes - close the tab again to discard them". Close it again within a few seconds (`editor.close_confirm_ms`, 3 seconds by default) to discard the edits. Nothing was sent to the server.
 - New names follow the database's own folding — unquoted names become upper case on Oracle and lower case on PostgreSQL. Wrap a name in `"…"` to keep it exactly as typed.
 - Type several columns as a comma-separated list in the Columns cell of a key or an index.
+- **Foreign key definition** — the References cell is `table(column, …)` followed by the optional rules, for example `parent(id) ON DELETE SET NULL ON UPDATE CASCADE`. Leave a rule out for the database default (`NO ACTION`). A table in another schema is written `schema.table`. Oracle has no `ON UPDATE`. For a check, the cell is the expression.
 
 ## Applying
 
 1. Press **Apply…**. Nexa SQL reads the table from the server once more and runs the risk checks (row counts for changes such as adding NOT NULL).
 2. If the table was changed on the server after you opened it, **nothing is applied** — press Refresh and edit again.
-3. The preview window shows the script with a header: the number of statements, a `PRODUCTION` line for production connections, `DANGER` / `WARNING` lines and any check result that is not zero. You can edit the script in this window (see *Editing the script in the preview* below).
+3. The preview window shows the script with a header: the number of statements, a `PRODUCTION` line for production connections, `DANGER` / `WARNING` lines, a `NOTE` line when a changed constraint is dropped and added again, and any check result that is not zero. You can edit the script in this window (see *Editing the script in the preview* below).
 4. Press **Apply** in that window. The statements run **one at a time** on that server's session. The table is backed up first (see [Explorers and filters](Explorers-and-Filters) — object backup).
 5. If a statement fails, the run **stops there**: "Stopped after n of m statement(s)". The statements before it stay applied (DDL is not rolled back automatically), and the edits that were not applied stay in the tab so you can fix them and apply again.
+   - A changed constraint is applied as `DROP` then `ADD`. If the `ADD` fails on existing data, the run stops with the constraint **removed**: fix the data or the definition and apply again — only the `ADD` is left to run. The object backup has the original definition.
 6. After a successful run the structure is read again and the tab is clean.
 
 On a production connection the usual production guards apply (confirmation and backup). Set `tbledit.prod` to **Deny (read-only)** to open tables on production connections for viewing only.
@@ -92,7 +94,7 @@ Closing the tab clears the list. The files stay.
 - **No table re-creation.** A change that would need the table to be dropped and re-created is never applied — it is listed on the warning line instead.
   - Moving a column to another position: only MySQL/MariaDB can do it with a statement.
   - SQLite: changing a column's type, NOT NULL, default or constraints is blocked (adding and renaming columns works). SQLite has no comments.
-- **Foreign keys and checks read from the server** can be renamed or removed, not edited in place — remove and add a new one instead. New foreign keys and checks are free.
+- **Foreign keys and checks read from the server** — on Oracle · PostgreSQL · SQL Server · MySQL you can edit their columns and definition; the change is applied as `DROP` then `ADD` (see *Applying*). A constraint with an attribute the editor cannot write back is **locked** — its Columns and definition cells are dimmed, and it can only be renamed or removed: deferrable · disabled or not validated (`DISABLE` · `NOVALIDATE` · `NOT VALID` · `NOCHECK` · `NOT ENFORCED`) · PostgreSQL `MATCH FULL` · SQL Server `NOT FOR REPLICATION`. To change a locked constraint, remove it and create it again yourself in an editor. On other databases, or when the attributes could not be read, every foreign key and check read from the server is rename / remove only. New foreign keys and checks are free.
 - An index that only backs a primary key or a unique constraint is listed under Keys, not under Indexes.
 - Not in this version: views · sequences · partitions · storage options.
 
