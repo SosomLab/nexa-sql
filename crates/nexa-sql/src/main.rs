@@ -354,6 +354,8 @@ struct App {
     tbledits: std::collections::HashMap<String, app::tbledit::TbTab>,
     /// 미리보기 창이 떠 있는 탭의 열쇠([적용]이 누구 것인지).
     tbledit_apply_key: Option<String>,
+    /// 미리보기 창에 처음 보인 글 — [적용] 때 창의 글과 견줘 사용자가 고쳤는지 본다.
+    tbledit_apply_shown: Option<String>,
     /// 적용 중인 문장 열(한 번에 하나).
     tbledit_run: Option<app::tbledit::TbRun>,
     /// 새 테이블 탭 번호.
@@ -2099,6 +2101,7 @@ fn main() {
         sqlprev_apply: None,
         tbledits: std::collections::HashMap::new(),
         tbledit_apply_key: None,
+        tbledit_apply_shown: None,
         tbledit_run: None,
         tbledit_seq: 0,
         tbledit_note: None,

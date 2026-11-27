@@ -271,6 +271,8 @@ impl SqlPrevWin {
         tb: TextBox,
     ) {
         self.open_plain(el, theme, owner, title, text, tb);
+        // 적용 미리보기는 고칠 수 있다(D-317 · DataGrip식): [적용]은 창에 남은 글을 실행한다.
+        self.tb.set_read_only(false);
         self.set_buttons(
             &[Msg::SpBtnApply, Msg::SpBtnCopy, Msg::SpBtnClose],
             &[

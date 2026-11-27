@@ -17,6 +17,8 @@ pub(crate) enum Section {
     Columns,
     Keys,
     Indexes,
+    /// 이 탭에서 적용한 스크립트들(읽기 전용 · 119 F-15).
+    History,
 }
 
 impl Section {
@@ -25,6 +27,7 @@ impl Section {
             "columns" => Some(Self::Columns),
             "keys" => Some(Self::Keys),
             "indexes" => Some(Self::Indexes),
+            "history" => Some(Self::History),
             _ => None,
         }
     }
@@ -33,6 +36,7 @@ impl Section {
             Self::Columns => "columns",
             Self::Keys => "keys",
             Self::Indexes => "indexes",
+            Self::History => "history",
         }
     }
     fn label(self) -> Msg {
@@ -40,6 +44,7 @@ impl Section {
             Self::Columns => Msg::TbeSecColumns,
             Self::Keys => Msg::TbeSecKeys,
             Self::Indexes => Msg::TbeSecIndexes,
+            Self::History => Msg::TbeSecHistory,
         }
     }
 }
@@ -100,6 +105,23 @@ const COLS_KEYS: &[ColSpec] = &[
         check: false,
     },
 ];
+const COLS_HISTORY: &[ColSpec] = &[
+    ColSpec {
+        title: Msg::TbeColWhen,
+        weight: 22,
+        check: false,
+    },
+    ColSpec {
+        title: Msg::TbeColResult,
+        weight: 18,
+        check: false,
+    },
+    ColSpec {
+        title: Msg::TbeColFile,
+        weight: 60,
+        check: false,
+    },
+];
 const COLS_INDEXES: &[ColSpec] = &[
     ColSpec {
         title: Msg::TbeColName,
@@ -148,6 +170,8 @@ pub(crate) enum TbAction {
     Refresh,
     /// 편집 모델이 바뀌었다(탭의 미저장 표식 갱신).
     Changed,
+    /// 기록 섹션의 줄을 열었다(더블클릭 · Enter) — 그 스크립트 파일을 편집기 탭으로.
+    OpenHistory(usize),
     /// 라이선스 안내의 [확인] — 이번 실행 동안 다시 묻지 않는다.
     NoticeAck,
     /// 라이선스 안내의 [라이선스…] — 라이선스 창을 연다(안내는 그대로).
@@ -214,6 +238,9 @@ fn kind_suffix(k: KeyKind) -> &'static str {
 /// ★ 라이선스 안내의 [확인]이 켜지기까지의 시간(초) — **코드 상수**(D-328: 설정 · 환경 변수 · 기동 명령 어디서도 바꿀 수 없다 ·
 /// 자동 시험도 이만큼 기다린다).
 pub(crate) const NOTICE_SECS: u64 = 3;
+
+/// 되돌리기 단계 상한(모델 하나 = 수십 KB 이하 · 탭을 닫으면 함께 사라진다).
+const UNDO_MAX: usize = 200;
 
 /// 완성 목록에 한 번에 보이는 줄 수.
 const SUGG_MAX: usize = 10;
@@ -284,6 +311,14 @@ pub(crate) struct TableEditView {
     /// ★ 라이선스 안내(D-328 · 안내 게이트): 떠 있는 동안 편집기 대신 안내만 보인다 — 값 = 뜬 시각([확인]은 그로부터
     /// [`NOTICE_SECS`]초 뒤에 켜진다).
     notice: Option<std::time::Instant>,
+    /// 이 탭에서 적용한 스크립트(시각 · 결과 글 · 파일 경로) — 새 것이 위.
+    history: Vec<[String; 3]>,
+    /// ★ 되돌리기(Ctrl+Z · 다시 실행): 편집 모델의 지난 상태들 — 변경 하나(칸 확정 · 행 추가/삭제 · 체크 · 순서 · Revert)가 한 단계.
+    /// 서버에서 다시 읽으면(열기 · 새로 고침 · 적용 뒤) 비운다(지난 상태의 `origin`이 더는 맞지 않는다).
+    undo: Vec<Table>,
+    redo: Vec<Table>,
+    /// 마지막으로 기록한 편집 모델(이것과 달라졌을 때만 한 단계를 쌓는다).
+    last: Table,
     /// 판정용(Debug 빌드만): 다음 그리기에서 일부러 패닉 — 오류 경계(D-329)가 탭만 걷는지 본다.
     #[cfg(debug_assertions)]
     test_panic: bool,
@@ -350,6 +385,10 @@ impl TableEditView {
             comment_rect: Rect::default(),
             ddl_rect: Rect::default(),
             notice: None,
+            history: Vec::new(),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            last: Table::default(),
             #[cfg(debug_assertions)]
             test_panic: false,
             sugg: Vec::new(),
@@ -371,6 +410,7 @@ impl TableEditView {
         self.sel_row = 0;
         self.sel_col = 0;
         self.top = 0;
+        self.forget_history();
         self.recalc();
     }
 
@@ -398,10 +438,52 @@ impl TableEditView {
                 orig.indexes.iter().any(|o| o.name == n)
             });
         }
+        // ★ 서버에 **새로 생긴** 항목(지난 원본에 없고 편집 모델도 모르는 것 — 고친 스크립트로 더했거나 다른 세션이 더한 것)은
+        //   편집 모델에 그대로 들인다. 들이지 않으면 다음 차이가 그것을 "지울 것"으로 잡는다(데이터 보호: 사용자가 지우라고 한 적이 없다).
+        for c in &orig.columns {
+            let known = self.orig.columns.iter().any(|o| o.name == c.name)
+                || self
+                    .edit
+                    .columns
+                    .iter()
+                    .any(|e| e.name == c.name || e.origin.as_deref() == Some(c.name.as_str()));
+            if !known {
+                let mut c = c.clone();
+                c.origin = Some(c.name.clone());
+                self.edit.columns.push(c);
+            }
+        }
+        for k in &orig.keys {
+            let known = self.orig.keys.iter().any(|o| o.name == k.name)
+                || self
+                    .edit
+                    .keys
+                    .iter()
+                    .any(|e| e.name == k.name || e.origin.as_deref() == Some(k.name.as_str()));
+            if !known {
+                let mut k = k.clone();
+                k.origin = Some(k.name.clone());
+                self.edit.keys.push(k);
+            }
+        }
+        for x in &orig.indexes {
+            let known = self.orig.indexes.iter().any(|o| o.name == x.name)
+                || self
+                    .edit
+                    .indexes
+                    .iter()
+                    .any(|e| e.name == x.name || e.origin.as_deref() == Some(x.name.as_str()));
+            if !known {
+                let mut x = x.clone();
+                x.origin = Some(x.name.clone());
+                self.edit.indexes.push(x);
+            }
+        }
         self.orig = orig;
         self.is_new = false;
         self.loaded = true;
         self.editing = None;
+        self.forget_history();
         self.recalc();
     }
 
@@ -444,6 +526,19 @@ impl TableEditView {
         } else {
             false
         }
+    }
+
+    /// 적용 하나를 기록 섹션 맨 위에(시각 · 결과 글 · 보관한 스크립트 파일).
+    pub(crate) fn push_history(&mut self, when: String, result: String, file: String) {
+        self.history.insert(0, [when, result, file]);
+    }
+
+    /// 기록 `i`번째의 스크립트 파일 경로.
+    pub(crate) fn history_file(&self, i: usize) -> Option<&str> {
+        self.history
+            .get(i)
+            .map(|h| h[2].as_str())
+            .filter(|f| !f.is_empty())
     }
 
     /// 판정용(Debug 빌드만 · 기동 명령 `tbledit.test_panic`).
@@ -577,6 +672,7 @@ impl TableEditView {
             Section::Columns => COLS_COLUMNS,
             Section::Keys => COLS_KEYS,
             Section::Indexes => COLS_INDEXES,
+            Section::History => COLS_HISTORY,
         }
     }
 
@@ -585,6 +681,7 @@ impl TableEditView {
             Section::Columns => self.edit.columns.len(),
             Section::Keys => self.edit.keys.len(),
             Section::Indexes => self.edit.indexes.len(),
+            Section::History => self.history.len(),
         }
     }
 
@@ -625,6 +722,12 @@ impl TableEditView {
                         _ => String::new(),
                     },
                 }),
+            Section::History => self
+                .history
+                .get(row)
+                .and_then(|h| h.get(col))
+                .cloned()
+                .unwrap_or_default(),
             Section::Indexes => {
                 self.edit
                     .indexes
@@ -654,6 +757,7 @@ impl TableEditView {
         }
         match self.section {
             Section::Columns | Section::Indexes => true,
+            Section::History => false,
             Section::Keys => {
                 let Some(k) = self.edit.keys.get(row) else {
                     return false;
@@ -722,6 +826,7 @@ impl TableEditView {
                     _ => return false,
                 }
             }
+            Section::History => return false,
             Section::Indexes => {
                 let Some(i) = self.edit.indexes.get_mut(row) else {
                     return false;
@@ -826,6 +931,7 @@ impl TableEditView {
                     },
                 );
             }
+            Section::History => return false,
             Section::Indexes => {
                 let name = format!("{table}_IX{}", self.edit.indexes.len() + 1);
                 self.edit.indexes.insert(
@@ -855,6 +961,7 @@ impl TableEditView {
             Section::Keys => {
                 self.edit.keys.remove(row);
             }
+            Section::History => return false,
             Section::Indexes => {
                 self.edit.indexes.remove(row);
             }
@@ -910,7 +1017,52 @@ impl TableEditView {
         self.recalc();
     }
 
+    /// 되돌리기 기록을 비우고 지금 모델을 기준으로 삼는다.
+    fn forget_history(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+        self.last = self.edit.clone();
+    }
+
+    /// 한 단계 되돌리기 — 되돌렸으면 true.
+    pub(crate) fn undo(&mut self) -> bool {
+        self.cancel_edit();
+        let Some(prev) = self.undo.pop() else {
+            return false;
+        };
+        self.redo.push(std::mem::replace(&mut self.edit, prev));
+        self.last = self.edit.clone();
+        self.after_history();
+        true
+    }
+
+    /// 되돌린 것을 다시 — 했으면 true.
+    pub(crate) fn redo(&mut self) -> bool {
+        self.cancel_edit();
+        let Some(next) = self.redo.pop() else {
+            return false;
+        };
+        self.undo.push(std::mem::replace(&mut self.edit, next));
+        self.last = self.edit.clone();
+        self.after_history();
+        true
+    }
+
+    fn after_history(&mut self) {
+        self.sel_row = self.sel_row.min(self.rows().saturating_sub(1));
+        self.recalc();
+    }
+
     fn recalc(&mut self) {
+        // 모델이 달라졌으면 지난 상태를 한 단계 쌓는다(되돌리기·다시 실행 자신은 `last`를 먼저 맞춰 두어 쌓이지 않는다).
+        if self.edit != self.last {
+            self.undo
+                .push(std::mem::replace(&mut self.last, self.edit.clone()));
+            if self.undo.len() > UNDO_MAX {
+                self.undo.remove(0);
+            }
+            self.redo.clear();
+        }
         self.plan = if self.is_new {
             Plan {
                 stmts: if self.edit.columns.is_empty() {
@@ -977,6 +1129,7 @@ impl TableEditView {
                 },
                 None => "",
             },
+            Section::History => "",
             Section::Indexes => match self.edit.indexes.get(row) {
                 Some(i) => match i
                     .origin
@@ -1358,7 +1511,11 @@ impl TableEditView {
                 if let Some((row, col)) = self.cell_at(p) {
                     self.sel_row = row;
                     self.sel_col = col;
-                    self.begin_edit(Target::Cell { row, col }, None);
+                    if self.section == Section::History {
+                        self.actions.push(TbAction::OpenHistory(row));
+                    } else {
+                        self.begin_edit(Target::Cell { row, col }, None);
+                    }
                 } else if self.ddl_rect.contains(p) {
                     self.ddl.on_event(ev, &mut inv);
                 }
@@ -1425,6 +1582,11 @@ impl TableEditView {
                     Key::Left => self.step_col(self.sel_col, false),
                     Key::Right => self.step_col(self.sel_col, true),
                     Key::Tab => self.step_col(self.sel_col, !shift),
+                    Key::Enter if self.section == Section::History => {
+                        if self.sel_row < self.history.len() {
+                            self.actions.push(TbAction::OpenHistory(self.sel_row));
+                        }
+                    }
                     Key::Enter => self.begin_edit(
                         Target::Cell {
                             row: self.sel_row,
@@ -1441,6 +1603,14 @@ impl TableEditView {
                     _ => return false,
                 }
                 self.ensure_visible();
+                true
+            }
+            InputEvent::Undo => {
+                self.undo();
+                true
+            }
+            InputEvent::Redo => {
+                self.redo();
                 true
             }
             // 글자를 치면 그 글자로 편집 시작(엑셀식).
@@ -1595,25 +1765,32 @@ impl TableEditView {
         let btn_h = lh + self.s(10.0);
         let mut bx = x0;
         let ro = self.read_only.is_some();
-        let mut left: Vec<(Btn, String, bool, bool)> =
-            [Section::Columns, Section::Keys, Section::Indexes]
-                .into_iter()
-                .map(|s| {
-                    let n = match s {
-                        Section::Columns => self.edit.columns.len(),
-                        Section::Keys => self.edit.keys.len(),
-                        Section::Indexes => self.edit.indexes.len(),
-                    };
-                    (
-                        Btn::Sec(s),
-                        format!("{} ({n})", t(s.label())),
-                        true,
-                        self.section == s,
-                    )
-                })
-                .collect();
+        let mut left: Vec<(Btn, String, bool, bool)> = [
+            Section::Columns,
+            Section::Keys,
+            Section::Indexes,
+            Section::History,
+        ]
+        .into_iter()
+        .map(|s| {
+            let n = match s {
+                Section::Columns => self.edit.columns.len(),
+                Section::Keys => self.edit.keys.len(),
+                Section::Indexes => self.edit.indexes.len(),
+                Section::History => self.history.len(),
+            };
+            (
+                Btn::Sec(s),
+                format!("{} ({n})", t(s.label())),
+                true,
+                self.section == s,
+            )
+        })
+        .collect();
         let has_row = self.sel_row < self.rows();
         let cols_sec = self.section == Section::Columns;
+        // 기록 섹션은 읽기 전용(행 추가·삭제 없음).
+        let ro = ro || self.section == Section::History;
         left.push((Btn::Add, t(Msg::TbeBtnAdd).to_string(), !ro, false));
         left.push((
             Btn::Remove,
@@ -1957,6 +2134,9 @@ impl TableEditView {
                 cells.join("|")
             ));
         }
+        if !self.undo.is_empty() || !self.redo.is_empty() {
+            s.push_str(&format!("hist|{}|{}\n", self.undo.len(), self.redo.len()));
+        }
         if !self.sugg.is_empty() {
             s.push_str(&format!(
                 "sugg|{}|{}\n",
@@ -2120,6 +2300,75 @@ mod tests {
         assert!(type_suggestions(Dialect::Oracle, "", false).is_empty());
         assert!(type_suggestions(Dialect::Oracle, "date", false).is_empty()); // 똑같은 글 = 닫힘
         assert!(type_suggestions(Dialect::Postgres, "zzz", false).is_empty());
+    }
+
+    #[test]
+    fn undo_redo_walk_edit_steps_and_reload_forgets() {
+        let mut v = sample();
+        assert!(!v.undo());
+        assert!(v.set_cell(1, 0, "title"));
+        assert!(v.add_row());
+        assert!(v.toggle(0, 2));
+        assert_eq!(v.plan().stmts.len(), 3 - 1 + 1); // 이름 · NULL 허용 · (빈 새 행은 문장이 되지만 적용 불가)
+        assert!(v.undo()); // 체크 되돌림
+        assert!(!v.edited().columns[0].nullable);
+        assert!(v.undo()); // 행 추가 되돌림
+        assert_eq!(v.edited().columns.len(), 2);
+        assert!(v.undo()); // 이름 되돌림 — 딸린 제약·인덱스의 컬럼 이름도 함께 돌아온다
+        assert_eq!(v.edited().columns[1].name, "NAME");
+        assert_eq!(v.edited().indexes[0].cols, ["NAME"]);
+        assert!(!v.is_dirty());
+        assert!(!v.undo());
+        assert!(v.redo());
+        assert_eq!(v.edited().columns[1].name, "TITLE");
+        // 새 편집은 다시 실행 기록을 버린다.
+        assert!(v.set_cell(0, 4, "key"));
+        assert!(!v.redo());
+        // Revert도 한 단계 = 되돌릴 수 있다.
+        v.revert();
+        assert!(!v.is_dirty());
+        assert!(v.undo());
+        assert!(v.is_dirty());
+        // 서버에서 다시 읽으면 기록을 비운다.
+        let orig = v.orig().clone();
+        v.load(orig);
+        assert!(!v.undo());
+        assert!(!v.redo());
+    }
+
+    #[test]
+    fn rebase_adopts_server_side_additions_and_keeps_pending_edits() {
+        let mut v = sample();
+        assert!(v.set_cell(1, 0, "title")); // 아직 적용 안 한 편집
+        let mut server = v.orig().clone();
+        server.columns.push(Column {
+            name: "EXTRA".into(),
+            data_type: "VARCHAR2(10)".into(),
+            nullable: true,
+            ..Column::default()
+        });
+        server.indexes.push(Index {
+            name: "ITEM_IX9".into(),
+            unique: false,
+            cols: vec!["EXTRA".into()],
+            origin: None,
+        });
+        v.rebase(server);
+        // 서버에 새로 생긴 컬럼·인덱스를 "지울 것"으로 잡지 않는다 · 남은 편집은 그대로.
+        let sqls: Vec<&str> = v.plan().stmts.iter().map(|s| s.sql.as_str()).collect();
+        assert_eq!(sqls, ["ALTER TABLE APP.ITEM RENAME COLUMN NAME TO TITLE"]);
+        assert_eq!(v.edited().columns.len(), 3);
+        assert_eq!(v.edited().indexes.len(), 2);
+        // 사용자가 지운 것은 여전히 지울 것이다(들여오지 않는다).
+        let mut v = sample();
+        assert!(v.remove_row(1));
+        let server = v.orig().clone();
+        v.rebase(server);
+        assert!(v
+            .plan()
+            .stmts
+            .iter()
+            .any(|s| s.sql == "ALTER TABLE APP.ITEM DROP COLUMN NAME"));
     }
 
     #[test]

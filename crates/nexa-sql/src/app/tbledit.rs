@@ -51,6 +51,8 @@ pub(crate) struct TbRun {
     stmts: Vec<String>,
     /// 다음에 보낼 문장 자리(= 지금까지 보낸 수).
     next: usize,
+    /// 사용자가 미리보기에서 고친 스크립트인가.
+    edited: bool,
 }
 
 /// 코어 방언 → 구조 편집기 방언(그 밖 = 읽기 전용으로도 열지 않는다).
@@ -193,6 +195,64 @@ pub(crate) fn preview_header(
     }
     s.push('\n');
     s
+}
+
+/// 보관할 "실행한 스크립트" 글(영어 고정 머리 주석 + 보낸 문장들). 순수.
+pub(crate) fn applied_script(
+    schema: &str,
+    table: &str,
+    when: &str,
+    applied: usize,
+    total: usize,
+    ok: bool,
+    script: &str,
+) -> String {
+    let mut s = format!(
+        "-- Nexa SQL table editor: {schema}.{table} - applied {applied} of {total} statement(s) at {when}\n"
+    );
+    if !ok {
+        s.push_str(
+            "-- STOPPED: the last statement below failed; statements after it were not sent.\n",
+        );
+    }
+    s.push('\n');
+    s.push_str(script);
+    s
+}
+
+/// 미리보기에서 고친 스크립트 → 실행할 문장들. SQL Server = `GO` 줄로 나눈 배치(배치 안의 `;`·변수 선언을 지킨다) · 그 밖 =
+/// 스크립트 엔진의 문장 분리. 주석·빈 줄뿐인 조각은 버린다.
+pub(crate) fn edited_statements(d: nsql_ddl::Dialect, text: &str) -> Vec<String> {
+    let has_sql = |s: &str| {
+        s.lines()
+            .map(str::trim)
+            .any(|l| !l.is_empty() && !l.starts_with("--"))
+    };
+    let parts: Vec<String> = if d == nsql_ddl::Dialect::Mssql {
+        let mut out = vec![String::new()];
+        for line in text.lines() {
+            if line.trim().eq_ignore_ascii_case("GO") {
+                out.push(String::new());
+            } else if let Some(cur) = out.last_mut() {
+                cur.push_str(line);
+                cur.push('\n');
+            }
+        }
+        out
+    } else {
+        let core = match d {
+            nsql_ddl::Dialect::Oracle => Dialect::Oracle,
+            nsql_ddl::Dialect::Postgres => Dialect::Postgres,
+            nsql_ddl::Dialect::Mysql => Dialect::Mysql,
+            nsql_ddl::Dialect::Sqlite | nsql_ddl::Dialect::Mssql => Dialect::Sqlite,
+        };
+        crate::split_items(text, core)
+    };
+    parts
+        .into_iter()
+        .map(|p| p.trim().trim_end_matches(';').trim().to_string())
+        .filter(|p| has_sql(p))
+        .collect()
 }
 
 impl App {
@@ -391,6 +451,7 @@ impl App {
                         tab.view.script()
                     );
                     self.tbledit_apply_key = Some(key.clone());
+                    self.tbledit_apply_shown = Some(text.clone());
                     self.sess.status = tf(Msg::TbeApplyTitleFor, &[table]);
                     self.sqlprev_apply = Some((tf(Msg::TbeApplyTitleFor, &[table]), text));
                 }
@@ -427,6 +488,16 @@ impl App {
         for a in acts {
             match a {
                 TbAction::Changed => self.tbledit_title_sync(&key),
+                TbAction::OpenHistory(i) => {
+                    let file = self
+                        .tbledits
+                        .get(&key)
+                        .and_then(|tab| tab.view.history_file(i))
+                        .map(std::path::PathBuf::from);
+                    if let Some(f) = file {
+                        self.open_file(&f);
+                    }
+                }
                 TbAction::NoticeAck => {
                     self.tbledit_notice_done = true;
                     for tab in self.tbledits.values_mut() {
@@ -467,6 +538,7 @@ impl App {
                 tab.view.script()
             );
             self.tbledit_apply_key = Some(key.to_string());
+            self.tbledit_apply_shown = Some(text.clone());
             self.sqlprev_apply = Some((tf(Msg::TbeApplyTitleFor, &[&name]), text));
             return;
         }
@@ -480,6 +552,12 @@ impl App {
 
     /// 미리보기 창의 [적용](또는 시험 명령) — 그 서버의 세션으로 첫 문장을 보낸다.
     pub(crate) fn tbledit_apply_go(&mut self) {
+        self.tbledit_apply_text(None);
+    }
+
+    /// 미리보기 창의 [적용] — `shown` = 창에 남아 있던 글. 사용자가 미리보기를 고쳤으면(생성한 글과 다르면) **고친 글 그대로**
+    /// 문장으로 나눠 실행한다(D-317 "본 스크립트가 곧 실행되는 스크립트") · 그대로면 생성한 문장 목록.
+    pub(crate) fn tbledit_apply_text(&mut self, shown: Option<String>) {
         let Some(key) = self.tbledit_apply_key.take() else {
             return;
         };
@@ -489,13 +567,26 @@ impl App {
         if !tab.view.can_apply() || self.tbledit_run.is_some() {
             return;
         }
-        let stmts: Vec<String> = tab
+        let generated: Vec<String> = tab
             .view
             .plan()
             .stmts
             .iter()
             .map(|s| s.sql.clone())
             .collect();
+        let d = tab.view.dialect();
+        let offered = self.tbledit_apply_shown.take();
+        let (stmts, edited) = match (shown, offered) {
+            (Some(now), Some(was)) if now.trim() != was.trim() => {
+                (edited_statements(d, &now), true)
+            }
+            _ => (generated, false),
+        };
+        if stmts.is_empty() {
+            self.sess.status = t(Msg::TbeNoChanges).into();
+            self.redraw();
+            return;
+        }
         let sid = match tab.server.as_ref() {
             Some(spec) => self
                 .all_sess()
@@ -518,6 +609,7 @@ impl App {
             sid,
             stmts,
             next: 0,
+            edited,
         });
         self.tbledit_send_next(true);
     }
@@ -586,12 +678,75 @@ impl App {
                 msg,
             );
         }
+        // ★ 실행한 스크립트 보관(119 F-9 ④ · F-15): 객체 백업 폴더에 `…_applied.sql` + 탭의 기록 섹션 한 줄(보낸 문장 전부 ·
+        //   머리 주석에 적용 수 — 멈춘 실행이면 마지막 문장이 실패한 것이다).
+        let now = nsql_log::now_local();
+        let profile = self
+            .all_sess()
+            .find(|s| s.id == run.sid)
+            .map(|s| s.profile.clone())
+            .unwrap_or_default();
+        if let Some(tab) = self.tbledits.get_mut(&run.key) {
+            let d = tab.view.dialect();
+            let (schema, table) = (
+                tab.view.orig().schema.clone(),
+                tab.view.edited().name.clone(),
+            );
+            let sent_stmts: Vec<nsql_ddl::Stmt> = run
+                .stmts
+                .iter()
+                .take(sent)
+                .map(|sql| nsql_ddl::Stmt {
+                    sql: sql.clone(),
+                    risk: Risk::Safe,
+                })
+                .collect();
+            let body = applied_script(
+                &schema,
+                &table,
+                &now.stamp(),
+                applied,
+                total,
+                ok,
+                &nsql_ddl::script(d, &sent_stmts),
+            );
+            let file = crate::backups::objects_dir()
+                .ok_or_else(|| "no config dir".to_string())
+                .and_then(|dir| {
+                    crate::backups::write_applied_in(
+                        &dir,
+                        &profile,
+                        &schema,
+                        &table,
+                        &crate::backups::stamp17(&now),
+                        &body,
+                    )
+                });
+            let file = match file {
+                Ok(f) => f.display().to_string(),
+                Err(e) => {
+                    eprintln!("[tbledit] applied script not saved: {e}");
+                    String::new()
+                }
+            };
+            tab.view.push_history(
+                now.stamp(),
+                if ok {
+                    tf(Msg::StTbeApplied, &[&n, &m])
+                } else {
+                    tf(Msg::TbeHistStopped, &[&n, &m])
+                },
+                file,
+            );
+        }
         // 새 테이블이 만들어졌으면 이제부터 그 이름의 기존 테이블이다.
         if let Some(tab) = self.tbledits.get_mut(&run.key) {
             if tab.view.is_new() && applied > 0 {
                 tab.view.created();
             }
             if !tab.view.is_new() {
+                // 고친 스크립트를 실행했으면 화면의 편집 가운데 일부만 적용됐을 수 있다 → 성공이어도 남은 편집을 지키는 쪽으로.
+                let ok = ok && !run.edited;
                 self.tbledit_request(&run.key, TbPending::Reload { ok }, Vec::new());
             }
         }
@@ -716,8 +871,8 @@ impl App {
     ///
     /// `tbledit.open:<스키마.테이블>` · `tbledit.new:<스키마>` · `tbledit.section:<columns|keys|indexes>` · `tbledit.add` ·
     /// `tbledit.set:<행>:<열>=<글>` · `tbledit.toggle:<행>:<열>` · `tbledit.edit:<행>:<열>`(편집 열기) · `tbledit.remove:<행>` · `tbledit.move:<행>:<±1>` ·
-    /// `tbledit.name:<글>` · `tbledit.comment:<글>` · `tbledit.revert` · `tbledit.refresh` · `tbledit.apply`(미리보기까지) ·
-    /// `tbledit.apply_now`(미리보기 없이 실행 = 시험 전용 길) · `tbledit.notice_ok`(라이선스 안내 확인 · 3초 뒤에만) · `tbledit.dump:<파일>`.
+    /// `tbledit.name:<글>` · `tbledit.comment:<글>` · `tbledit.revert` · `tbledit.undo` · `tbledit.redo` · `tbledit.refresh` · `tbledit.apply`(미리보기까지) ·
+    /// `tbledit.apply_now`(미리보기 없이 실행 = 시험 전용 길) · `tbledit.apply_script:<파일>`(고친 미리보기 글로 적용) · `tbledit.notice_ok`(라이선스 안내 확인 · 3초 뒤에만) · `tbledit.dump:<파일>`.
     pub(crate) fn tbledit_cmd(&mut self, id: &str) -> bool {
         let Some(rest) = id.strip_prefix("tbledit.") else {
             return false;
@@ -771,6 +926,16 @@ impl App {
                 self.tbledit_apply_go();
                 return true;
             }
+            _ if rest.starts_with("apply_script:") => {
+                // 판정용: 미리보기 창에서 스크립트를 고친 뒤 [적용]을 누른 것과 같은 길(파일의 글 = 고친 글).
+                let edited =
+                    std::fs::read_to_string(&rest["apply_script:".len()..]).unwrap_or_default();
+                let shown = self.tbledits.get(&key).map(|tab| tab.view.script());
+                self.tbledit_apply_key = Some(key);
+                self.tbledit_apply_shown = shown;
+                self.tbledit_apply_text(Some(edited));
+                return true;
+            }
             "refresh" => {
                 self.tbledit_request(&key, TbPending::Load, Vec::new());
                 return true;
@@ -791,6 +956,10 @@ impl App {
                 v.add_row();
             } else if rest == "revert" {
                 v.revert();
+            } else if rest == "undo" {
+                v.undo();
+            } else if rest == "redo" {
+                v.redo();
             } else if let Some(s) = rest.strip_prefix("set:") {
                 if let Some((pos, text)) = s.split_once('=') {
                     if let Some((r, c)) = nums(pos) {
@@ -919,6 +1088,47 @@ mod tests {
         assert!(h.contains("X: 7 row(s) have a value"));
         assert!(!h.contains("Z:"));
         assert!(h.contains("NOT APPLIED: Y needs table re-creation"));
+    }
+
+    #[test]
+    fn edited_script_splits_per_dialect_and_drops_comment_only_parts() {
+        let ora =
+            "-- header\n\nALTER TABLE T ADD (A NUMBER);\n-- note\nCOMMENT ON TABLE T IS 'x;y';\n";
+        let s = edited_statements(nsql_ddl::Dialect::Oracle, ora);
+        assert_eq!(s.len(), 2, "{s:?}");
+        assert!(s[0].ends_with("ALTER TABLE T ADD (A NUMBER)"));
+        assert!(s[1].ends_with("COMMENT ON TABLE T IS 'x;y'"));
+        let ms = "-- header\nGO\nDECLARE @a int = 1; IF @a = 1 EXEC(N'x')\nGO\nALTER TABLE t ADD c int NULL\ngo\n";
+        let s = edited_statements(nsql_ddl::Dialect::Mssql, ms);
+        assert_eq!(
+            s,
+            [
+                "DECLARE @a int = 1; IF @a = 1 EXEC(N'x')",
+                "ALTER TABLE t ADD c int NULL"
+            ]
+        );
+        assert!(edited_statements(nsql_ddl::Dialect::Postgres, "-- only a comment\n\n").is_empty());
+    }
+
+    #[test]
+    fn applied_script_header_says_what_ran() {
+        let ok = applied_script(
+            "APP",
+            "T",
+            "2026-11-27 23:00:00.000",
+            2,
+            2,
+            true,
+            "A;\nB;\n",
+        );
+        assert!(ok.starts_with(
+            "-- Nexa SQL table editor: APP.T - applied 2 of 2 statement(s) at 2026-11-27"
+        ));
+        assert!(!ok.contains("STOPPED"));
+        assert!(ok.ends_with("\nA;\nB;\n"));
+        let bad = applied_script("APP", "T", "x", 1, 3, false, "A;\nB;\n");
+        assert!(bad.contains("applied 1 of 3"));
+        assert!(bad.contains("-- STOPPED: the last statement below failed"));
     }
 
     #[test]

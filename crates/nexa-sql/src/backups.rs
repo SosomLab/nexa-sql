@@ -106,6 +106,33 @@ pub(crate) fn object_stem(profile: &str, o: &nsql_catalog::ObjectInfo) -> String
     )
 }
 
+/// ★ 테이블 구조 편집기가 **실행한 스크립트**를 보관한다(119 F-9 ④ · 11-27): `<프로필>_<스키마>.<테이블>_TABLE.<17자리 시각>_applied.sql` —
+/// 객체 백업과 같은 폴더·같은 줄기라 그 테이블의 백업 DDL 옆에 나란히 놓인다(나중에 열람·재실행·비교). 원자적 · 실패 = 이유.
+pub(crate) fn write_applied_in(
+    dir: &Path,
+    profile: &str,
+    schema: &str,
+    table: &str,
+    stamp: &str,
+    body: &str,
+) -> Result<PathBuf, String> {
+    let prof = if profile.trim().is_empty() {
+        "conn".to_string()
+    } else {
+        safe_name(profile.trim())
+    };
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let f = dir.join(format!(
+        "{prof}_{}.{}_TABLE.{stamp}_applied.sql",
+        safe_name(schema),
+        safe_name(table)
+    ));
+    let tmp = f.with_extension("sql.tmp");
+    std::fs::write(&tmp, body).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &f).map_err(|e| e.to_string())?;
+    Ok(f)
+}
+
 /// ★ 객체 DDL을 `<줄기>.<yyyyMMddHHmmssSSS>`로 쓴다(D-305 · 사용자 10-15 · 확장자 = 17자리 시각 → 탐색기 이름 내림차순 = 객체별 최신순 ·
 /// 같은 이름이 있으면 1 ms 올림 · 원자적 · 머리 주석 = 시각 · 프로필 · 방언 · 객체 · 동작). 실패 = 이유 문자열.
 pub(crate) fn write_object(
@@ -406,6 +433,26 @@ pub(crate) fn prune(days: u64) -> usize {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn applied_script_file_sits_next_to_the_object_backups() {
+        let dir = std::env::temp_dir().join(format!("nsql-applied-{}", std::process::id()));
+        let f = write_applied_in(
+            &dir,
+            " dev db ",
+            "APP",
+            "ITEM$1",
+            "20261127230000000",
+            "-- x\nALTER;\n",
+        )
+        .expect("write");
+        assert_eq!(
+            f.file_name().and_then(|n| n.to_str()),
+            Some("dev_db_APP.ITEM$1_TABLE.20261127230000000_applied.sql")
+        );
+        assert_eq!(std::fs::read_to_string(&f).expect("read"), "-- x\nALTER;\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn snapshot_round_trip_and_external_change() {

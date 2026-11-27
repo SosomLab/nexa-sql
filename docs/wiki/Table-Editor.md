@@ -27,7 +27,7 @@ The table editor is a licensed feature. Without a license it still works (free f
 ## The screen
 
 - **Top** — table name and table comment.
-- **Section buttons** — **Columns** · **Keys** · **Indexes**, then **Add** · **Remove** · **Up** · **Down**.
+- **Section buttons** — **Columns** · **Keys** · **Indexes** · **History**, then **Add** · **Remove** · **Up** · **Down**.
 - **Right side** — "N statement(s) to apply" (or "No changes") and **Refresh** · **Revert** · **Apply…**.
 - **Grid** — one row per column / constraint / index. The marker in front of a row is `+` for a new row and `*` for a changed one.
 - **Warning line** — changes that cannot be applied (see *Limits*).
@@ -46,6 +46,7 @@ The table editor is a licensed feature. Without a license it still works (free f
 - Click a check cell to flip it. For a **new** constraint, clicking Kind cycles Primary → Unique → Foreign → Check.
 - **Add** puts a new row at the end. **Delete** (or **Remove**) removes the selected row.
 - **Revert** drops all edits and goes back to what was read from the server. **Refresh** reads the structure again.
+- **Undo / redo** — **Ctrl+Z** takes back one change at a time: a confirmed cell, an added or removed row, a flipped check, a moved row, or a **Revert**. **Ctrl+Y** (or **Ctrl+Shift+Z**) puts it back (macOS: **Cmd+Z** / **Cmd+Shift+Z**). These are the usual `edit.undo` / `edit.redo` keys; up to 200 steps are kept. While a cell is open for editing, the same keys undo the typing inside the cell. Reading the structure from the server again (Refresh, or after an Apply) clears the steps.
 - **Closing a tab with unapplied changes** — the first close keeps the tab and the status bar says "Unapplied table changes - close the tab again to discard them". Close it again within a few seconds (`editor.close_confirm_ms`, 3 seconds by default) to discard the edits. Nothing was sent to the server.
 - New names follow the database's own folding — unquoted names become upper case on Oracle and lower case on PostgreSQL. Wrap a name in `"…"` to keep it exactly as typed.
 - Type several columns as a comma-separated list in the Columns cell of a key or an index.
@@ -54,12 +55,37 @@ The table editor is a licensed feature. Without a license it still works (free f
 
 1. Press **Apply…**. Nexa SQL reads the table from the server once more and runs the risk checks (row counts for changes such as adding NOT NULL).
 2. If the table was changed on the server after you opened it, **nothing is applied** — press Refresh and edit again.
-3. The preview window shows the script with a header: the number of statements, a `PRODUCTION` line for production connections, `DANGER` / `WARNING` lines and any check result that is not zero.
+3. The preview window shows the script with a header: the number of statements, a `PRODUCTION` line for production connections, `DANGER` / `WARNING` lines and any check result that is not zero. You can edit the script in this window (see *Editing the script in the preview* below).
 4. Press **Apply** in that window. The statements run **one at a time** on that server's session. The table is backed up first (see [Explorers and filters](Explorers-and-Filters) — object backup).
 5. If a statement fails, the run **stops there**: "Stopped after n of m statement(s)". The statements before it stay applied (DDL is not rolled back automatically), and the edits that were not applied stay in the tab so you can fix them and apply again.
 6. After a successful run the structure is read again and the tab is clean.
 
 On a production connection the usual production guards apply (confirmation and backup). Set `tbledit.prod` to **Deny (read-only)** to open tables on production connections for viewing only.
+
+### Editing the script in the preview
+
+The preview window is editable. If you change the script, **Apply** runs **what the window shows**, not the generated statements:
+
+- The text is split into statements — on SQL Server into batches at `GO` lines — and they run one at a time, with the same backup and the same stop-at-the-first-error rule. Parts that are only comments are skipped.
+- Nexa SQL does not check an edited script again. It runs what you wrote, as if you had run it in an editor.
+- Afterwards the structure is read again. Edits in the grid that your script did not carry out **stay in the tab**, even when every statement succeeded — look at the DDL preview before you apply again.
+- Whatever the script added on the server (a column, a key, an index) appears in the grid as part of the table.
+
+## History
+
+Every Apply is recorded, whether it finished or stopped. The **History** section lists the runs made in this tab, newest first:
+
+| Column | Content |
+|---|---|
+| When | time of the run |
+| Result | "Applied n of m statement(s)" or "Stopped after n of m" |
+| Script file | the saved script |
+
+Double-click a row (or press **Enter**) to open that script in an editor tab.
+
+The statements that were sent are saved next to the table's object backups, in the `backups/objects` folder of the settings folder, as `<profile>_<schema>.<table>_TABLE.<timestamp>_applied.sql`. The header comment says how many statements were applied. For a stopped run it also has a `STOPPED` line, and the last statement in the file is the one that failed.
+
+Closing the tab clears the list. The files stay.
 
 ## Limits
 
@@ -68,7 +94,7 @@ On a production connection the usual production guards apply (confirmation and b
   - SQLite: changing a column's type, NOT NULL, default or constraints is blocked (adding and renaming columns works). SQLite has no comments.
 - **Foreign keys and checks read from the server** can be renamed or removed, not edited in place — remove and add a new one instead. New foreign keys and checks are free.
 - An index that only backs a primary key or a unique constraint is listed under Keys, not under Indexes.
-- Not in this version: views · sequences · partitions · storage options · undo of a single cell (use **Revert**).
+- Not in this version: views · sequences · partitions · storage options.
 
 ## Setting
 

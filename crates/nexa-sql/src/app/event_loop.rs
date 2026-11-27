@@ -1930,12 +1930,15 @@ impl App {
                     self.sync_modal();
                     // 적용 미리보기를 그냥 닫았다 = 적용하지 않는다.
                     self.tbledit_apply_key = None;
+                    self.tbledit_apply_shown = None;
                 }
                 // ★ 테이블 구조 편집기의 적용 미리보기 [적용](119 · 11-27) — 창을 닫고 그 스크립트를 실행한다.
                 sqlprev_win::SqlPrevAction::Execute => {
+                    // 창의 글을 닫기 전에 거둔다 — 사용자가 고쳤으면 그 글이 실행된다(D-317).
+                    let shown = self.sqlprev_win.text();
                     self.sqlprev_win.close();
                     self.sync_modal();
-                    self.tbledit_apply_go();
+                    self.tbledit_apply_text(Some(shown));
                 }
                 sqlprev_win::SqlPrevAction::None => {
                     if self.conn_modal && !self.modal_open() {

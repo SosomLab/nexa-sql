@@ -9,16 +9,18 @@ DB="$(v1_m "$V1_HOME")/t.sqlite"
 v1_cli conn add lite "sqlite:$DB" -d sqlite --no-prompt >/dev/null
 printf 'CREATE TABLE item (id INTEGER NOT NULL, name TEXT);\nCREATE INDEX item_ix1 ON item (name);\n' | "$V1_NSQL" run -c lite --no-prompt - >/dev/null 2>&1
 W=$(v1_m "$V1_OUT")
+printf -- "-- edited in the preview\nALTER TABLE main.item ADD COLUMN extra2 TEXT;\n" > "$V1_OUT/edited.sql"
 C="@connected:@after"
 v1_gui tbledit "$C:2500:tbledit.open:main.item,$C:4000:tbledit.dump:$W/n0.txt,$C:4100:tbledit.add,$C:4200:tbledit.notice_ok,$C:4300:tbledit.dump:$W/n1.txt,$C:6300:tbledit.notice_ok,$C:8500:tbledit.dump:$W/a.txt,\
 $C:8700:tbledit.add,$C:8800:tbledit.set:2:0=qty,$C:8900:tbledit.set:2:1=INTEGER,$C:9100:tbledit.dump:$W/b.txt,\
-$C:9300:tbledit.apply_now,$C:12300:tbledit.dump:$W/c.txt,\
+$C:9130:tbledit.undo,$C:9160:tbledit.dump:$W/u1.txt,$C:9190:tbledit.undo,$C:9220:tbledit.undo,$C:9240:tbledit.dump:$W/u2.txt,$C:9260:tbledit.redo,$C:9270:tbledit.redo,$C:9280:tbledit.redo,$C:9290:tbledit.dump:$W/u3.txt,\
+$C:9300:tbledit.apply_now,$C:12300:tbledit.dump:$W/c.txt,$C:12350:tbledit.section:history,$C:12400:tbledit.dump:$W/hist.txt,$C:12450:tbledit.section:columns,\
 $C:12500:tbledit.set:1:0=title,$C:12700:tbledit.dump:$W/d.txt,\
-$C:12900:tbledit.set:1:1=VARCHAR(10),$C:13100:tbledit.dump:$W/e.txt,$C:13300:tbledit.revert,\
-$C:13500:tbledit.new:main,$C:13700:tbledit.name:orders,$C:13800:tbledit.add,$C:13900:tbledit.set:0:0=id,$C:14000:tbledit.set:0:1=INTEGER,$C:14100:tbledit.toggle:0:2,\
-$C:14300:tbledit.dump:$W/f.txt,$C:14500:tbledit.apply_now,$C:17500:tbledit.dump:$W/g.txt,\
-$C:17700:tbledit.add,$C:17800:tbledit.set:1:0=memo,$C:17900:tbledit.set:1:1=TEXT,$C:18000:file.close_tab,$C:18300:tbledit.dump:$W/h.txt,\
-$C:18400:file.close_tab,$C:18700:tbledit.dump:$W/i.txt,$C:18900:tbledit.open:main.item,$C:20100:tbledit.test_panic,$C:20800:tbledit.dump:$W/p.txt,$C:20900:explorer.dump:$W/alive.txt,$C:21400:file.exit" 55 lite
+$C:12900:tbledit.set:1:1=VARCHAR(10),$C:13100:tbledit.dump:$W/e.txt,$C:13300:tbledit.apply_script:$W/edited.sql,$C:16300:tbledit.dump:$W/s.txt,$C:16500:tbledit.revert,\
+$C:16700:tbledit.new:main,$C:16900:tbledit.name:orders,$C:17000:tbledit.add,$C:17100:tbledit.set:0:0=id,$C:17200:tbledit.set:0:1=INTEGER,$C:17300:tbledit.toggle:0:2,\
+$C:17500:tbledit.dump:$W/f.txt,$C:17700:tbledit.apply_now,$C:20700:tbledit.dump:$W/g.txt,\
+$C:20900:tbledit.add,$C:21000:tbledit.set:1:0=memo,$C:21100:tbledit.set:1:1=TEXT,$C:21200:file.close_tab,$C:21500:tbledit.dump:$W/h.txt,\
+$C:21600:file.close_tab,$C:21900:tbledit.dump:$W/i.txt,$C:22100:tbledit.open:main.item,$C:23300:tbledit.test_panic,$C:24000:tbledit.dump:$W/p.txt,$C:24100:explorer.dump:$W/alive.txt,$C:24600:file.exit" 60 lite
 # ⓪ 라이선스 안내 게이트(D-328 · 격리 홈 = 라이선스 없음): 3초 전에는 [확인]도 편집도 받지 않는다 · 3초 뒤 확인하면 쓸 수 있다.
 expect "notice-shown" "$V1_OUT/n0.txt" "notice=on"
 expect "notice-early-ok-ignored" "$V1_OUT/n1.txt" "rows=2 notice=on"
@@ -28,11 +30,22 @@ expect "open-row" "$V1_OUT/a.txt" "row|0||id|INTEGER|Y||"
 expect "add-stmt" "$V1_OUT/b.txt" "stmt|Safe|ALTER TABLE main.item ADD COLUMN qty INTEGER"
 expect "add-dirty" "$V1_OUT/b.txt" "dirty=true can_apply=true"
 expect "add-mark" "$V1_OUT/b.txt" "row|2|+|qty|INTEGER|N||"
+# ②-b 되돌리기 · 다시 실행(셀 단위): 타입 칸 → 이름 칸 → 행 추가 순으로 되돌아가고, 다시 실행하면 같은 문장으로 돌아온다.
+expect "undo-1-type" "$V1_OUT/u1.txt" "row|2|+|qty||N||"
+expect "undo-3-clean" "$V1_OUT/u2.txt" "dirty=false can_apply=false section=columns rows=2"
+expect "redo-3-back" "$V1_OUT/u3.txt" "stmt|Safe|ALTER TABLE main.item ADD COLUMN qty INTEGER"
 expect "applied-reloaded" "$V1_OUT/c.txt" "dirty=false can_apply=false section=columns rows=3"
 expect "applied-row" "$V1_OUT/c.txt" "row|2||qty|INTEGER|N||"
+# ③-b 적용 기록: History 섹션 한 줄 + 실행한 스크립트 파일(격리 홈 backups/objects/…_applied.sql · 머리 주석 + 보낸 문장).
+expect "history-row" "$V1_OUT/hist.txt" "|Applied 1 of 1 statement(s)|"
+AP=$(ls "$V1_HOME"/backups/objects/*_main.item_TABLE.*_applied.sql 2>/dev/null | head -1)
+if [ -n "$AP" ] && grep -qF "ALTER TABLE main.item ADD COLUMN qty INTEGER;" "$AP"; then v1_pass "history-file"; else v1_failmsg "history-file" "보관 파일 없음 또는 문장 없음: $AP"; fi
 expect "rename-stmt" "$V1_OUT/d.txt" "stmt|Safe|ALTER TABLE main.item RENAME COLUMN name TO title"
 expect "type-blocked" "$V1_OUT/e.txt" "blocked|NeedsRebuild|title"
 expect_not "type-no-stmt" "$V1_OUT/e.txt" "ALTER COLUMN"
+# ⑤-b 미리보기에서 고친 스크립트 = 고친 글 그대로 실행(D-317) · 화면의 남은 편집(이름 바꾸기)은 지켜진다.
+expect "edited-applied" "$V1_OUT/s.txt" "|extra2|TEXT|"
+expect "edited-keeps-pending" "$V1_OUT/s.txt" "RENAME COLUMN name TO title"
 expect "new-create" "$V1_OUT/f.txt" "stmt|Safe|CREATE TABLE main.orders (     id INTEGER NOT NULL )"
 expect "new-created" "$V1_OUT/g.txt" "table=main.orders new=false loaded=true dirty=false"
 # ⑦ 미적용 변경이 있는 탭 닫기 = 첫 번째는 남고(안내) · 곧바로 한 번 더 닫으면 닫힌다(그 뒤 덤프 = 다른 편집기 탭 또는 없음).
