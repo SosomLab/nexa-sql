@@ -20,6 +20,10 @@ Works with Oracle · PostgreSQL · SQL Server · MySQL/MariaDB · SQLite. For ot
 
 Each table opens in its own tab titled **Table: name** (a new one = **New table**). The tab shows a dot while it has changes that are not applied yet.
 
+### Without a license
+
+The table editor is a licensed feature. Without a license it still works (free for non-commercial use): the first time you open it after starting Nexa SQL, the tab shows a notice — "Table editor - licensed feature" — with **OK** and **License…**. **OK** becomes available after 3 seconds; until you press it the editor does not accept edits. The notice is shown once per run. **License…** opens the License window, where you can request a license for commercial use.
+
 ## The screen
 
 - **Top** — table name and table comment.
@@ -38,9 +42,11 @@ Each table opens in its own tab titled **Table: name** (a new one = **New table*
 ## Editing
 
 - Click a selected cell again, double-click it, press **Enter**, or just start typing to edit. **Tab** moves to the next cell, **Esc** cancels.
+- **Type list** — while you edit a **Type** cell in the Columns section, a list of that database's common types opens under the cell (above it when there is no room below). It narrows to the types that start with what you typed. **↑ / ↓** then **Enter**, or a click, puts the type in and finishes the edit; **Esc** closes only the list. You can still type any other type by hand.
 - Click a check cell to flip it. For a **new** constraint, clicking Kind cycles Primary → Unique → Foreign → Check.
 - **Add** puts a new row at the end. **Delete** (or **Remove**) removes the selected row.
 - **Revert** drops all edits and goes back to what was read from the server. **Refresh** reads the structure again.
+- **Closing a tab with unapplied changes** — the first close keeps the tab and the status bar says "Unapplied table changes - close the tab again to discard them". Close it again within a few seconds (`editor.close_confirm_ms`, 3 seconds by default) to discard the edits. Nothing was sent to the server.
 - New names follow the database's own folding — unquoted names become upper case on Oracle and lower case on PostgreSQL. Wrap a name in `"…"` to keep it exactly as typed.
 - Type several columns as a comma-separated list in the Columns cell of a key or an index.
 
@@ -62,7 +68,7 @@ On a production connection the usual production guards apply (confirmation and b
   - SQLite: changing a column's type, NOT NULL, default or constraints is blocked (adding and renaming columns works). SQLite has no comments.
 - **Foreign keys and checks read from the server** can be renamed or removed, not edited in place — remove and add a new one instead. New foreign keys and checks are free.
 - An index that only backs a primary key or a unique constraint is listed under Keys, not under Indexes.
-- Not in this version: views · sequences · partitions · storage options · undo of a single cell (use **Revert**) · a question when you close a tab with unapplied edits (the tab closes; nothing was sent to the server).
+- Not in this version: views · sequences · partitions · storage options · undo of a single cell (use **Revert**).
 
 ## Setting
 

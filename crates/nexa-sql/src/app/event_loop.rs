@@ -679,6 +679,10 @@ impl ApplicationHandler<Wake> for App {
         if let Some(t) = self.prod_arm_tick(now) {
             next = next.min(t);
         }
+        // ★ 테이블 구조 편집기의 라이선스 안내 남은 초(D-328) — 안내가 떠 있는 동안만.
+        if let Some(t) = self.tbledit_tick(now) {
+            next = next.min(t);
+        }
         // ★ 객체 백업 대기 상한 + 주기 정리(114 §7-2 · `backup.prune_interval_min`).
         if let Some(t) = self.objbk_tick(now) {
             next = next.min(t);

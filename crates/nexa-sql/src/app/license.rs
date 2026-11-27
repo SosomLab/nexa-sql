@@ -256,6 +256,7 @@ impl App {
             F::LobImage => (t(Msg::LicFeatLobImage), t(Msg::LicAltLobImage)),
             F::RichCopy => (t(Msg::LicFeatRichCopy), t(Msg::LicAltRichCopy)),
             F::LogExport => (t(Msg::LicFeatLogExport), t(Msg::LicAltLogExport)),
+            F::ObjectEditor => (t(Msg::LicFeatObjectEditor), t(Msg::LicAltObjectEditor)),
             F::MultiConnection => (
                 t(Msg::LicFeatMultiConnection),
                 t(Msg::LicAltMultiConnection),

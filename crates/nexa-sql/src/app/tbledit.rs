@@ -274,6 +274,16 @@ impl App {
             if prod && self.settings.get("tbledit.prod") == Some("deny") {
                 view.set_read_only(Some(t(Msg::TbeProdDenied).to_string()));
             }
+            // ★ 라이선스 안내 게이트(D-328): 라이선스가 없으면 **앱 실행마다 첫 열기 한 번** 안내를 보인다(막지 않는다) ·
+            //   `license.gates` 설정과 무관(게이트를 꺼도 안내는 뜬다) → `entitled`가 아니라 검사 결과를 직접 본다.
+            if !self.tbledit_notice_done
+                && !self
+                    .licensing
+                    .check(nsql_license::Feature::ObjectEditor)
+                    .is_allowed()
+            {
+                view.set_notice(true);
+            }
             self.tbledits.insert(
                 key.clone(),
                 TbTab {
@@ -417,6 +427,13 @@ impl App {
         for a in acts {
             match a {
                 TbAction::Changed => self.tbledit_title_sync(&key),
+                TbAction::NoticeAck => {
+                    self.tbledit_notice_done = true;
+                    for tab in self.tbledits.values_mut() {
+                        tab.view.set_notice(false);
+                    }
+                }
+                TbAction::OpenLicense => self.open_license = true,
                 TbAction::Refresh => self.tbledit_request(&key, TbPending::Load, Vec::new()),
                 TbAction::Apply => self.tbledit_apply_request(&key),
             }
@@ -586,14 +603,38 @@ impl App {
         let Some(key) = self.tbledit_key() else {
             return;
         };
-        let redraw = self
-            .tbledits
-            .get_mut(&key)
-            .is_some_and(|tab| tab.view.on_event(ev));
+        // ★ 오류 경계(D-329): 편집기 안의 패닉이 메인 편집기까지 끌고 가지 않게 — 잡히면 그 탭의 상태를 통째로 버린다.
+        //   (Release가 `panic = "abort"`인 동안은 Debug에서만 효과가 있다 · 전역 전환은 크기 실측 뒤 결정.)
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.tbledits
+                .get_mut(&key)
+                .is_some_and(|tab| tab.view.on_event(ev))
+        }));
+        let Ok(redraw) = r else {
+            self.tbledit_crashed(&key);
+            return;
+        };
         self.tbledit_actions();
         if redraw {
             self.redraw();
         }
+    }
+
+    /// 편집기 탭 하나가 패닉으로 죽었다 — 상태 폐기 · 탭 닫기 · 안내(다른 탭·세션·결과는 그대로).
+    pub(crate) fn tbledit_crashed(&mut self, key: &str) {
+        eprintln!("[tbledit] panic in table editor tab {key} - tab state dropped");
+        self.tbledits.remove(key);
+        if self.tbledit_run.as_ref().is_some_and(|r| r.key == key) {
+            self.tbledit_run = None;
+        }
+        self.editors.close_view_tabs(key);
+        self.toasts.push(
+            crate::toast::ToastKind::Error,
+            t(Msg::TbeApplyTitle).to_string(),
+            t(Msg::TbeCrashed).to_string(),
+        );
+        self.sync_grid_tab();
+        self.redraw();
     }
 
     /// 입력 책임 연쇄의 한 고리(비교 탭과 같은 규칙): 포인터 = 뷰 영역 안이거나 팝업이 열려 있을 때 · 키 = 편집기 포커스일 때.
@@ -637,8 +678,20 @@ impl App {
             .map(|tab| tab.view.textbox_mut())
     }
 
+    /// 라이선스 안내의 남은 초 표시를 움직인다(안내가 떠 있는 동안만 0.25초마다 다시 그린다 · 그 밖에는 깨우지 않는다).
+    pub(crate) fn tbledit_tick(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
+        let key = self.tbledit_key()?;
+        let left = self.tbledits.get(&key)?.view.notice_left()?;
+        self.redraw();
+        (left > 0).then(|| now + std::time::Duration::from_millis(250))
+    }
+
     /// 닫힌 탭의 상태를 버린다(탭 전환·닫기 뒤 · 닫기 = 즉시 전부 해제 D-323).
     pub(crate) fn tbledit_sync(&mut self) {
+        // 그리기 중 패닉(경계가 잡아 표식만 남겼다) → 여기서 탭을 걷는다.
+        if let Some(key) = self.tbledit_panicked.take() {
+            self.tbledit_crashed(&key);
+        }
         if self.tbledits.is_empty() {
             return;
         }
@@ -662,9 +715,9 @@ impl App {
     /// 기동 명령(헤드리스 판정 · 자체 시험) — 맞는 명령이면 true.
     ///
     /// `tbledit.open:<스키마.테이블>` · `tbledit.new:<스키마>` · `tbledit.section:<columns|keys|indexes>` · `tbledit.add` ·
-    /// `tbledit.set:<행>:<열>=<글>` · `tbledit.toggle:<행>:<열>` · `tbledit.remove:<행>` · `tbledit.move:<행>:<±1>` ·
+    /// `tbledit.set:<행>:<열>=<글>` · `tbledit.toggle:<행>:<열>` · `tbledit.edit:<행>:<열>`(편집 열기) · `tbledit.remove:<행>` · `tbledit.move:<행>:<±1>` ·
     /// `tbledit.name:<글>` · `tbledit.comment:<글>` · `tbledit.revert` · `tbledit.refresh` · `tbledit.apply`(미리보기까지) ·
-    /// `tbledit.apply_now`(미리보기 없이 실행 = 시험 전용 길) · `tbledit.dump:<파일>`.
+    /// `tbledit.apply_now`(미리보기 없이 실행 = 시험 전용 길) · `tbledit.notice_ok`(라이선스 안내 확인 · 3초 뒤에만) · `tbledit.dump:<파일>`.
     pub(crate) fn tbledit_cmd(&mut self, id: &str) -> bool {
         let Some(rest) = id.strip_prefix("tbledit.") else {
             return false;
@@ -691,6 +744,24 @@ impl App {
             return true;
         }
         match rest {
+            // 판정용(Debug 빌드만): 다음 그리기에서 편집기가 패닉 → 오류 경계가 그 탭만 걷는지.
+            #[cfg(debug_assertions)]
+            "test_panic" => {
+                if let Some(tab) = self.tbledits.get_mut(&key) {
+                    tab.view.arm_test_panic();
+                }
+                self.redraw();
+                return true;
+            }
+            // 라이선스 안내의 [확인] — 화면 버튼과 같은 규칙(3초가 지나야 받아들인다).
+            "notice_ok" => {
+                if let Some(tab) = self.tbledits.get_mut(&key) {
+                    tab.view.notice_ok();
+                }
+                self.tbledit_actions();
+                self.redraw();
+                return true;
+            }
             "apply" => {
                 self.tbledit_apply_request(&key);
                 return true;
@@ -725,6 +796,10 @@ impl App {
                     if let Some((r, c)) = nums(pos) {
                         v.set_cell(r, c, text);
                     }
+                }
+            } else if let Some(s) = rest.strip_prefix("edit:") {
+                if let Some((r, c)) = nums(s) {
+                    v.edit_cell(r, c);
                 }
             } else if let Some(s) = rest.strip_prefix("toggle:") {
                 if let Some((r, c)) = nums(s) {

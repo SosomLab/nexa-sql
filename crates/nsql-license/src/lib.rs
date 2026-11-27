@@ -63,6 +63,8 @@ pub enum Feature {
     LobImage,
     RichCopy,
     LogExport,
+    /// 테이블 구조 편집기(docs/119 · D-328) — 라이선스가 없으면 막지 않고 **안내 뒤** 쓴다(안내 게이트).
+    ObjectEditor,
     // ── Pro(상한 해제 · D-46)
     MultiConnection,
     MultiTabs,
@@ -91,6 +93,7 @@ impl Feature {
         Feature::LobImage,
         Feature::RichCopy,
         Feature::LogExport,
+        Feature::ObjectEditor,
         Feature::MultiConnection,
         Feature::MultiTabs,
         Feature::LargeEdit,
@@ -118,6 +121,7 @@ impl Feature {
             Feature::LobImage => "lob-image",
             Feature::RichCopy => "rich-copy",
             Feature::LogExport => "log-export",
+            Feature::ObjectEditor => "object-editor",
             Feature::MultiConnection => "multi-connection",
             Feature::MultiTabs => "multi-tabs",
             Feature::LargeEdit => "large-edit",

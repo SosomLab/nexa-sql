@@ -360,6 +360,10 @@ struct App {
     tbledit_seq: u32,
     /// 적용 마무리 안내 — 완료 처리의 끝에서 상태줄에 쓴다(실행 요약에 덮이지 않게).
     tbledit_note: Option<String>,
+    /// 라이선스 안내(D-328)를 이번 실행에서 이미 확인했다.
+    tbledit_notice_done: bool,
+    /// 그리기 중 패닉이 난 편집기 탭(오류 경계 D-329) — 다음 동기화에서 걷는다.
+    tbledit_panicked: Option<String>,
     /// ★ Import 창(89 §3-3 · T-236 B-3): 대상 (표 표기 · 파일 · 탐색기 칸의 서버) · 열 차례 · 취소 깃발 · 요청 번호.
     import_win: import_win::ImportWin,
     import_ctx: Option<app::import::ImportCtx>,
@@ -2098,6 +2102,8 @@ fn main() {
         tbledit_run: None,
         tbledit_seq: 0,
         tbledit_note: None,
+        tbledit_notice_done: false,
+        tbledit_panicked: None,
         import_win: import_win::ImportWin::new(),
         import_ctx: None,
         import_pending: false,

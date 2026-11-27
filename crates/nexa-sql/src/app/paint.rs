@@ -790,9 +790,17 @@ impl App {
                         .with_fonts(vprefs)
                         .with_caret_on(caret_on);
                     let bounds = self.editors.editor_bounds();
-                    if let Some(tab) = self.tbledit_key().and_then(|k| self.tbledits.get_mut(&k)) {
-                        tab.view.set_bounds(bounds, s);
-                        tab.view.paint(&mut dc, &th);
+                    if let Some(key) = self.tbledit_key() {
+                        if let Some(tab) = self.tbledits.get_mut(&key) {
+                            tab.view.set_bounds(bounds, s);
+                            // 오류 경계(D-329): 그리기 중 패닉 = 이 프레임의 편집기 자리만 비고, 탭은 다음 동기화에서 걷는다.
+                            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                tab.view.paint(&mut dc, &th);
+                            }));
+                            if r.is_err() {
+                                self.tbledit_panicked = Some(key);
+                            }
+                        }
                     }
                 }
                 // ★ 비교 탭(T-283 2단계) = 2-pane diff 뷰어(고정폭 글꼴 · 편집기 자리 전체).

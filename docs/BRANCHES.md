@@ -519,4 +519,5 @@
 | feat/session-modes | 2026-09-18 | 2026-09-18 → main(삭제) | 5 | ★ DR-34 세션 컨텍스트([52](52-session-modes.md)) — 공유 N · 전용 CONNECT · 개별 모드 · 통제 단일화 · 서버별 탐색기 · 세션 상태 추적 · CONNECT 파서 · 로그인 창 확장 결함(56차) |
 | wip/1122-bundle5 | 2026-11-22 | 2026-11-22 → main(삭제) | 1 | 묶음 5 = T-507 마무리(종료·프로젝트 닫기 확인) · 툴바 툴팁 단축키 · 떼어 낸 툴바 창 캡처 대상 · 시나리오 x·fw · **V1 미실행인 채 병합(사용자 지시)** = 다음 세션 첫 일(journal 11-22 §14) |
 | fix/1127-linux-check | 2026-11-27 | 2026-11-27 → main(삭제) | 1 | 11-27 Linux 점검 묶음(e4dc8ad6) = T-521 영어 UI 한글 누출 19줄 · T-522 Oracle 세그먼트 없는 테이블 용량 `0B` · Codex 모델 조회 자식 그룹 종료(Unix) · `scripts/verify.sh` `median()` mawk · `docs/57` §6-1 · 검증 = Linux verify full(journal 11-27 §4) |
+| feat/t525-table-editor | 2026-11-27 | 2026-11-27 → main(삭제) | 1 | T-525 테이블 구조 편집기 1차(e32337bf) = 새 크레이트 `nsql-ddl`(모델 · 차이 · 위험 검사 · 5방언 렌더러) · `nsql-catalog` `table_edit_load` · `tbledit_view.rs` · `app/tbledit.rs` · 탐색기 메뉴 · `obj.edit_structure` · 설정 `tbledit.prod` · V1 `scripts/v1/tbledit.sh` · 위키 `Table-Editor` · D-563 ~ D-565 · 검증 = V2 · V1 31 · 실서버 E2E 3방언(journal 11-27 §10) · CI ✓(ci 46009665717 · integration 46009665773) |
 | main | 2026-09-12 | — | 1 | 착수(조사·골격·엔진) |

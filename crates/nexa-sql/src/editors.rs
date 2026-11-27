@@ -2700,6 +2700,16 @@ impl Editors {
             self.tx_close_req = Some(i);
             return;
         }
+        // ★ 적용하지 않은 변경이 있는 뷰 탭(테이블 구조 편집기 119 · 11-27): 저장할 파일이 없으니 저장 물음 대신 **한 번 더 닫기**로
+        //   확인한다(상태줄 안내 · 같은 탭을 제한 시간 안에 다시 닫으면 버리고 닫는다 · 서버에는 아무것도 가지 않았다).
+        if !self.close_forced && self.view_dirty.contains(&self.tab_id(i)) {
+            let again = matches!(self.pending_close, Some((j, t)) if j == i && t.elapsed().as_millis() <= self.tuning.close_confirm_ms);
+            if !again {
+                self.pending_close = Some((i, Instant::now()));
+                self.notice = Some(Msg::StTbeCloseAgain);
+                return;
+            }
+        }
         // ★ 저장하지 않은 변경 = **호스트가 묻는다**(사용자 09-21 — 종전의 "3초 안에 한 번 더 닫기"는 상태줄 한 줄이라 놓치기 쉽고
         //   저장할 길을 주지 않았다). 호스트는 설정 `editor.close_unsaved`에 따라 메뉴로 묻거나(`ask`) 종전 2단 닫기(`twice`)를 한다.
         if self.is_dirty(i) && !self.close_forced {

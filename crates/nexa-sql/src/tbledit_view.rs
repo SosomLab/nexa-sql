@@ -135,6 +135,8 @@ enum Btn {
     Refresh,
     Revert,
     Apply,
+    NoticeOk,
+    NoticeLicense,
 }
 
 /// 호스트가 처리할 일.
@@ -146,6 +148,10 @@ pub(crate) enum TbAction {
     Refresh,
     /// 편집 모델이 바뀌었다(탭의 미저장 표식 갱신).
     Changed,
+    /// 라이선스 안내의 [확인] — 이번 실행 동안 다시 묻지 않는다.
+    NoticeAck,
+    /// 라이선스 안내의 [라이선스…] — 라이선스 창을 연다(안내는 그대로).
+    OpenLicense,
 }
 
 /// `A, B` → 이름 목록(빈 조각 제외 · 방언 접힘).
@@ -205,6 +211,29 @@ fn kind_suffix(k: KeyKind) -> &'static str {
     }
 }
 
+/// ★ 라이선스 안내의 [확인]이 켜지기까지의 시간(초) — **코드 상수**(D-328: 설정 · 환경 변수 · 기동 명령 어디서도 바꿀 수 없다 ·
+/// 자동 시험도 이만큼 기다린다).
+pub(crate) const NOTICE_SECS: u64 = 3;
+
+/// 완성 목록에 한 번에 보이는 줄 수.
+const SUGG_MAX: usize = 10;
+
+/// 타입 완성 후보: `typed`(소문자)로 시작하는 방언 타입들 — `show_all`이면 거르지 않는다 · 친 글이 후보와 똑같으면 빈 목록
+/// (더 고를 것이 없다). 순수.
+pub(crate) fn type_suggestions(d: Dialect, typed: &str, show_all: bool) -> Vec<&'static str> {
+    let all = nsql_ddl::type_names(d);
+    if show_all {
+        return all.to_vec();
+    }
+    if typed.is_empty() || all.iter().any(|n| n.to_lowercase() == typed) {
+        return Vec::new();
+    }
+    all.iter()
+        .copied()
+        .filter(|n| n.to_lowercase().starts_with(typed))
+        .collect()
+}
+
 /// 세로 가운데에 글 한 줄(`y`·`h` = 칸의 위·높이).
 fn text_mid(
     dc: &mut dyn DrawCtx,
@@ -251,6 +280,17 @@ pub(crate) struct TableEditView {
     name_rect: Rect,
     comment_rect: Rect,
     ddl_rect: Rect,
+    /// 타입 완성 목록(타입 칸 편집 중 · 친 글자로 거른 방언 타입들) — 비면 닫힘.
+    /// ★ 라이선스 안내(D-328 · 안내 게이트): 떠 있는 동안 편집기 대신 안내만 보인다 — 값 = 뜬 시각([확인]은 그로부터
+    /// [`NOTICE_SECS`]초 뒤에 켜진다).
+    notice: Option<std::time::Instant>,
+    /// 판정용(Debug 빌드만): 다음 그리기에서 일부러 패닉 — 오류 경계(D-329)가 탭만 걷는지 본다.
+    #[cfg(debug_assertions)]
+    test_panic: bool,
+    sugg: Vec<&'static str>,
+    sugg_sel: Option<usize>,
+    /// 목록 줄의 자리(그릴 때 잡는다 · 클릭 판정).
+    sugg_rects: Vec<Rect>,
     actions: Vec<TbAction>,
 }
 
@@ -309,6 +349,12 @@ impl TableEditView {
             name_rect: Rect::default(),
             comment_rect: Rect::default(),
             ddl_rect: Rect::default(),
+            notice: None,
+            #[cfg(debug_assertions)]
+            test_panic: false,
+            sugg: Vec::new(),
+            sugg_sel: None,
+            sugg_rects: Vec::new(),
             actions: Vec::new(),
         };
         v.recalc();
@@ -369,6 +415,43 @@ impl TableEditView {
         };
     }
 
+    /// 편집할 수 없는 상태(읽기 전용 · 아직 안 읽힘 · 라이선스 안내가 떠 있음).
+    fn locked(&self) -> bool {
+        self.read_only.is_some() || !self.loaded || self.notice.is_some()
+    }
+
+    /// 라이선스 안내를 띄우거나(이미 떠 있으면 시각 유지) 걷는다.
+    pub(crate) fn set_notice(&mut self, on: bool) {
+        if !on {
+            self.notice = None;
+        } else if self.notice.is_none() {
+            self.notice = Some(std::time::Instant::now());
+        }
+    }
+
+    /// [확인]이 켜지기까지 남은 초(0 = 켜짐 · 안내가 없으면 None).
+    pub(crate) fn notice_left(&self) -> Option<u64> {
+        self.notice
+            .map(|t0| NOTICE_SECS.saturating_sub(t0.elapsed().as_secs()))
+    }
+
+    /// [확인](판정용 기동 명령도 이 길) — 시간이 지났을 때만 받아들인다.
+    pub(crate) fn notice_ok(&mut self) -> bool {
+        if self.notice_left() == Some(0) {
+            self.notice = None;
+            self.actions.push(TbAction::NoticeAck);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// 판정용(Debug 빌드만 · 기동 명령 `tbledit.test_panic`).
+    #[cfg(debug_assertions)]
+    pub(crate) fn arm_test_panic(&mut self) {
+        self.test_panic = true;
+    }
+
     pub(crate) fn set_read_only(&mut self, reason: Option<String>) {
         self.read_only = reason;
     }
@@ -410,6 +493,7 @@ impl TableEditView {
     /// 적용할 수 있는가: 문장이 있고 · 읽기 전용이 아니고 · 이름·타입이 빈 컬럼이 없다(새 테이블은 이름과 컬럼 하나 이상).
     pub(crate) fn can_apply(&self) -> bool {
         self.read_only.is_none()
+            && self.notice.is_none()
             && self.loaded
             && !self.plan.stmts.is_empty()
             && !self.edit.name.trim().is_empty()
@@ -456,7 +540,32 @@ impl TableEditView {
     }
 
     pub(crate) fn popup_open(&self) -> bool {
-        self.ddl.popup_open()
+        self.ddl.popup_open() || !self.sugg.is_empty()
+    }
+
+    /// 지금 편집 중인 칸이 컬럼 섹션의 타입 칸인가.
+    fn editing_type(&self) -> bool {
+        self.section == Section::Columns
+            && matches!(self.editing, Some(Target::Cell { col: 1, .. }))
+    }
+
+    /// 타입 완성 목록을 지금 친 글로 다시 거른다(앞머리 일치 · 대소문자 무시 · 이미 목록의 글과 같으면 닫는다).
+    fn refresh_sugg(&mut self, show_all: bool) {
+        self.sugg.clear();
+        self.sugg_sel = None;
+        if !self.editing_type() {
+            return;
+        }
+        let typed = self.cell.text().trim().to_lowercase();
+        self.sugg = type_suggestions(self.dialect, &typed, show_all);
+    }
+
+    /// 완성 목록의 `i`번째를 타입 칸에 넣고 확정한다.
+    fn accept_sugg(&mut self, i: usize) {
+        if let Some(choice) = self.sugg.get(i).copied() {
+            self.cell.set_text(choice);
+            self.commit_edit();
+        }
     }
 
     fn s(&self, v: f32) -> i32 {
@@ -540,7 +649,7 @@ impl TableEditView {
     /// 그 칸을 고칠 수 있는가. 서버에서 읽은 외래 키·체크 제약은 이름만(식·삭제 규칙을 읽지 않았으므로 고치면 잃는다 → 지우고
     /// 새로 만드는 길만) · 종류는 새 제약만 바꾼다 · 기본 키/유니크의 정의 칸은 없다.
     fn cell_editable(&self, row: usize, col: usize) -> bool {
-        if self.read_only.is_some() || !self.loaded {
+        if self.locked() {
             return false;
         }
         match self.section {
@@ -630,7 +739,7 @@ impl TableEditView {
 
     /// 체크 칸 뒤집기 · 새 제약의 종류 돌리기.
     pub(crate) fn toggle(&mut self, row: usize, col: usize) -> bool {
-        if self.read_only.is_some() || !self.loaded {
+        if self.locked() {
             return false;
         }
         match (self.section, col) {
@@ -681,7 +790,7 @@ impl TableEditView {
 
     /// 새 행을 맨 끝에 더한다. 새 행으로 선택이 옮겨 간다.
     pub(crate) fn add_row(&mut self) -> bool {
-        if self.read_only.is_some() || !self.loaded {
+        if self.locked() {
             return false;
         }
         self.commit_edit();
@@ -735,7 +844,7 @@ impl TableEditView {
     }
 
     pub(crate) fn remove_row(&mut self, row: usize) -> bool {
-        if self.read_only.is_some() || !self.loaded || row >= self.rows() {
+        if self.locked() || row >= self.rows() {
             return false;
         }
         self.editing = None;
@@ -757,7 +866,7 @@ impl TableEditView {
 
     /// 컬럼 순서(위 = −1 · 아래 = +1) — 컬럼 섹션만. 방언이 못 옮기면 문장이 아니라 경고 줄이 된다.
     pub(crate) fn move_row(&mut self, row: usize, delta: i32) -> bool {
-        if self.read_only.is_some() || self.section != Section::Columns {
+        if self.locked() || self.section != Section::Columns {
             return false;
         }
         let Some(to) = row.checked_add_signed(delta as isize) else {
@@ -775,7 +884,7 @@ impl TableEditView {
 
     pub(crate) fn set_table_name(&mut self, text: &str) -> bool {
         let n = nsql_ddl::fold_new_name(self.dialect, text);
-        if self.read_only.is_some() || n == self.edit.name {
+        if self.locked() || n == self.edit.name {
             return false;
         }
         self.edit.name = n;
@@ -784,7 +893,7 @@ impl TableEditView {
     }
 
     pub(crate) fn set_table_comment(&mut self, text: &str) -> bool {
-        if self.read_only.is_some() || text == self.edit.comment {
+        if self.locked() || text == self.edit.comment {
             return false;
         }
         self.edit.comment = text.to_string();
@@ -948,12 +1057,25 @@ impl TableEditView {
             }
         }
         self.ddl.set_focused(false);
+        // 타입 칸 = 완성 목록(전체 선택으로 열었으면 목록 전부 · 글자로 열었으면 그 글자로 거른 것).
+        self.refresh_sugg(replace.is_none());
+    }
+
+    /// 그 칸의 편집을 연다(판정용 기동 명령 `tbledit.edit:` — 마우스·키 없이 편집 상태와 완성 목록을 본다).
+    pub(crate) fn edit_cell(&mut self, row: usize, col: usize) {
+        if row < self.rows() {
+            self.sel_row = row;
+            self.sel_col = col;
+            self.begin_edit(Target::Cell { row, col }, None);
+        }
     }
 
     fn commit_edit(&mut self) {
         let Some(tg) = self.editing.take() else {
             return;
         };
+        self.sugg.clear();
+        self.sugg_sel = None;
         let text = self.cell.text();
         self.cell.set_focused(false);
         match tg {
@@ -970,6 +1092,8 @@ impl TableEditView {
     }
 
     fn cancel_edit(&mut self) {
+        self.sugg.clear();
+        self.sugg_sel = None;
         self.editing = None;
         self.cell.set_focused(false);
     }
@@ -1034,12 +1158,51 @@ impl TableEditView {
                     self.actions.push(TbAction::Apply);
                 }
             }
+            Btn::NoticeOk => {
+                self.notice_ok();
+            }
+            Btn::NoticeLicense => self.actions.push(TbAction::OpenLicense),
         }
         self.ensure_visible();
     }
 
     /// 사건 처리 — 다시 그릴 일이 있으면 true(호스트 규칙 = 확장 상세 뷰와 같다).
     pub(crate) fn on_event(&mut self, ev: &InputEvent) -> bool {
+        // ★ 라이선스 안내가 떠 있는 동안 = 안내의 두 버튼만(키·휠·다른 클릭은 삼킨다 · Esc/Enter로 닫히지 않는다).
+        if self.notice.is_some() {
+            match *ev {
+                InputEvent::MouseMove { x, y } => {
+                    let p = Point { x, y };
+                    self.hover = self
+                        .buttons
+                        .iter()
+                        .find(|(_, r, on)| *on && r.contains(p))
+                        .map(|(b, ..)| *b);
+                }
+                InputEvent::MouseDown { x, y, .. } => {
+                    let p = Point { x, y };
+                    self.pressed = self
+                        .buttons
+                        .iter()
+                        .find(|(_, r, on)| *on && r.contains(p))
+                        .map(|(b, ..)| *b);
+                }
+                InputEvent::MouseUp { x, y } => {
+                    let p = Point { x, y };
+                    if let Some(b) = self.pressed.take() {
+                        if self
+                            .buttons
+                            .iter()
+                            .any(|(bb, r, on)| *bb == b && *on && r.contains(p))
+                        {
+                            self.press(b);
+                        }
+                    }
+                }
+                _ => {}
+            }
+            return true;
+        }
         let mut inv = Invalidations::default();
         if self.ddl.popup_open() {
             self.ddl.on_event(ev, &mut inv);
@@ -1048,6 +1211,49 @@ impl TableEditView {
         }
         // ── 셀 편집 중: Enter/Tab = 확정 · Esc = 취소 · 상자 밖 클릭 = 확정 뒤 그 클릭을 이어서 처리.
         if let Some(tg) = self.editing {
+            // 타입 완성 목록이 열려 있으면: ↑↓ = 고르기 · Enter = 고른 것 넣기 · Esc = 목록만 닫기 · 줄 클릭 = 넣기.
+            if !self.sugg.is_empty() {
+                match *ev {
+                    InputEvent::Key { key: Key::Down, .. } => {
+                        let n = self.sugg.len();
+                        self.sugg_sel = Some(self.sugg_sel.map_or(0, |i| (i + 1) % n));
+                        return true;
+                    }
+                    InputEvent::Key { key: Key::Up, .. } => {
+                        let n = self.sugg.len();
+                        self.sugg_sel = Some(self.sugg_sel.map_or(n - 1, |i| (i + n - 1) % n));
+                        return true;
+                    }
+                    InputEvent::Key {
+                        key: Key::Enter, ..
+                    } if self.sugg_sel.is_some() => {
+                        self.accept_sugg(self.sugg_sel.unwrap_or(0));
+                        return true;
+                    }
+                    InputEvent::Key {
+                        key: Key::Escape, ..
+                    } => {
+                        self.sugg.clear();
+                        self.sugg_sel = None;
+                        return true;
+                    }
+                    InputEvent::MouseDown { x, y, .. } => {
+                        let p = Point { x, y };
+                        if let Some(i) = self.sugg_rects.iter().position(|r| r.contains(p)) {
+                            self.accept_sugg(i);
+                            return true;
+                        }
+                    }
+                    InputEvent::MouseMove { x, y } => {
+                        let p = Point { x, y };
+                        if let Some(i) = self.sugg_rects.iter().position(|r| r.contains(p)) {
+                            self.sugg_sel = Some(i);
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
             match *ev {
                 InputEvent::Key {
                     key: Key::Enter, ..
@@ -1093,6 +1299,10 @@ impl TableEditView {
                 }
                 _ => {
                     self.cell.on_event(ev, &mut inv);
+                    // 글이 바뀌었으면 완성 목록을 다시 거른다(키·문자 입력 뒤).
+                    if matches!(ev, InputEvent::Char { .. } | InputEvent::Key { .. }) {
+                        self.refresh_sugg(false);
+                    }
                     return true;
                 }
             }
@@ -1275,6 +1485,11 @@ impl TableEditView {
 
     #[allow(clippy::too_many_lines)]
     pub(crate) fn paint(&mut self, dc: &mut dyn DrawCtx, th: &Theme) {
+        #[cfg(debug_assertions)]
+        assert!(
+            !self.test_panic,
+            "tbledit.test_panic (injected by a startup command)"
+        );
         let b = self.bounds;
         if b.w <= 0 || b.h <= 0 {
             return;
@@ -1292,6 +1507,52 @@ impl TableEditView {
             dc.text(x0, y, b, t(Msg::TbeLoading), th.text_dim);
             self.grid_rect = Rect::default();
             self.ddl_rect = Rect::default();
+            return;
+        }
+        // ★ 라이선스 안내(D-328): 편집기 대신 안내 판 + [확인(남은 초)] [라이선스…].
+        if self.notice.is_some() {
+            self.grid_rect = Rect::default();
+            self.ddl_rect = Rect::default();
+            self.name_rect = Rect::default();
+            self.comment_rect = Rect::default();
+            dc.select_font(FontSlot::Base, true);
+            dc.text(x0, y, b, t(Msg::TbeLicTitle), th.text);
+            dc.select_font(FontSlot::Base, false);
+            y += lh + self.s(10.0);
+            dc.text(x0, y, b, t(Msg::TbeLicBody), th.text);
+            y += lh + self.s(4.0);
+            dc.text(x0, y, b, t(Msg::TbeLicBody2), th.text_dim);
+            y += lh + self.s(16.0);
+            let left = self.notice_left().unwrap_or(0);
+            let ok = if left == 0 {
+                t(Msg::TbeLicOk).to_string()
+            } else {
+                tf(Msg::TbeLicOkIn, &[&left.to_string()])
+            };
+            let btn_h = lh + self.s(12.0);
+            let bw = dc.text_width(&ok) + self.s(36.0);
+            self.button(
+                dc,
+                th,
+                Btn::NoticeOk,
+                Rect::new(x0, y, bw, btn_h),
+                &ok,
+                left == 0,
+                false,
+                true,
+            );
+            let lic = t(Msg::TbeLicBtn);
+            let lw = dc.text_width(lic) + self.s(28.0);
+            self.button(
+                dc,
+                th,
+                Btn::NoticeLicense,
+                Rect::new(x0 + bw + self.s(8.0), y, lw, btn_h),
+                lic,
+                true,
+                false,
+                false,
+            );
             return;
         }
         // ── 머리: 테이블 이름 · 코멘트(누르면 편집).
@@ -1570,6 +1831,32 @@ impl TableEditView {
             self.cell.paint(dc, th);
             dc.stroke_round_rect(r, 0, th.accent, 1.0);
         }
+        // ── 타입 완성 목록의 자리(그리기는 팝업 층 `paint_popup`): 칸 아래 · 모자라면 위 · 뷰 영역 밖으로 나가지 않는다.
+        self.sugg_rects.clear();
+        if let (false, Some(tg)) = (self.sugg.is_empty(), self.editing) {
+            let cell = self.target_rect(tg);
+            let line_h = lh + self.s(6.0);
+            let n = self.sugg.len().min(SUGG_MAX) as i32;
+            let mut w0 = cell.w.max(self.s(180.0));
+            for name in &self.sugg {
+                w0 = w0.max(dc.text_width(name) + self.s(20.0));
+            }
+            let w0 = w0.min(b.w - pad);
+            let x = cell
+                .x
+                .min(b.right() - w0 - self.s(4.0))
+                .max(b.x + self.s(4.0));
+            let below = cell.bottom() + n * line_h <= b.bottom() - self.s(4.0);
+            let y0 = if below {
+                cell.bottom()
+            } else {
+                (cell.y - n * line_h).max(b.y)
+            };
+            for i in 0..n {
+                self.sugg_rects
+                    .push(Rect::new(x, y0 + i * line_h, w0, line_h));
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1621,12 +1908,24 @@ impl TableEditView {
         if self.ddl.popup_open() {
             self.ddl.paint_popup(dc, th);
         }
+        if let (Some(first), Some(last)) = (self.sugg_rects.first(), self.sugg_rects.last()) {
+            dc.select_font(FontSlot::Base, false);
+            let frame = Rect::new(first.x, first.y, first.w, last.bottom() - first.y);
+            dc.fill_rect(frame, th.panel_bg);
+            dc.stroke_round_rect(frame, 0, th.border, 1.0);
+            for (i, (r, name)) in self.sugg_rects.iter().zip(&self.sugg).enumerate() {
+                if self.sugg_sel == Some(i) {
+                    dc.fill_rect(Rect::new(r.x + 1, r.y, r.w - 2, r.h), th.sel_bg);
+                }
+                text_mid(dc, r.x + self.s(8.0), r.y, r.h, *r, name, th.text);
+            }
+        }
     }
 
     /// 판정용 덤프(기동 명령 `tbledit.dump:` · 시험): 섹션 · 행 · 문장 · 막힌 변경.
     pub(crate) fn dump(&self) -> String {
         let mut s = format!(
-            "table={}.{} new={} loaded={} dirty={} can_apply={} section={} rows={}\n",
+            "table={}.{} new={} loaded={} dirty={} can_apply={} section={} rows={}{}\n",
             self.orig.schema,
             self.edit.name,
             self.is_new,
@@ -1634,7 +1933,12 @@ impl TableEditView {
             self.is_dirty(),
             self.can_apply(),
             self.section.id(),
-            self.rows()
+            self.rows(),
+            if self.notice.is_some() {
+                " notice=on"
+            } else {
+                ""
+            }
         );
         for r in 0..self.rows() {
             let cells: Vec<String> = (0..self.specs().len())
@@ -1651,6 +1955,13 @@ impl TableEditView {
                 r,
                 self.row_mark(r),
                 cells.join("|")
+            ));
+        }
+        if !self.sugg.is_empty() {
+            s.push_str(&format!(
+                "sugg|{}|{}\n",
+                self.sugg.len(),
+                self.sugg.join("|")
             ));
         }
         for st in &self.plan.stmts {
@@ -1795,6 +2106,20 @@ mod tests {
             v.plan().stmts[0].sql,
             "CREATE TABLE public.orders (\n    id integer\n)"
         );
+    }
+
+    #[test]
+    fn type_suggestions_filter_by_prefix() {
+        let all = type_suggestions(Dialect::Oracle, "", true);
+        assert!(all.contains(&"VARCHAR2(100)"));
+        assert_eq!(
+            type_suggestions(Dialect::Oracle, "var", false),
+            ["VARCHAR2(100)"]
+        );
+        assert!(type_suggestions(Dialect::Oracle, "num", false).len() >= 3);
+        assert!(type_suggestions(Dialect::Oracle, "", false).is_empty());
+        assert!(type_suggestions(Dialect::Oracle, "date", false).is_empty()); // 똑같은 글 = 닫힘
+        assert!(type_suggestions(Dialect::Postgres, "zzz", false).is_empty());
     }
 
     #[test]
