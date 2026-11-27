@@ -2017,6 +2017,28 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
                             server: p.key.clone(),
                         });
                     }
+                    ExplorerAction::EditTable { owner, .. } => {
+                        out.push(ExplorerAction::EditTable {
+                            owner,
+                            server: p.key.clone(),
+                        });
+                    }
+                    ExplorerAction::NewTable { schema, .. } => {
+                        out.push(ExplorerAction::NewTable {
+                            schema,
+                            server: p.key.clone(),
+                        });
+                    }
+                    ExplorerAction::TableEditData {
+                        schema, table, r, ..
+                    } => {
+                        out.push(ExplorerAction::TableEditData {
+                            schema,
+                            table,
+                            r,
+                            server: p.key.clone(),
+                        });
+                    }
                     a => out.push(a),
                 }
             }
@@ -2298,6 +2320,20 @@ shown={} scroll={} span={:?} bounds={:?} pinned={:?}",
         let i = server.and_then(|s| self.find(s)).unwrap_or(self.shown);
         if let Some(p) = self.panes.get_mut(i) {
             p.ex.meta_set_object_comments(owner, table, cols);
+        }
+    }
+
+    /// ★ 구조 편집기의 읽기 — 그 서버의 칸으로(못 찾으면 보이는 칸).
+    pub(crate) fn request_table_edit(
+        &mut self,
+        server: Option<&ConnectSpec>,
+        schema: &str,
+        table: &str,
+        checks: Vec<String>,
+    ) {
+        let i = server.and_then(|s| self.find(s)).unwrap_or(self.shown);
+        if let Some(p) = self.panes.get_mut(i) {
+            p.ex.request_table_edit(schema, table, checks);
         }
     }
 

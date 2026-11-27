@@ -400,6 +400,14 @@
 
 - `ext.rainbow_pairs.colors` = `#RRGGBB` 쉼표 목록(최대 8 · 형식 오류 항목 건너뜀 · `#RRGGBBAA`는 알파 버림 · 빈 값 = 테마 기본 6색) · 설정 창 카드 [선택…] → 색 창 목록 모드가 같은 꼴로 저장(브랜치 `feat/color-list-editor` · [journal 11-22 §17](journal/2026-11-22.md)).
 
+### 6-43. 11-27 새 키 1(테이블 구조 편집기 · T-525 · D-322 · [119 §10](119-table-editor-design.md) · [journal 11-27 §10](journal/2026-11-27.md))
+
+| 키 | 종류 | 기본 | 분류 | 뜻 |
+|---|---|---|---|---|
+| `tbledit.prod` | Choice(`allow` · `deny`) | allow | Explorer | 운영 접속의 테이블 구조 편집기 — allow = 운영 가드(확인 · 백업)와 함께 편집 · deny = 읽기 전용으로만 연다(머리에 "Production connection - structure editing is turned off") |
+
+명명 확인 = 기능 접두 `tbledit.`(119 §7의 설계 이름 그대로) · 분류 = Explorer(진입점이 탐색기 메뉴) · **아직 없는 설계 키**(119 = `tbledit.risk_check` · `tbledit.sqlite_rebuild` · `tbledit.idle_secs` · `tbledit.max_tabs`)는 그 기능을 만들 때 같은 접두로 등재한다(T-525 남음 ⑧ · ⑪ · 유휴 시간 = 10초 초과라 `_secs` = 6-5).
+
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.
 - 키 이름 오른쪽 **복사 버튼**(글꼴 높이 · 클릭 = 키 복사 → ✓ → `ui.copy_feedback_ms` 뒤 원복 · Shift/Ctrl(⌘)+클릭 = 보이는 설정 전부 `# 카테고리 › 라벨` + `키=값` 형식으로).

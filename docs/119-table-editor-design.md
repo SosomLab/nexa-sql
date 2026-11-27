@@ -180,6 +180,8 @@
 
 ## 7. 결정 대기(권장안 · 사용자 확정 뒤 개발)
 
+> ★ **11-27 착수 = T-525** — 사용자 11-27 "테이블 구조 편집기 구현(DataGrip 주 참조 · DBeaver 참고)" · 무인 진행 규칙에 따라 아래 표의 결정 대기 8건(D-316 · D-318 ~ D-321 · D-324 ~ D-326)은 **권장안 그대로 진행**한다(사용자 확인 대기 · [10](10-decision-record.md)에 "11-27 무인 진행 추천안(권장안)" 표기 · [journal 11-27 §7](journal/2026-11-27.md)) · 사용자 확정 6건(D-317 · D-322 · D-323 · D-327 ~ D-329)은 그대로.
+
 | # | 결정 | 권장안 |
 |---|---|---|
 | D-316 | 화면 = 뷰 탭 vs 모달 | **뷰 탭**(§4) · 모달은 미리보기·2단에만 |
@@ -197,7 +199,7 @@
 | D-328 | 라이선스 게이트 = `Feature::ObjectEditor`(Pro) · 라이선스 없음 = **3초 지연 활성 [확인] 안내 모달 뒤 사용 가능**(막지 않음 · 3초 = 코드 상수 · 외부에서 못 바꿈 · `license.gates`와 무관) · 빈도 = 앱 실행마다 첫 열기 1회(권장 · 대안 = 탭 열 때마다) | ✅ **사용자 확정 10-21**("라이선스가 있어야 동작 · 지금은 없음 · 알림창 3초 대기 뒤 확인 · 외부에서 바꿀 수 없게 · 닫히면 사용") · 빈도만 권장안 · ☐ 미착수(D-439 · 11-01 정합) |
 | D-327 | DDL 적용 시 객체 백업 = **늘**(운영·비운영 공통 · 114 백업 부품·폴더 규칙 그대로 · 실행 스크립트도 함께 보관 · 실패 = 운영 막음 / 비운영 ask·deny 설정) | ✅ **사용자 확정 10-21**("DDL 적용 시 객체 백업 진행") · ☐ 미착수(D-439 · 11-01 정합) |
 
-## 8. 단계(개발 착수 = 확정 뒤 · TODO 후보)
+## 8. 단계(11-27 착수 = T-525 · E-1 ~ E-4 🚧 · E-5 = 2단계)
 
 | 단계 | 내용 | 검증 |
 |---|---|---|
@@ -214,3 +216,93 @@
 3. 컬럼 순서 이동을 MySQL 외에서 "재생성 필요"로 비활성할지, 아예 숨길지.
 4. 미리보기 편집본을 그대로 실행할지(권장 = 그대로 · 파서 검증 1회) vs 편집하면 "편집기로 보내기"만 허용할지.
 5. 라이선스 안내 모달 빈도 = 앱 실행마다 첫 열기 1회(권장) vs 탭을 열 때마다(D-328 비고).
+
+## 10. 구현 현황(11-27 1차 · T-525)
+
+> 무인 진행(§7 권장안 + D-563 ~ D-565)으로 넣은 1차 배선. 결정은 전부 **사용자 확인 대기** — 바꿀 항목은 그 단계에서 반영한다. 검증 = §10-4 · [journal 11-27 §10](journal/2026-11-27.md).
+
+### 10-1. 들어간 것
+
+| 층 | 파일 | 내용 |
+|---|---|---|
+| 코어(의존 0) | `crates/nsql-ddl` — `lib.rs` · `render.rs` · `tests.rs` | 모델(테이블 · 컬럼 · 제약 · 인덱스) · 차이(`diff`) · 위험 검사(`risk_checks` = `SELECT COUNT(*)` 사전 질의) · 5방언 렌더러(`plan` · `create_table` · `script` · `ident` · `fold_new_name` · `type_names`) · 시험 12 |
+| 카탈로그 | `nsql-catalog` `TableEditData` · `table_edit_load(s, schema, table, checks)` | 구조 읽기 + 위험 검사 질의를 메타 세션 한 번에 |
+| 화면 부품 | `crates/nexa-sql/src/tbledit_view.rs` | 이름·코멘트 · 섹션(Columns · Keys · Indexes) · 그리드 편집 · 경고 줄 · DDL 미리보기 · `dump` |
+| 호스트 | `crates/nexa-sql/src/app/tbledit.rs` | 탭 수명 · 요청/응답 · 적용 흐름 · 기동 명령 `tbledit.*` · 순수 함수(`to_model` · `preview_header` · `tb_dialect`) + 시험 3 |
+| 배선 | `explorer.rs` · `explorers.rs` · `editors.rs` · `sqlprev_win.rs` · `app/{paint,input,events,event_loop,meta,grid_results,startup_cmd,menus,commands,mod}.rs` · `keymap.rs` · `main.rs` | 탐색기 요청·메뉴 · 뷰 탭 미적용 표식(탭 점) · 미리보기 창 `[Apply][Copy][Close]` · 명령 `obj.edit_structure`(기본 키 없음) |
+| 글 · 설정 | `nsql-i18n` `Msg` 44개 · `nsql-settings` `tbledit.prod` | 영어/한국어 · 운영 접속 정책(allow 기본 / deny = 읽기 전용 · [94 §6-43](94-settings-key-naming-and-location.md)) |
+
+**진입** = 탐색기 테이블 우클릭 "Edit Structure…" · Tables 폴더 우클릭 "New Table…" · 팔레트 `obj.edit_structure`. 탭 열쇠 = `tbl:<host>/<schema>.<name>`(새 테이블 = `tbl:new:<n>`).
+
+**화면** = 이름·코멘트 / 섹션 버튼 + Add·Remove·Up·Down / "N statement(s) to apply" + Refresh·Revert·Apply… / 그리드(`+` 새 것 · `*` 바뀐 것 · 체크 칸 클릭 · 재클릭·더블클릭·Enter·글자 = 편집 · Tab · Esc · Delete = 행 삭제) / 경고 줄 / DDL 미리보기(읽기 전용 · 우클릭 복사).
+
+**적용** = [Apply…] → 메타 세션이 구조를 다시 읽고 위험 검사 `COUNT`를 돌림 → 연 뒤 서버 구조가 달라졌으면 중단(F-13) → 미리보기 창(머리 주석 = 문장 수 · `PRODUCTION` · `DANGER`/`WARNING` · 0이 아닌 검사 결과 · `NOT APPLIED`) → 창의 [Apply] → **문장 하나씩**(`gate_open` · 운영 확인 깃발 · 객체 백업은 첫 문장 앞에서 한 번) → 오류면 그 자리에서 멈춤 + "Stopped after n of m"(자동 되돌리기 없음 · D-565) → 구조 다시 읽기(성공 = 편집 초기화 · 실패 = 남은 편집 유지 `rebase`).
+
+### 10-2. 1차의 제약
+
+- 테이블 재생성 없음(D-318) — 재생성이 필요한 변경은 적용하지 않고 경고 줄에 적는다.
+- 컬럼 순서 이동 = MySQL/MariaDB만 문장으로 된다(그 밖 = 막힘).
+- SQLite = 타입 · NULL · 기본값 · 제약 변경 막힘(추가 · 이름 바꾸기는 됨) · 코멘트 미지원.
+- 서버에서 읽은 FK · CHECK = 이름 바꾸기 · 삭제만(읽지 않은 속성 보호 · D-563).
+- PK/UK와 같은 이름의 인덱스는 인덱스 목록에서 숨긴다(키 섹션에만).
+- 새 이름 = 방언 접힘 · 행 추가 = 맨 끝(D-564).
+
+### 10-3. 1차에 없는 것(= TODO T-525 "남음")
+
+1. F-17 라이선스 안내 모달(3초 지연 · D-328).
+2. D-329 Release `panic=unwind` + 언와인드 경계(§5-4).
+3. 타입 완성 드롭다운.
+4. 셀 단위 Ctrl+Z(지금 = Revert 전체).
+5. 미적용 변경이 있는 탭을 닫을 때의 물음.
+6. 미리보기 편집본 실행(지금 = 읽기 전용 미리보기 · §9 질문 4).
+7. 기록 섹션 F-15 · `_applied.sql` 보관(D-327의 "실행 스크립트도 함께").
+8. 메모리 원장 `Cat::TableEdit` · `tbledit.idle_secs` · `tbledit.max_tabs`.
+9. 상세 패널 · Ctrl 링크 카드의 진입 버튼.
+10. CHECK 식 · FK 삭제 규칙 · identity 읽기(카탈로그 확장 — 들어오면 D-563 완화).
+11. 2단계(E-5) = 뷰 · 시퀀스 · 파티션 · 저장 옵션 · SQLite 재생성.
+
+§9 열린 질문에 대한 1차의 답(무인 추천안) = ① 탭 ② 새 테이블 포함 ③ MySQL 외 순서 이동 = 숨기지 않고 막음(경고 줄) ④ 편집본 실행 없음(위 6) ⑤ 라이선스 모달 없음(위 1).
+
+### 10-4. 검증(11-27 · Linux · 작업 트리 = e4dc8ad6 + T-525 1차 · 재검증 = 발견 수정 뒤)
+
+| 구분 | 결과 |
+|---|---|
+| V2 | fmt · `check-3os.sh --quick`(fmt + clippy) ✓ · `todo-check` ✓ · `cargo test --workspace` 1590 / 0 / 12 무시 · 통합 48 / 0 / 1 · Debug 빌드 ✓ |
+| V1 | 31 시나리오 682 통과 / 3 실패(= 알려진 창 제목 캡처 3건 · T-524) · 새 `scripts/v1/tbledit.sh` 15 / 0 |
+| 재검증(발견 수정 뒤) | Debug 빌드 ✓ · `nsql-ddl` 12 / 0 · `nsql-catalog` 35 / 0 · `nexa-sql tbledit` 9 / 0 · V1 `tbledit` 15 / 0 · 실서버 3방언 각 29 통과 / 1 실패(= 제목 지정 캡처 · T-524) |
+| 실서버 E2E | 임시 테이블 `NSQLT_TBE_<pid>` · 비운영 프로필 · 끝에 DROP(잔여 0) — 아래 표(재검증 결과) |
+
+| 단계 | PostgreSQL | Oracle(Thin) | SQL Server |
+|---|---|---|---|
+| 열기(컬럼 3 · Keys 1 · Indexes 1 = PK 인덱스 숨김) | ✓ | ✓(기본값 칸 `0`) | ✓ |
+| 1판 = 컬럼 추가 · 길이 늘림 · 기본값 · 컬럼/테이블 코멘트 → 적용 → CLI 카탈로그 대조 | ✓ 5문장 · 대조 5/5 | ✓ 5문장 · 대조 5/5 · 다시 읽은 기본값 칸 `1` | ✓ 6문장(`Applied 6 of 6`) · 대조 5/5 · 새 기본값 제약 `DF_<테이블>_qty` |
+| 1판 덧붙임 = 코멘트 한 번 더 바꾸기(컬럼 · 테이블) | ✓ 2문장 | ✓ 2문장 | ✓ 2문장 = `sp_updateextendedproperty`(이미 있는 속성) |
+| 1판 덧붙임 = 기본값 지우기 | ✓ `DROP DEFAULT` · 칸 빈 글 | ✓ `MODIFY (QTY DEFAULT NULL)` · 다시 읽은 칸 = 글자 `NULL`(바뀜 아님 — 재검증 뒤 수정 1) | ✓ 기본값 제약 삭제 1문장 · 칸 빈 글 · 제약 없음 |
+| 객체 백업(첫 문장 앞 한 번) · 비운영 = 2단 확인 없음 | ✓ | ✓ | ✓ |
+| 2판 = 컬럼 이름 바꾸기 + UNIQUE 추가 | ✓ | ✓ | ✓ |
+| 3판 = 실패 유도(앞 문장만 적용 · 멈춤 · 남은 편집 유지 · 토스트 "Stopped after 1 of 2") | ✓ | ✓ | ✓ |
+| 3판 상태줄의 중단 문구(실패 뒤 +3 s ~ +20 s) | ✓ `Stopped after 1 of 2 statement(s) …` | ✓ | ✓ |
+| 3판 실패 뒤 남은 문장 = 실패한 문장 하나뿐(가짜 변경 없음) | ✓ 문장 · ✗ 줄 표식(재검증 뒤 수정 2) | ✓ | ✓ |
+| 4판 = [Apply…] → 미리보기 창(창 수 +1 · 서버 미적용 · 상태줄 `Apply changes - <테이블>`) | ✓ | ✓ | ✓ |
+
+**첫 검증의 발견과 처리(같은 날 수정 · 위 표 = 수정 뒤)**
+
+1. **SQL Server 기본값 변경** — 기존 기본값 제약을 지우는 문장이 `EXEC( )` 안의 `QUOTENAME` 호출 때문에 거절됐다 → 문장을 변수에 먼저 만들어 실행하는 꼴(`DECLARE @nsql_sql nvarchar(max) = N'… DROP CONSTRAINT ' + QUOTENAME(@nsql_df); IF @nsql_sql IS NOT NULL EXEC(@nsql_sql)`)로 **고침** · 뒤 문장(새 기본값 · 확장 속성 추가/갱신)까지 실서버 확인.
+2. **중단 문구가 상태줄에서 덮였다**(3방언 · 실행 요약 `1 error(s)`) → 마무리 안내를 완료 처리의 맨 끝에서 쓰게 **고침**.
+3. **PostgreSQL 실패 뒤 가짜 변경**(입력 `varchar(20)` ↔ 서버 표기 `character varying(20)` → `ALTER COLUMN … TYPE` 대기 문장) → 타입 표기 정규화(`norm_type`)로 **문장은 사라짐** · 줄 표식만 남음(재검증 뒤 수정 2).
+4. **Oracle 기본값을 읽지 못했다**(칸 빈 글) → `all_tab_columns.data_default`를 한 번 더 읽어 **고침**.
+5. 미리보기 창이 열린 뒤 상태줄 글 잔류 → `Apply changes - <테이블>`로 **고침**.
+
+**재검증 뒤 수정(11-27 · 겉보기 2건 · 개발 확인 = fmt · clippy · `nexa-sql tbledit` 9 / 0 · `nsql-catalog` 35 / 0 · Debug 빌드 · V1 `tbledit` 15 / 0 — 실서버 재확인은 다음 실기)**
+
+1. Oracle — 기본값을 지우면 서버 카탈로그가 `NULL`을 돌려줘 칸에 글자 `NULL`이 보였다 → `table_edit_load`가 `data_default`의 글자 `NULL`(대소문자 무시)을 빈 글(= 기본값 없음)로 읽는다.
+2. PostgreSQL — 실패 뒤 다시 읽은 줄 가운데 타입 표기만 다른 줄(`varchar(20)` ↔ `character varying(20)`)에 표식 `*`가 남았다 → 줄 표식(`row_mark`)도 타입을 `norm_type`으로 견준다(문장 생성과 같은 잣대 · 칸 글이 사용자가 친 표기로 남는 것은 의도 = 편집 보존).
+
+**남은 것**
+
+1. 구조 편집 탭에서도 상태줄에 `Read-only` 칸.
+2. SQL Server는 인덱스가 걸린 컬럼의 NULL → NOT NULL을 서버가 막는다(지금은 Warn으로만 나감 · 사전 경고 없음).
+3. 미리보기 창의 제목 지정 캡처는 Linux에서 실패(T-524 · 창 열림은 창 수로 판정).
+
+**확인하지 않은 것** = 재검증 뒤 수정 2건의 실서버 판(위) · MySQL/MariaDB 실서버(프로필 없음) · 운영 프로필 경로(2단 확인 · `tbledit.prod=deny`) · 미리보기 창의 [Apply] 버튼(창 열림까지만 · 적용은 `tbledit.apply_now`로 같은 길을 탐) · Windows · macOS 실기 · 71 영향 측정(§6 표).
+

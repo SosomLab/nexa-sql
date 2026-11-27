@@ -2316,6 +2316,7 @@ dependencies = [
  "nsql-bookmarks",
  "nsql-catalog",
  "nsql-core",
+ "nsql-ddl",
  "nsql-drivers",
  "nsql-ext",
  "nsql-format",
@@ -2404,6 +2405,10 @@ dependencies = [
 
 [[package]]
 name = "nsql-core"
+version = "0.10.2"
+
+[[package]]
+name = "nsql-ddl"
 version = "0.10.2"
 
 [[package]]

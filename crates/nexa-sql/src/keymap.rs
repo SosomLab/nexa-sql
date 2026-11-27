@@ -570,6 +570,14 @@ pub(crate) const COMMANDS: &[Command] = &[
         linux: "",
     },
     // 객체 상세 패널이 보여 주는 것(속성 · 컬럼 · 제약 · 소스/DDL)을 읽기 전용 탭으로(T-179 ② "정보 탭" · 비교·복사·검색용).
+    // 테이블 구조 편집기(119 · 11-27) — 탐색기에서 고른 테이블 · 기본 키 없음.
+    Command {
+        id: "obj.edit_structure",
+        label: Msg::MnEditStructure,
+        win: "",
+        mac: "",
+        linux: "",
+    },
     Command {
         id: "obj.info",
         label: Msg::MnObjInfoTab,

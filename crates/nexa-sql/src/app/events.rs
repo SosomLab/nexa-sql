@@ -1348,6 +1348,11 @@ impl App {
                 continue;
             }
             self.sess.busy = false;
+            // ★ 테이블 구조 편집기(119 · 11-27): 이 세션에 보낸 문장 하나가 끝났다 → 다음 문장 또는 마무리(오류 = 거기서 멈춤).
+            if self.tbledit_run.is_some() {
+                let (sid, ok) = (self.sess.id, done.is_none() && !self.sess.run_had_err);
+                self.tbledit_run_done(sid, ok);
+            }
             self.cursor_close_flush();
             self.sync_run_stmt_button();
             self.editors.set_running(self.sess.run_editor, false);
@@ -1435,6 +1440,10 @@ impl App {
                 if mode == "next_always" || (mode == "next_ok" && !failed) {
                     self.goto_statement(true);
                 }
+            }
+            // 구조 편집기의 마무리 안내(적용됨 n/m · 중단)는 위의 실행 요약("오류 n건")이 덮지 않게 맨 끝에 다시 쓴다.
+            if let Some(m) = self.tbledit_note.take() {
+                self.sess.status = m;
             }
         }
         if self.explorer.drain() {

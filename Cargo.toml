@@ -33,6 +33,7 @@ members = [
   "crates/nsql-bookmarks", # ★ 북마크 코어 — 모델 · 줄 보정 · 재탐색(Dice) · JSON · 정리 (GUI·CLI 공용 · docs/69 · T-167)
   "crates/nsql-seq",      # ★ Insert Sequence 엔진 — 표현식 한 줄 → 값 n개 (의존 0 · 앱 내장 확장 + WASM 확장 공용 · docs/124 · 148차)
   "crates/nsql-format",   # ★ SQL 포맷터 핵심 — 렉서 · 레이아웃 IR · Basic 포맷터 · 정렬 보조 (의존 0 · 앱 내장 + WASM 확장 공용 · docs/95)
+  "crates/nsql-ddl",      # ★ 테이블 구조 편집 핵심 — 모델 · 차이 · 방언별 ALTER/CREATE 계획 · 위험 등급 (의존 0 · 재생성 없음 · docs/119)
   "crates/nsql-license",  # 라이선스 앱 층(T-32') — nexa-license 위 얇은 층: Feature 열거 · check(Feature) · 빌드일 · 요청 코드 (docs/23 §4-1 · 92)
   "crates/nsql-catalog",  # ★ 카탈로그 — 스키마·오브젝트·컬럼·소스·컴파일 오류(방언별 메타 SQL · Session 포트 위 · GUI 탐색기·CLI cat 공용)
   "crates/nsql-cli",      # (bin `nsql`) ★ CLI — 접속·스크립트 실행·export/import·bulk insert. 지금은 dry-run 플래너
@@ -90,6 +91,7 @@ nsql-search = { path = "crates/nsql-search" }
 nsql-bookmarks = { path = "crates/nsql-bookmarks" }
 nsql-format = { path = "crates/nsql-format" }
 nsql-seq = { path = "crates/nsql-seq" }
+nsql-ddl = { path = "crates/nsql-ddl" }
 nsql-license = { path = "crates/nsql-license" }
 # nexa-license(공용 라이선스 라이브러리 · 형제 저장소 · 공개 · DR-25) — 검증 전용 · 경로 의존(nexa-ui 방식).
 nexa-license = { path = "../nexa-license/crates/nexa-license" }

@@ -1766,6 +1766,7 @@ impl App {
         // ★ T-276(11-22): 닫힌 탭의 작업 단위 기억도 걷는다(종전 = 세션이 끊길 때만 — 탭을 열고 닫는 동안 항목이 쌓였다).
         self.tab_unit.retain(|(tab, _), _| alive.contains(tab));
         self.diff_views_sync();
+        self.tbledit_sync();
         if cur != self.output_last_editor {
             self.output_last_editor = cur;
             self.output_on_tab_switch();

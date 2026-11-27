@@ -357,6 +357,7 @@ impl App {
         if self.compare_is_diff_tab() {
             self.diff_view.set_focused(f == Focus::Editor);
         }
+        self.tbledit_sync();
         self.explorer.set_focused(f == Focus::Explorer);
         self.objdetail.set_focused(f == Focus::Details);
         self.find.set_focused(f == Focus::Find);
@@ -508,6 +509,7 @@ impl App {
         match self.focus {
             // ★ 뷰 탭(확장 상세)이 활성이면 클립보드 동작(⌘/Ctrl+C·A)의 대상은 그 본문 상자(사용자 09-30).
             Focus::Editor if self.ext_view_active() => Some(self.ext_view.textbox_mut()),
+            Focus::Editor if self.tbledit_active() => self.tbledit_textbox(),
             Focus::Editor if self.ai_view_active() || self.ai.side_focus => {
                 Some(self.ai_view.textbox_mut())
             }
@@ -2667,7 +2669,9 @@ impl App {
     fn dispatch_captured(&mut self, area: Focus, ev: InputEvent, inv: &mut Invalidations) {
         match area {
             Focus::Editor => {
-                if self.ext_view_active() {
+                if self.tbledit_active() {
+                    self.tbledit_event(&ev);
+                } else if self.ext_view_active() {
                     self.ext_view.on_event(&ev);
                     self.ext_view_actions();
                 } else if self.ai_view_active() || self.ai.side_focus {
@@ -2784,6 +2788,9 @@ impl App {
             return true;
         }
         if self.route_ai_view(ev, is_mouse) {
+            return true;
+        }
+        if self.route_tbledit(ev, is_mouse) {
             return true;
         }
         // 확장 뷰(상세 있음)만 — 상세 없는 뷰 탭(비교 inline · 서버 DDL · 정보)은 읽기 전용 편집기 경로(bin112 ④).

@@ -20,6 +20,7 @@ Nexa SQL = 크로스플랫폼 경량 SQL 클라이언트(IDE) + CLI `nsql`(Windo
 | [북마크](Bookmarks-ko.md) | 키 · 니모닉 · 표시(거터 · 미니맵 · 줄 끝 라벨) · 패널 · 저장 위치 · CLI `nsql bookmark` |
 | [변수](Variables-ko.md) | 바인드/치환 변수 · 변수 안의 변수 확장 시점(`vars.expand_at`) · 변수 창 |
 | [탐색기와 필터](Explorers-and-Filters-ko.md) | 필터 토글(Aa · ab · 정규식 · 경로) · 타입어헤드(글자를 치면 그 이름으로 이동 · 한글) · 선택 규칙(빈 곳 클릭) · DBMS 아이콘 · 탭 색(미저장 탭 이름 색) · 객체 상세 패널 |
+| [테이블 편집기](Table-Editor-ko.md) | 테이블의 컬럼 · 키/제약 · 인덱스를 그리드에서 편집 · 실시간 DDL 미리보기 · 적용 = 재확인 + 위험 검사 + 객체 백업 · 실패한 문장에서 멈춤 |
 | [Goto Anything(Ctrl+P)](Goto-Anything-ko.md) | 파일 이름 퍼지 검색 · `이름:줄` · 접두 `>` 명령 · `:` 줄 · `@` 심볼 · `%` 내용 · `?` 도움말 · 메뉴의 단축키 표시 |
 | [코드 완성과 아웃라인](Code-Completion-and-Outline-ko.md) | 완성 팝업(트리거 · 문맥별 후보 · 일치/순서 규칙 · 설정) · 아웃라인 패널 · Goto Symbol(Ctrl+R) |
 | [결과 그리드에서 데이터 편집](Data-Editing-ko.md) | 편집 가능 조건 · 행 식별 등급(키 · 숨은 키 열 · ROWID · 전 열) · 키 · 표시 · 적용의 안전 규칙(사전 검사 · 1행 · 롤백) · 적용 뒤 갱신 · 동시성 · 설정 |

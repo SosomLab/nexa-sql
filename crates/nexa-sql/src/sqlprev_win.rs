@@ -45,6 +45,8 @@ pub(crate) enum SqlPrevAction {
     Mode(ValueMode),
     /// 같은 spec으로 다시 생성(호스트 → 탐색기 → 메타 세션).
     Refresh,
+    /// ★ 적용 미리보기(테이블 구조 편집기 119 · 11-27): [적용] — 호스트가 본 스크립트 그대로 실행하고 창을 닫는다.
+    Execute,
     /// 파일 창(저장)을 연다.
     Save,
     /// 본문을 새 편집기 탭으로(제목 = 파일 이름) · 창은 닫는다.
@@ -255,6 +257,29 @@ impl SqlPrevWin {
         self.tb.goto_line(1);
         self.tb.set_focused(true);
         self.ensure_window(el, theme, owner);
+    }
+
+    /// ★ **적용 미리보기**(119 F-9 ③ "미리보기 없이 적용 없음"): 읽기 전용 글 창 + [적용][복사][닫기] — 사용자가 본 스크립트가
+    /// 곧 실행되는 스크립트다([`SqlPrevAction::Execute`]).
+    pub(crate) fn open_apply(
+        &mut self,
+        el: &ActiveEventLoop,
+        theme: Option<winit::window::Theme>,
+        owner: Option<&Window>,
+        title: String,
+        text: String,
+        tb: TextBox,
+    ) {
+        self.open_plain(el, theme, owner, title, text, tb);
+        self.set_buttons(
+            &[Msg::SpBtnApply, Msg::SpBtnCopy, Msg::SpBtnClose],
+            &[
+                SqlPrevAction::Execute,
+                SqlPrevAction::Copy,
+                SqlPrevAction::Close,
+            ],
+        );
+        self.redraw();
     }
 
     /// 버튼 묶음 교체(라벨 + 동작 나란히).

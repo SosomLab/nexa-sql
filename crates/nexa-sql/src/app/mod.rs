@@ -51,6 +51,7 @@ mod settings;
 pub(crate) mod split;
 mod startup_cmd;
 pub(crate) mod tabobj;
+pub(crate) mod tbledit;
 mod toolbar;
 mod tx;
 mod vars;

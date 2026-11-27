@@ -479,6 +479,13 @@ enum Req {
         schema: String,
         table: String,
     },
+    /// ★ 테이블 구조 편집기(119 · 11-27)의 읽기 한 묶음: 컬럼 + 제약/인덱스/코멘트 + 위험 검사 질의(`checks` = `COUNT(*)`들).
+    TableEdit {
+        gen: u64,
+        schema: String,
+        table: String,
+        checks: Vec<String>,
+    },
     /// ★ 루틴 인자(T-317 · `EXEC proc |` 완성) — 백그라운드 세션 · 카탈로그 `sub_items(Arguments)`.
     Args {
         gen: u64,
@@ -756,6 +763,12 @@ enum Resp {
         table: String,
         r: Result<nsql_catalog::TableDetail, String>,
     },
+    TableEdit {
+        gen: u64,
+        schema: String,
+        table: String,
+        r: Result<nsql_catalog::TableEditData, String>,
+    },
     /// 루틴 인자(T-317): (이름, 부가) 목록.
     Args {
         gen: u64,
@@ -954,6 +967,23 @@ pub(crate) enum ExplorerAction {
     /// ★ 객체 삭제 요청(10-01 · 탐색기 ▸ Delete… · 서버는 `ExplorerSet`이 채운다).
     DropObject {
         owner: ObjectInfo,
+        server: Option<ConnectSpec>,
+    },
+    /// ★ 테이블 ▸ 구조 편집…(119 · 11-27 · 서버는 `ExplorerSet`이 채운다).
+    EditTable {
+        owner: ObjectInfo,
+        server: Option<ConnectSpec>,
+    },
+    /// ★ Tables 폴더 ▸ 새 테이블…
+    NewTable {
+        schema: String,
+        server: Option<ConnectSpec>,
+    },
+    /// ★ 구조 편집기가 청한 읽기의 답([`Req::TableEdit`]).
+    TableEditData {
+        schema: String,
+        table: String,
+        r: Result<nsql_catalog::TableEditData, String>,
         server: Option<ConnectSpec>,
     },
 }
@@ -1349,6 +1379,7 @@ fn req_label(r: &Req) -> String {
         Req::ObjectsMeta { schema, kind, .. } => format!("objects-meta {schema} {kind:?}"),
         Req::DictMeta { .. } => "dictionary".into(),
         Req::DetailMeta { schema, table, .. } => format!("detail {schema}.{table}"),
+        Req::TableEdit { schema, table, .. } => format!("table-edit {schema}.{table}"),
         Req::Args { owner, .. } => format!("args {}.{}", owner.schema, owner.name),
         // 테이블 단위 코멘트(상세 패널 · 테이블 새로 고침 · 10-21 — 종전엔 `other`로 찍혀 진단에서 구별이 안 됐다).
         Req::Comments { owner, .. } => format!("comments {}.{}", owner.schema, owner.name),
@@ -1376,7 +1407,7 @@ fn req_prio(r: &Req) -> u8 {
         // ★ 소스 열기는 같은 급의 다른 요청보다 앞(T-517 · 11-25): 더블클릭의 **첫 클릭**이 보낸 상세·코멘트 조회(선택이 바뀌면
         //   나간다) 뒤에 줄을 서서 "느리지만 열린다"였다 — 사용자가 기다리는 것은 소스다. 진행 중인 질의는 끊지 않는다.
         Req::Source { .. } => 0,
-        Req::ColumnsMeta { urgent: true, .. } | Req::DetailMeta { .. } => 1,
+        Req::ColumnsMeta { urgent: true, .. } | Req::DetailMeta { .. } | Req::TableEdit { .. } => 1,
         // 검색 판정·중지 = 즉시(질의 없음 · ms 단위) · 인덱스 = 사용자 클릭(1) 다음 · 백그라운드 메타(3~5) 앞.
         Req::Search { .. }
         | Req::SearchStop { .. }
@@ -2154,6 +2185,25 @@ fn meta_thread(
                     nsql_catalog::table_detail(s, &schema, &table).map_err(err_s)
                 });
                 Resp::DetailMeta {
+                    gen,
+                    schema,
+                    table,
+                    r,
+                }
+            }
+            Req::TableEdit {
+                gen,
+                schema,
+                table,
+                checks,
+            } => {
+                if gen != cur_gen {
+                    continue;
+                }
+                let r = with_session(&mut session, |s| {
+                    nsql_catalog::table_edit_load(s, &schema, &table, &checks).map_err(err_s)
+                });
+                Resp::TableEdit {
                     gen,
                     schema,
                     table,
@@ -4285,6 +4335,18 @@ impl Explorer {
         });
     }
 
+    /// ★ 테이블 구조 편집기의 읽기(119 · 11-27) — 급한 세션(사용자가 탭을 열고 기다린다 · 적용 직전 재확인도 이 길).
+    pub(crate) fn request_table_edit(&mut self, schema: &str, table: &str, checks: Vec<String>) {
+        self.last_used = Instant::now();
+        self.suspended = false;
+        let _ = self.tx.send(Req::TableEdit {
+            gen: self.gen,
+            schema: schema.to_string(),
+            table: table.to_string(),
+            checks,
+        });
+    }
+
     /// ★ 루틴 인자 요청(T-317 · `EXEC proc |` 완성) — 모를 때 한 번 · 백그라운드 세션 · SQL Server 다른 DB 루틴은 `DB.스키마` 열쇠를 가른다.
     pub(crate) fn request_args(&mut self, id: nsql_run::meta::ObjId) {
         if self.dialect.is_none() || self.offline {
@@ -5095,6 +5157,23 @@ impl Explorer {
                         }
                         Err(e) => self.meta.mark_error(&schema, kind, &e, Self::now_secs()),
                     }
+                }
+                Resp::TableEdit {
+                    gen,
+                    schema,
+                    table,
+                    r,
+                } => {
+                    if gen != self.gen {
+                        continue;
+                    }
+                    self.actions.push(ExplorerAction::TableEditData {
+                        schema,
+                        table,
+                        r,
+                        server: None,
+                    });
+                    changed = true;
                 }
                 Resp::DetailMeta {
                     gen,
@@ -9130,6 +9209,7 @@ impl Explorer {
                         // ★ 파일 → 표 적재(89 §3-3): 표만(뷰·MV는 제외).
                         if o.kind == ObjectKind::Table {
                             items.push(CtxItem::item("import", t(Msg::MnImportData)));
+                            items.push(CtxItem::item("tbledit", t(Msg::MnEditStructure)));
                         }
                         if o.kind.has_source() {
                             items.push(CtxItem::item("source", t(Msg::ExpOpenSource)));
@@ -9217,6 +9297,16 @@ impl Explorer {
                             items.push(CtxItem::item("sizes", t(Msg::ExpLoadSizes)));
                         }
                         items.push(CtxItem::Separator);
+                        items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
+                    }
+                    // ★ Tables 폴더 = 새 테이블…(구조 편집기 119 · 11-27) + 폴더 공통.
+                    NodeKind::Folder {
+                        kind: ObjectKind::Table,
+                        ..
+                    } => {
+                        items.push(CtxItem::item("tblnew", t(Msg::MnNewTable)));
+                        items.push(CtxItem::Separator);
+                        items.push(CtxItem::item("copy", t(Msg::ExpCopyName)));
                         items.push(CtxItem::item("refresh", t(Msg::ExpRefresh)));
                     }
                     // 폴더(종류 · 하위 · 묶음)도 이름 복사(사용자 10-15 "모든 대상") — 전체 이름 = 주인 + 폴더 라벨.
@@ -9682,6 +9772,22 @@ impl Explorer {
                 if let NodeKind::Object(o) = self.nodes[i].kind.clone() {
                     self.actions.push(ExplorerAction::Import {
                         owner: o,
+                        server: None,
+                    });
+                }
+            }
+            "tbledit" => {
+                if let NodeKind::Object(o) = self.nodes[i].kind.clone() {
+                    self.actions.push(ExplorerAction::EditTable {
+                        owner: o,
+                        server: None,
+                    });
+                }
+            }
+            "tblnew" => {
+                if let NodeKind::Folder { schema, .. } = self.nodes[i].kind.clone() {
+                    self.actions.push(ExplorerAction::NewTable {
+                        schema,
                         server: None,
                     });
                 }

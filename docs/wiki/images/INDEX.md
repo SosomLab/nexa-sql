@@ -43,5 +43,6 @@ Full-window shots are 1280×831 with the window shadow trimmed; `detail-*` files
 
 | result-header-card.png | — (homepage) | Hover a result column header to see its source column, type and description |
 | detail-result-header-card.png | Data-Editing | Result column header card close-up |
+| table-editor.png | Table-Editor | Table editor: columns grid with a new (`+`) and a changed (`*`) row and the live DDL preview (captured 2026-11-27 on Linux · headless Debug build · SQLite demo file · 1280×800) |
 
 All planned screens are captured.

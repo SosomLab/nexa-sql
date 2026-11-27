@@ -1924,6 +1924,14 @@ impl App {
                 sqlprev_win::SqlPrevAction::Close => {
                     self.sqlprev_win.close();
                     self.sync_modal();
+                    // 적용 미리보기를 그냥 닫았다 = 적용하지 않는다.
+                    self.tbledit_apply_key = None;
+                }
+                // ★ 테이블 구조 편집기의 적용 미리보기 [적용](119 · 11-27) — 창을 닫고 그 스크립트를 실행한다.
+                sqlprev_win::SqlPrevAction::Execute => {
+                    self.sqlprev_win.close();
+                    self.sync_modal();
+                    self.tbledit_apply_go();
                 }
                 sqlprev_win::SqlPrevAction::None => {
                     if self.conn_modal && !self.modal_open() {
@@ -2508,6 +2516,27 @@ impl App {
             let tb = self.editors.preview_box("", &syntax);
             let was_open = self.sqlprev_win.is_open();
             self.sqlprev_win.open_plain(
+                el,
+                theme::window_theme(self.settings.theme_mode()),
+                owner.as_deref(),
+                title,
+                text,
+                tb,
+            );
+            if !was_open {
+                if let (Some(o), Some(c)) = (owner.as_deref(), self.sqlprev_win.window()) {
+                    winfocus::attach_child(o, c);
+                }
+            }
+            self.sync_modal();
+        }
+        // ★ 테이블 구조 편집기의 적용 미리보기(119 · 11-27) — 같은 창 부품 · 버튼만 [적용][복사][닫기].
+        if let Some((title, text)) = self.sqlprev_apply.take() {
+            let owner = self.window.clone();
+            let syntax = self.editors.syntax_for_title("preview.sql");
+            let tb = self.editors.preview_box("", &syntax);
+            let was_open = self.sqlprev_win.is_open();
+            self.sqlprev_win.open_apply(
                 el,
                 theme::window_theme(self.settings.theme_mode()),
                 owner.as_deref(),

@@ -637,6 +637,24 @@ impl App {
                     self.drop_request(owner, server);
                     changed = true;
                 }
+                // ★ 테이블 구조 편집기(119 · 11-27).
+                ExplorerAction::EditTable { owner, server } => {
+                    self.tbledit_open(&owner.schema, &owner.name, server);
+                    changed = true;
+                }
+                ExplorerAction::NewTable { schema, server } => {
+                    self.tbledit_new(&schema, server);
+                    changed = true;
+                }
+                ExplorerAction::TableEditData {
+                    schema,
+                    table,
+                    r,
+                    server,
+                } => {
+                    self.tbledit_data(&schema, &table, r, server.as_ref());
+                    changed = true;
+                }
                 // DDL 결과가 삭제 백업용이면 미리보기 창 대신 백업 흐름으로(10-01) · 비교용이면 비교 탭으로(T-283).
                 ExplorerAction::Preview { spec, r, .. } if self.drop_take_backup(&spec, &r) => {
                     changed = true;

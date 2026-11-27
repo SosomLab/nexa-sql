@@ -1,0 +1,14 @@
+[package]
+name = "nsql-ddl"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Table structure editing core — table model, diff, per-dialect ALTER/CREATE plan with risk levels (no deps · no table re-creation · docs/119)"
+
+[dependencies]
+
+[lints]
+workspace = true

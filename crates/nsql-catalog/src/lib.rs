@@ -1761,6 +1761,72 @@ pub fn object_size_detail(
     None
 }
 
+/// 테이블 구조 편집기(docs/119)가 한 번에 읽는 것: 컬럼 · 제약/인덱스/코멘트 · 위험 검사 질의의 행 수(질의와 같은 순서 ·
+/// 실패한 질의 = `None`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TableEditData {
+    pub cols: Vec<ColumnInfo>,
+    pub detail: TableDetail,
+    pub counts: Vec<Option<u64>>,
+}
+
+/// ★ 구조 편집기의 읽기 한 묶음(열기 · 새로 고침 · 적용 직전 재확인): `columns` + `table_detail` + `checks`의 `SELECT COUNT(*)`
+/// 들. 컬럼이 하나도 없으면(테이블이 없거나 볼 수 없다) 오류 — 빈 모델로 편집을 시작하게 두지 않는다.
+pub fn table_edit_load(
+    s: &mut dyn Session,
+    schema: &str,
+    table: &str,
+    checks: &[String],
+) -> Result<TableEditData, DbError> {
+    let mut cols = columns(s, schema, table)?;
+    if cols.is_empty() {
+        return Err(DbError {
+            code: None,
+            message: format!("table {schema}.{table} not found or not visible"),
+            position: None,
+        });
+    }
+    // Oracle: `columns()`는 기본값을 읽지 않는다(`data_default`가 LONG이라 목록 질의에서 뺐다) — 편집기는 기본값이 있어야
+    // "지금 값"을 보이고 지우기를 표현할 수 있으므로 테이블 하나 분량만 따로 읽는다(실패 = 빈 글 그대로 · 11-27 실서버).
+    if s.dialect() == Dialect::Oracle {
+        if let Ok(rs) = query(
+            s,
+            &format!(
+                "SELECT column_name, data_default FROM all_tab_columns WHERE owner = {} AND table_name = {}",
+                lit(schema),
+                lit(table)
+            ),
+        ) {
+            for r in &rs.rows {
+                let (name, def) = (col(r, 0), col(r, 1));
+                if let Some(c) = cols.iter_mut().find(|c| c.name == name) {
+                    // `MODIFY (c DEFAULT NULL)`로 지운 기본값은 사전에 글자 `NULL`로 남는다 = 기본값 없음과 같다.
+                    let def = def.trim();
+                    c.default = if def.eq_ignore_ascii_case("NULL") {
+                        String::new()
+                    } else {
+                        def.to_string()
+                    };
+                }
+            }
+        }
+    }
+    let detail = table_detail(s, schema, table)?;
+    let counts = checks
+        .iter()
+        .map(|sql| {
+            query(s, sql)
+                .ok()
+                .and_then(|rs| rs.rows.first().and_then(|r| r.first().and_then(value_u64)))
+        })
+        .collect();
+    Ok(TableEditData {
+        cols,
+        detail,
+        counts,
+    })
+}
+
 /// ★ 데이터베이스 용량(사용자 10-01 · SQL Server Databases 층 · 101 §4-1): 서버의 DB마다 (이름, 데이터 파일 바이트, 로그 파일 바이트).
 ///   SQL Server = `sys.master_files`(모든 DB · 페이지 8 KB · `VIEW ANY DEFINITION` 필요) → 권한 없으면 `sys.database_files`(현재 DB 하나).
 ///   MySQL = 스키마가 DB라 `object_sizes`가 맡는다 · 그 밖 방언 = 빈 목록(트리에 DB 층이 없다). 지연 로딩(우클릭 "용량 확인"에서만).

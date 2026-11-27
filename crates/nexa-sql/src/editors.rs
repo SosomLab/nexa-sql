@@ -161,6 +161,9 @@ pub(crate) struct Editors {
     /// **뷰 탭**(본문이 글 편집기가 아니라 호스트가 그리는 전용 뷰 — 확장 상세 등): 탭 id → 뷰 열쇠(예 `ext:<id>`).
     /// 탭 줄·전환·닫기는 보통 탭과 같고, 본문 그리기·입력만 호스트의 뷰가 맡는다.
     view_tabs: std::collections::HashMap<u64, String>,
+    /// 적용하지 않은 변경이 있는 뷰 탭(테이블 구조 편집기 119 · 11-27) — 탭의 미저장 **점만** 켠다. 저장할 파일이 없으므로
+    /// `is_unsaved`(저장 물음 · 종료 확인)에는 넣지 않는다.
+    view_dirty: std::collections::HashSet<u64>,
     /// ★ T-167 B5(10-30 · 69 §4-2): 객체 소스 탭의 문서 열쇠(탭 id → `DocKey::Object`) — 북마크가 "어느 서버의 어느 객체"에 붙는지 ·
     ///   호스트가 소스 탭을 만들 때 넣고 탭이 닫히면 걷힌다(`reap_views`).
     doc_objects: std::collections::HashMap<u64, nsql_bookmarks::DocKey>,
@@ -366,6 +369,7 @@ impl Editors {
             body: Rect::new(0, 0, 0, 0),
             side_reserve: 0,
             view_tabs: std::collections::HashMap::new(),
+            view_dirty: std::collections::HashSet::new(),
             doc_objects: std::collections::HashMap::new(),
             custom_titles: std::collections::HashSet::new(),
             large: std::collections::HashMap::new(),
@@ -1122,7 +1126,9 @@ impl Editors {
             .collect();
         self.tabs.set_title_colors(titles, &mut inv);
         // 닫기 상자 자리의 미저장 점(Sublime식 · 09-28) — 새 탭은 늘 · 파일 탭은 저장본과 다를 때.
-        let dirty: Vec<bool> = (0..self.titles.len()).map(|i| self.is_unsaved(i)).collect();
+        let dirty: Vec<bool> = (0..self.titles.len())
+            .map(|i| self.is_unsaved(i) || self.view_dirty.contains(&self.tab_id(i)))
+            .collect();
         self.shown_dirty = dirty.clone();
         self.tabs.set_dirty(dirty, &mut inv);
     }
@@ -2306,6 +2312,23 @@ impl Editors {
         }
     }
 
+    /// 열쇠가 맞는 뷰 탭의 미저장 점(적용 안 한 변경이 있다)을 켜고 끈다 — 탭 줄은 `refresh_dirty`가 다음 틱에 맞춘다.
+    pub(crate) fn set_view_dirty(&mut self, key: &str, on: bool) {
+        let id = self
+            .view_tabs
+            .iter()
+            .find(|(_, k)| k.as_str() == key)
+            .map(|(id, _)| *id);
+        if let Some(id) = id {
+            if on {
+                self.view_dirty.insert(id);
+            } else {
+                self.view_dirty.remove(&id);
+            }
+            self.refresh_dirty();
+        }
+    }
+
     /// 탭 `i`가 뷰 탭이면 그 열쇠(`ext:<id>` …) — 프로젝트 파일에 저장해 다시 열 때 같은 뷰로 복원(사용자 09-30).
     pub(crate) fn view_key_of(&self, i: usize) -> Option<String> {
         self.view_tabs.get(&self.tab_id(i)).cloned()
@@ -2366,6 +2389,7 @@ impl Editors {
     pub(crate) fn reap_views(&mut self) {
         let alive = &self.ids;
         self.view_tabs.retain(|id, _| alive.contains(id));
+        self.view_dirty.retain(|id| alive.contains(id));
         self.doc_objects.retain(|id, _| alive.contains(id));
         self.large.retain(|id, _| alive.contains(id));
         self.read_only.retain(|id| alive.contains(id));
@@ -2494,7 +2518,9 @@ impl Editors {
             .map(|i| self.shown_title(i))
             .collect();
         // 점(●)도 비교 — `is_unsaved`는 저장 지점이면 O(1) · 편집 뒤엔 세대당 1회 본문 비교(캐시).
-        let dirty: Vec<bool> = (0..self.titles.len()).map(|i| self.is_unsaved(i)).collect();
+        let dirty: Vec<bool> = (0..self.titles.len())
+            .map(|i| self.is_unsaved(i) || self.view_dirty.contains(&self.tab_id(i)))
+            .collect();
         if shown == self.shown_titles && dirty == self.shown_dirty {
             return false;
         }
@@ -2508,11 +2534,10 @@ impl Editors {
         // 미저장 표시는 닫기 자리의 **점**(Sublime식 · 09-28) — 제목 앞 `*`는 더 붙이지 않는다(사용자 09-28).
         // 미리보기 탭도 제목은 그대로 — 표시는 **색**(상단 줄·닫기 표시 = 미리보기색 · 09-28 사용자 "색으로 대체했으니 앞 표시 제거").
         let base = self.titles[i].clone();
-        // 읽기 전용 탭 표식(큰 파일 보기 · 일부만 열기) — ★ 확장 보기 탭(`ext:`)은 늘 읽기 전용이라 표식 없음(사용자 10-20).
-        let ext_view = self
-            .view_tabs
-            .get(&self.tab_id(i))
-            .is_some_and(|k| k.starts_with("ext:") || k.starts_with("ai."));
+        // 읽기 전용 탭 표식(큰 파일 보기 · 일부만 열기) — ★ 확장 보기 탭(`ext:`)은 늘 읽기 전용이라 표식 없음(사용자 10-20) · 구조 편집기 탭(`tbl:`)은 본문 상자만 읽기 전용이고 탭은 편집 화면이다.
+        let ext_view = self.view_tabs.get(&self.tab_id(i)).is_some_and(|k| {
+            k.starts_with("ext:") || k.starts_with("ai.") || k.starts_with("tbl:")
+        });
         let base = if self.loading.contains(&self.tab_id(i)) {
             format!("{base} …")
         } else if self.read_only.contains(&self.tab_id(i)) && !ext_view {

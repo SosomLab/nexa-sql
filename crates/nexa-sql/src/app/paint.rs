@@ -775,6 +775,26 @@ impl App {
                         }
                     }
                 }
+                // ★ 테이블 구조 편집기(119 · 11-27) = UI 글꼴 · 편집기 자리 전체.
+                None if self.tbledit_active() => {
+                    let vprefs = FontPrefs {
+                        base: SlotFont {
+                            size: ui_px,
+                            bold: false,
+                            italic: false,
+                        },
+                        ..FontPrefs::default()
+                    };
+                    let mut dc = RasterCtx::new(&mut *gfx, &self.ui_font, s)
+                        .clipped(self.frame_clip)
+                        .with_fonts(vprefs)
+                        .with_caret_on(caret_on);
+                    let bounds = self.editors.editor_bounds();
+                    if let Some(tab) = self.tbledit_key().and_then(|k| self.tbledits.get_mut(&k)) {
+                        tab.view.set_bounds(bounds, s);
+                        tab.view.paint(&mut dc, &th);
+                    }
+                }
                 // ★ 비교 탭(T-283 2단계) = 2-pane diff 뷰어(고정폭 글꼴 · 편집기 자리 전체).
                 None if diff_tab => {
                     let mut dc = RasterCtx::new(&mut *gfx, &self.mono_font, s)
@@ -1106,6 +1126,9 @@ impl App {
             // ★ git 덩어리 diff 팝업(C-1 후속 · 11-10) — 편집기 팝업 층.
             self.githunk.paint(&mut dc, &th);
             self.ext_view.paint_popup(&mut dc, &th);
+            if let Some(tab) = self.tbledit_key().and_then(|k| self.tbledits.get(&k)) {
+                tab.view.paint_popup(&mut dc, &th);
+            }
             if self.ai_view_active() || self.ai.side_rect.w > 0 {
                 self.ai_view.paint_popup(&mut dc, &th);
             }

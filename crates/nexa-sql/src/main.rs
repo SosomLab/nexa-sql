@@ -49,6 +49,7 @@ mod explorers;
 mod ext_panel;
 mod ext_view;
 mod output;
+mod tbledit_view;
 // 09-17 레인보우 플러그인 모듈 · 배선(설정→편집기 · 키맵 · 메뉴)은 다음 세션(T-119)
 mod ai;
 mod condbar;
@@ -347,6 +348,18 @@ struct App {
     )>,
     /// ★ 읽기 전용 글 창 요청(그리드 편집 SQL 미리보기 · 셀 값 보기 · docs/87): (제목, 본문).
     sqlprev_plain: Option<(String, String)>,
+    /// ★ 테이블 구조 편집기(119 · 11-27): 적용 미리보기 요청(제목 · 스크립트) — 창은 이벤트 루프에서 연다.
+    sqlprev_apply: Option<(String, String)>,
+    /// 열린 구조 편집기 탭(뷰 열쇠 `tbl:…` → 상태) — 탭을 닫으면 즉시 버린다(지연 생성 · 닫으면 0).
+    tbledits: std::collections::HashMap<String, app::tbledit::TbTab>,
+    /// 미리보기 창이 떠 있는 탭의 열쇠([적용]이 누구 것인지).
+    tbledit_apply_key: Option<String>,
+    /// 적용 중인 문장 열(한 번에 하나).
+    tbledit_run: Option<app::tbledit::TbRun>,
+    /// 새 테이블 탭 번호.
+    tbledit_seq: u32,
+    /// 적용 마무리 안내 — 완료 처리의 끝에서 상태줄에 쓴다(실행 요약에 덮이지 않게).
+    tbledit_note: Option<String>,
     /// ★ Import 창(89 §3-3 · T-236 B-3): 대상 (표 표기 · 파일 · 탐색기 칸의 서버) · 열 차례 · 취소 깃발 · 요청 번호.
     import_win: import_win::ImportWin,
     import_ctx: Option<app::import::ImportCtx>,
@@ -2079,6 +2092,12 @@ fn main() {
         sqlprev_win: sqlprev_win::SqlPrevWin::new(),
         sqlprev_pending: None,
         sqlprev_plain: None,
+        sqlprev_apply: None,
+        tbledits: std::collections::HashMap::new(),
+        tbledit_apply_key: None,
+        tbledit_run: None,
+        tbledit_seq: 0,
+        tbledit_note: None,
         import_win: import_win::ImportWin::new(),
         import_ctx: None,
         import_pending: false,

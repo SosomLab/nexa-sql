@@ -518,4 +518,5 @@
 | feat/explorer-tree-login-grid | 2026-09-18 | 2026-09-18 → main(삭제) | 4 | 탐색기 서버 루트 이어 붙이기(공용 스크롤) · 로그인 목록 열 조절/자동 맞춤 · 기본 크기 · 미니맵 기본 on · REF CURSOR 예제(57차) |
 | feat/session-modes | 2026-09-18 | 2026-09-18 → main(삭제) | 5 | ★ DR-34 세션 컨텍스트([52](52-session-modes.md)) — 공유 N · 전용 CONNECT · 개별 모드 · 통제 단일화 · 서버별 탐색기 · 세션 상태 추적 · CONNECT 파서 · 로그인 창 확장 결함(56차) |
 | wip/1122-bundle5 | 2026-11-22 | 2026-11-22 → main(삭제) | 1 | 묶음 5 = T-507 마무리(종료·프로젝트 닫기 확인) · 툴바 툴팁 단축키 · 떼어 낸 툴바 창 캡처 대상 · 시나리오 x·fw · **V1 미실행인 채 병합(사용자 지시)** = 다음 세션 첫 일(journal 11-22 §14) |
+| fix/1127-linux-check | 2026-11-27 | 2026-11-27 → main(삭제) | 1 | 11-27 Linux 점검 묶음(e4dc8ad6) = T-521 영어 UI 한글 누출 19줄 · T-522 Oracle 세그먼트 없는 테이블 용량 `0B` · Codex 모델 조회 자식 그룹 종료(Unix) · `scripts/verify.sh` `median()` mawk · `docs/57` §6-1 · 검증 = Linux verify full(journal 11-27 §4) |
 | main | 2026-09-12 | — | 1 | 착수(조사·골격·엔진) |

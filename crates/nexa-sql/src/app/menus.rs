@@ -1278,6 +1278,7 @@ impl App {
             "obj.menu" => self.obj_act(None),
             "obj.select_rows" => self.obj_act(Some("select")),
             "obj.source" => self.obj_act(Some("source")),
+            "obj.edit_structure" => self.obj_act(Some("tbledit")),
             "obj.copy_name" => self.obj_act(Some("copy")),
             "obj.refresh" => self.obj_act(Some("refresh")),
             "obj.refresh_meta" => self.obj_act(Some("refresh_meta")),

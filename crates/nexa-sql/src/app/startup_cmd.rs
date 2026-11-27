@@ -18,6 +18,10 @@ impl App {
         if self.ai_startup_cmd(id) {
             return;
         }
+        // ★ 테이블 구조 편집기(119 · 11-27): `tbledit.open:<스키마.테이블>` · `tbledit.set:…` · `tbledit.dump:<파일>` …(app/tbledit.rs).
+        if self.tbledit_cmd(id) {
+            return;
+        }
         // `conn.edit:<프로필>` = 로그인 창의 상세 폼을 그 프로필로 열고 두 칸을 바꾼 상태로(필수·바뀜 표식 캡처).
         // 자체 캡처용: 이름 바꾸기 입력 상자를 키 없이 연다(`tab.rename` = 편집기 탭 · `result.rename` = 결과 탭).
         // 자체 캡처용: 설정의 "찾아보기…"를 키·마우스 없이 누른다(`prefs.browse:<폴더 설정 키>`).

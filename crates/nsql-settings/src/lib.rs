@@ -2713,6 +2713,15 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(COMPARE_VIEW_OPTS),
         default: "diff",
     },
+    // ★ 테이블 구조 편집기(119 · D-322 · 11-27): 운영 접속 = allow(운영 가드와 함께 편집 · 기본) / deny(읽기 전용).
+    Entry {
+        key: "tbledit.prod",
+        cat: Msg::CatExplorer,
+        label: Msg::LblTbeditProd,
+        desc: Msg::DescTbeditProd,
+        kind: SettingKind::Choice(TBEDIT_PROD_OPTS),
+        default: "allow",
+    },
     // ★ CREATE 문 ↔ 실제 객체 비교(T-283 · 19 §6-3): 줄 안 공백 차이 무시.
     Entry {
         key: "compare.ignore_ws",
@@ -9347,6 +9356,7 @@ const FETCH_DISPLAY_OPTS: &[(&str, Msg)] = &[
     ("whole", Msg::ValFetchDisplayWhole),
 ];
 
+const TBEDIT_PROD_OPTS: &[(&str, Msg)] = &[("allow", Msg::OptTbeAllow), ("deny", Msg::OptTbeDeny)];
 const COMPARE_VIEW_OPTS: &[(&str, Msg)] = &[
     ("diff", Msg::ValCompareViewDiff),
     ("inline", Msg::ValCompareViewInline),

@@ -20,6 +20,7 @@ Supported databases = Oracle · SQL Server · PostgreSQL · SQLite · **MySQL/Ma
 | [Bookmarks](Bookmarks.md) | Keys · mnemonics · display (gutter · Minimap · end-of-line labels) · Bookmarks Panel · where they are stored · CLI `nsql bookmark` |
 | [Variables](Variables.md) | Bind/substitution variables · when variables inside variables are expanded (`vars.expand_at`) · Variables window |
 | [Explorers and filters](Explorers-and-Filters.md) | Filter toggles (Aa · ab · regex · path) · Type-ahead (type letters to jump to that name · Korean too) · selection rules (click on empty space) · DBMS icons · tab colors (name color of unsaved tabs) · Object Details panel |
+| [Table editor](Table-Editor.md) | Edit a table's columns, keys/constraints and indexes in a grid · live DDL preview · Apply with a re-check, risk checks and an object backup · stops at the first failing statement |
 | [Goto Anything (Ctrl+P)](Goto-Anything.md) | Fuzzy file-name search · `name:line` · prefixes `>` command · `:` line · `@` symbol · `%` content · `?` help · shortcuts shown in menus |
 | [Code completion and outline](Code-Completion-and-Outline.md) | Completion popup (triggers · candidates by context · matching/ordering rules · settings) · Outline panel · Goto Symbol (Ctrl+R) |
 | [Editing data in the result grid](Data-Editing.md) | When editing is possible · row identity levels (key · hidden key columns · ROWID · all columns) · keys · display · safety rules for applying (pre-check · one row · rollback) · refresh after applying · concurrency · settings |

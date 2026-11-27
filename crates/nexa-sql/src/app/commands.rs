@@ -129,6 +129,7 @@ pub(crate) const PALETTE: &[PalCmd] = &[
     p("edit.skip_occurrence", Msg::MnEdit, Msg::MnSkipOccurrence),
     p("obj.reveal", Msg::MnEdit, Msg::MnObjLinkReveal),
     p("obj.info", Msg::MnEdit, Msg::MnObjInfoTab),
+    p("obj.edit_structure", Msg::MnEdit, Msg::MnEditStructure),
     p("obj.rows", Msg::MnEdit, Msg::MnObjRows),
     p("view.zoom_in", Msg::MnView, Msg::MnZoomIn),
     p("view.zoom_out", Msg::MnView, Msg::MnZoomOut),
