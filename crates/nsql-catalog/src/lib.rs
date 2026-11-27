@@ -1789,31 +1789,35 @@ pub struct KeyExtra {
     /// ★ 편집기가 표현하지 못하는 속성이 있다(지연 검사 DEFERRABLE · 비활성/NOT VALID/NOCHECK · MATCH FULL · NOT FOR REPLICATION) —
     /// 이 제약을 지우고 다시 만들면 그 속성이 조용히 사라지므로 편집기는 **이름·삭제만** 허용한다(11-28 실서버 3방언 확인).
     pub locked: bool,
+    /// 제약 상태 글자 묶음(SQL Server만 · 생성 DDL이 상태를 그대로 다시 만들 때 쓴다 T-527): `D` 비활성 · `T` 신뢰 안 됨 ·
+    /// `R` NOT FOR REPLICATION. 다른 방언 = 빈 글.
+    pub state: String,
 }
 
-/// 외래 키 규칙 · 체크 식을 한 질의로(방언별 사전) — 행 = (이름, 종류 R/C, 삭제 규칙, 식, 갱신 규칙, 잠금 Y/N, 다른 스키마 대상).
+/// 외래 키 규칙 · 체크 식을 한 질의로(방언별 사전) — 행 = (이름, 종류 R/C, 삭제 규칙, 식, 갱신 규칙, 잠금 Y/N, 다른 스키마 대상,
+/// 상태 글자).
 /// SQLite·그 밖 = `None`.
 pub(crate) fn key_extras(s: &mut dyn Session, schema: &str, table: &str) -> Option<Vec<KeyExtra>> {
     let dialect = s.dialect();
     let sql = match dialect {
         Dialect::Oracle => format!(
-            "SELECT constraint_name, constraint_type, delete_rule, search_condition, '', CASE WHEN deferrable = 'DEFERRABLE' OR status = 'DISABLED' OR validated = 'NOT VALIDATED' THEN 'Y' ELSE 'N' END, '' FROM all_constraints WHERE owner = {} AND table_name = {} AND constraint_type IN ('R', 'C') AND generated = 'USER NAME'",
+            "SELECT constraint_name, constraint_type, delete_rule, search_condition, '', CASE WHEN deferrable = 'DEFERRABLE' OR status = 'DISABLED' OR validated = 'NOT VALIDATED' THEN 'Y' ELSE 'N' END, '', '' FROM all_constraints WHERE owner = {} AND table_name = {} AND constraint_type IN ('R', 'C') AND generated = 'USER NAME'",
             lit(schema),
             lit(table)
         ),
         Dialect::Postgres => format!(
-            "SELECT con.conname, CASE con.contype WHEN 'f' THEN 'R' ELSE 'C' END, CASE con.confdeltype WHEN 'c' THEN 'CASCADE' WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' WHEN 'r' THEN 'RESTRICT' ELSE '' END, CASE WHEN con.contype = 'c' THEN pg_get_expr(con.conbin, con.conrelid) ELSE '' END, CASE con.confupdtype WHEN 'c' THEN 'CASCADE' WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' WHEN 'r' THEN 'RESTRICT' ELSE '' END, CASE WHEN con.condeferrable OR NOT con.convalidated OR con.confmatchtype = 'f' THEN 'Y' ELSE 'N' END, CASE WHEN con.contype = 'f' AND rn.nspname <> n.nspname THEN rn.nspname || '.' || rt.relname ELSE '' END FROM pg_constraint con JOIN pg_class t ON t.oid = con.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace LEFT JOIN pg_class rt ON rt.oid = con.confrelid LEFT JOIN pg_namespace rn ON rn.oid = rt.relnamespace WHERE n.nspname = {} AND t.relname = {} AND con.contype IN ('f', 'c')",
+            "SELECT con.conname, CASE con.contype WHEN 'f' THEN 'R' ELSE 'C' END, CASE con.confdeltype WHEN 'c' THEN 'CASCADE' WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' WHEN 'r' THEN 'RESTRICT' ELSE '' END, CASE WHEN con.contype = 'c' THEN pg_get_expr(con.conbin, con.conrelid) ELSE '' END, CASE con.confupdtype WHEN 'c' THEN 'CASCADE' WHEN 'n' THEN 'SET NULL' WHEN 'd' THEN 'SET DEFAULT' WHEN 'r' THEN 'RESTRICT' ELSE '' END, CASE WHEN con.condeferrable OR NOT con.convalidated OR con.confmatchtype = 'f' THEN 'Y' ELSE 'N' END, CASE WHEN con.contype = 'f' AND rn.nspname <> n.nspname THEN rn.nspname || '.' || rt.relname ELSE '' END, '' FROM pg_constraint con JOIN pg_class t ON t.oid = con.conrelid JOIN pg_namespace n ON n.oid = t.relnamespace LEFT JOIN pg_class rt ON rt.oid = con.confrelid LEFT JOIN pg_namespace rn ON rn.oid = rt.relnamespace WHERE n.nspname = {} AND t.relname = {} AND con.contype IN ('f', 'c')",
             lit(schema),
             lit(table)
         ),
         Dialect::Mssql => {
             let obj = lit(&format!("{}.{}", quote_ident(dialect, schema), quote_ident(dialect, table)));
             format!(
-                "SELECT fk.name, 'R', REPLACE(fk.delete_referential_action_desc, '_', ' '), '', REPLACE(fk.update_referential_action_desc, '_', ' '), CASE WHEN fk.is_disabled = 1 OR fk.is_not_trusted = 1 OR fk.is_not_for_replication = 1 THEN 'Y' ELSE 'N' END, CASE WHEN OBJECT_SCHEMA_NAME(fk.referenced_object_id) <> OBJECT_SCHEMA_NAME(fk.parent_object_id) THEN OBJECT_SCHEMA_NAME(fk.referenced_object_id) + '.' + OBJECT_NAME(fk.referenced_object_id) ELSE '' END FROM sys.foreign_keys fk WHERE fk.parent_object_id = OBJECT_ID({obj}) UNION ALL SELECT cc.name, 'C', '', cc.definition, '', CASE WHEN cc.is_disabled = 1 OR cc.is_not_trusted = 1 OR cc.is_not_for_replication = 1 THEN 'Y' ELSE 'N' END, '' FROM sys.check_constraints cc WHERE cc.parent_object_id = OBJECT_ID({obj})"
+                "SELECT fk.name, 'R', REPLACE(fk.delete_referential_action_desc, '_', ' '), '', REPLACE(fk.update_referential_action_desc, '_', ' '), CASE WHEN fk.is_disabled = 1 OR fk.is_not_trusted = 1 OR fk.is_not_for_replication = 1 THEN 'Y' ELSE 'N' END, CASE WHEN OBJECT_SCHEMA_NAME(fk.referenced_object_id) <> OBJECT_SCHEMA_NAME(fk.parent_object_id) THEN OBJECT_SCHEMA_NAME(fk.referenced_object_id) + '.' + OBJECT_NAME(fk.referenced_object_id) ELSE '' END, CASE WHEN fk.is_disabled = 1 THEN 'D' ELSE '' END + CASE WHEN fk.is_not_trusted = 1 THEN 'T' ELSE '' END + CASE WHEN fk.is_not_for_replication = 1 THEN 'R' ELSE '' END FROM sys.foreign_keys fk WHERE fk.parent_object_id = OBJECT_ID({obj}) UNION ALL SELECT cc.name, 'C', '', cc.definition, '', CASE WHEN cc.is_disabled = 1 OR cc.is_not_trusted = 1 OR cc.is_not_for_replication = 1 THEN 'Y' ELSE 'N' END, '', CASE WHEN cc.is_disabled = 1 THEN 'D' ELSE '' END + CASE WHEN cc.is_not_trusted = 1 THEN 'T' ELSE '' END + CASE WHEN cc.is_not_for_replication = 1 THEN 'R' ELSE '' END FROM sys.check_constraints cc WHERE cc.parent_object_id = OBJECT_ID({obj})"
             )
         }
         Dialect::Mysql => format!(
-            "SELECT rc.constraint_name, 'R', rc.delete_rule, '', rc.update_rule, 'N', CASE WHEN rc.unique_constraint_schema <> rc.constraint_schema THEN CONCAT(rc.unique_constraint_schema, '.', rc.referenced_table_name) ELSE '' END FROM information_schema.referential_constraints rc WHERE rc.constraint_schema = {sc} AND rc.table_name = {tb} UNION ALL SELECT tc.constraint_name, 'C', '', cc.check_clause, '', CASE WHEN tc.enforced = 'NO' THEN 'Y' ELSE 'N' END, '' FROM information_schema.table_constraints tc JOIN information_schema.check_constraints cc ON cc.constraint_schema = tc.constraint_schema AND cc.constraint_name = tc.constraint_name WHERE tc.table_schema = {sc} AND tc.table_name = {tb} AND tc.constraint_type = 'CHECK'",
+            "SELECT rc.constraint_name, 'R', rc.delete_rule, '', rc.update_rule, 'N', CASE WHEN rc.unique_constraint_schema <> rc.constraint_schema THEN CONCAT(rc.unique_constraint_schema, '.', rc.referenced_table_name) ELSE '' END, '' FROM information_schema.referential_constraints rc WHERE rc.constraint_schema = {sc} AND rc.table_name = {tb} UNION ALL SELECT tc.constraint_name, 'C', '', cc.check_clause, '', CASE WHEN tc.enforced = 'NO' THEN 'Y' ELSE 'N' END, '', '' FROM information_schema.table_constraints tc JOIN information_schema.check_constraints cc ON cc.constraint_schema = tc.constraint_schema AND cc.constraint_name = tc.constraint_name WHERE tc.table_schema = {sc} AND tc.table_name = {tb} AND tc.constraint_type = 'CHECK'",
             sc = lit(schema),
             tb = lit(table)
         ),
@@ -1839,6 +1843,7 @@ pub(crate) fn key_extras(s: &mut dyn Session, schema: &str, table: &str) -> Opti
                 on_update: rule(col(r, 4)),
                 locked: col(r, 5).trim() == "Y",
                 ref_table: col(r, 6).trim().to_string(),
+                state: col(r, 7).trim().to_string(),
             })
             .collect(),
     )

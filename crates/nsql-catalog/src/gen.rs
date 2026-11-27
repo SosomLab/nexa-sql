@@ -1240,21 +1240,26 @@ fn close_table_body(
     mut lines: Vec<String>,
     out: &mut String,
 ) -> Result<(), DbError> {
-    let mut fks: Vec<String> = Vec::new();
+    let extras = extras_for(s, d, o, &det.keys);
+    // 표 뒤에 낼 문장들(분리한 외래 키 · 인라인으로 못 만드는 상태의 제약 · 비활성 표시).
+    let mut after: Vec<String> = Vec::new();
     for k in &det.keys {
-        if let Some(line) = constraint_line(s, d, o, k)? {
-            let item = format!("CONSTRAINT {} {line}", ident(d, &k.name));
-            if k.kind == 'R' && separate_fk {
-                fks.push(item);
+        if let Some(line) = constraint_line(s, d, o, k, extras.as_deref())? {
+            let name = ident(d, &k.name);
+            let (inline_ok, add, tail) =
+                key_stmts(qn, &name, &line, key_state(extras.as_deref(), k));
+            if (k.kind == 'R' && separate_fk) || !inline_ok {
+                after.push(add);
             } else {
-                lines.push(format!("\t{item}"));
+                lines.push(format!("\tCONSTRAINT {name} {line}"));
             }
+            after.extend(tail);
         }
     }
     out.push_str(&lines.join(",\n"));
     out.push_str("\n);\n");
-    for fk in &fks {
-        out.push_str(&format!("ALTER TABLE {qn} ADD {fk};\n"));
+    for st in &after {
+        out.push_str(st);
     }
     Ok(())
 }
@@ -1517,12 +1522,17 @@ fn table_with_keys(s: &mut dyn Session, d: Dialect, o: &ObjectInfo) -> Result<St
     let mut out = table_ddl(s, &o.schema, &o.name)?;
     let det = table_detail(s, &o.schema, &o.name)?;
     let qn = q(d, o);
+    let extras = extras_for(s, d, o, &det.keys);
     for k in &det.keys {
-        if let Some(line) = constraint_line(s, d, o, k)? {
-            out.push_str(&format!(
-                "ALTER TABLE {qn} ADD CONSTRAINT {} {line};\n",
-                ident(d, &k.name)
-            ));
+        if let Some(line) = constraint_line(s, d, o, k, extras.as_deref())? {
+            let (_, add, tail) = key_stmts(
+                &qn,
+                &ident(d, &k.name),
+                &line,
+                key_state(extras.as_deref(), k),
+            );
+            out.push_str(&add);
+            out.push_str(&tail.unwrap_or_default());
         }
     }
     let key_names: Vec<&str> = det.keys.iter().map(|k| k.name.as_str()).collect();
@@ -1539,6 +1549,46 @@ fn table_with_keys(s: &mut dyn Session, d: Dialect, o: &ObjectInfo) -> Result<St
         ));
     }
     Ok(out)
+}
+
+/// 제약 줄들을 만들기 전에 덧붙은 속성(규칙 · 상태)을 **한 번** 읽는다(T-527 · 종전 = 외래 키 줄마다 다시 질의). 외래 키·체크가
+/// 하나도 없으면 묻지 않는다 · PostgreSQL은 서버가 정의를 통째로 주므로 묻지 않는다.
+fn extras_for(
+    s: &mut dyn Session,
+    d: Dialect,
+    o: &ObjectInfo,
+    keys: &[KeyDef],
+) -> Option<Vec<crate::KeyExtra>> {
+    if d == Dialect::Postgres || !keys.iter().any(|k| matches!(k.kind, 'R' | 'C')) {
+        return None;
+    }
+    crate::key_extras(s, &o.schema, &o.name)
+}
+
+/// 제약 하나를 다시 만드는 문장들(SQL Server 상태 보존 · T-527 · 실측 = docs/journal 11-28): `state` 글자 = `D` 비활성 · `T` 신뢰 안 됨 ·
+/// `R` NOT FOR REPLICATION(본문에 이미 실렸다). 돌려주는 것 = (CREATE TABLE 안에 인라인으로 둘 수 있는가, `ALTER … ADD` 문장, 뒤따르는 문장).
+/// - 신뢰 안 됨(복제 제외가 아닌 것) = `WITH NOCHECK ADD`로만 만들 수 있다 → 인라인 불가.
+/// - 비활성 = 만든 뒤 `NOCHECK CONSTRAINT`.
+/// - 그 밖 방언·상태 없음 = 종전 문장 그대로.
+fn key_stmts(qn: &str, name: &str, body: &str, state: &str) -> (bool, String, Option<String>) {
+    let (disabled, untrusted, nfr) = (
+        state.contains('D'),
+        state.contains('T'),
+        state.contains('R'),
+    );
+    let with_nocheck = untrusted && !nfr;
+    let add = format!(
+        "ALTER TABLE {qn} {}ADD CONSTRAINT {name} {body};\n",
+        if with_nocheck { "WITH NOCHECK " } else { "" }
+    );
+    let after = disabled.then(|| format!("ALTER TABLE {qn} NOCHECK CONSTRAINT {name};\n"));
+    (!with_nocheck, add, after)
+}
+
+fn key_state<'a>(extras: Option<&'a [crate::KeyExtra]>, k: &KeyDef) -> &'a str {
+    extras
+        .and_then(|x| x.iter().find(|e| e.name == k.name))
+        .map_or("", |e| e.state.as_str())
 }
 
 /// 외래 키 규칙 꼬리(` ON DELETE x ON UPDATE y` · 빈 값 = 생략 · Oracle은 갱신 규칙이 문법에 없다). 순수.
@@ -1559,7 +1609,11 @@ fn constraint_line(
     d: Dialect,
     o: &ObjectInfo,
     k: &KeyDef,
+    extras: Option<&[crate::KeyExtra]>,
 ) -> Result<Option<String>, DbError> {
+    let extra = extras.and_then(|x| x.iter().find(|e| e.name == k.name));
+    // SQL Server `NOT FOR REPLICATION`(T-527): 외래 키 = 맨 끝 · 체크 = `CHECK` 낱말과 식 사이.
+    let nfr = d == Dialect::Mssql && extra.is_some_and(|e| e.state.contains('R'));
     if d == Dialect::Postgres {
         let sql = format!(
             "SELECT pg_get_constraintdef(oid, true) FROM pg_constraint WHERE conname = {} AND conrelid = {}::regclass",
@@ -1607,10 +1661,11 @@ fn constraint_line(
             };
             // ★ 삭제·갱신 규칙(T-526 · 11-28 · 보수적 생성 100 §5): 이 길(서버가 DDL을 만들어 주지 않는 방언)은 규칙을 싣지 않아
             //   생성 DDL·객체 백업으로 다시 만들면 `ON DELETE CASCADE`가 조용히 사라졌다 → 방언 사전에서 읽어 붙인다(못 읽으면 종전대로).
-            if let Some(x) = crate::key_extras(s, &o.schema, &o.name) {
-                if let Some(e) = x.iter().find(|e| e.kind == 'R' && e.name == k.name) {
-                    body.push_str(&fk_rules(d, &e.on_delete, &e.on_update));
-                }
+            if let Some(e) = extra.filter(|e| e.kind == 'R') {
+                body.push_str(&fk_rules(d, &e.on_delete, &e.on_update));
+            }
+            if nfr {
+                body.push_str(" NOT FOR REPLICATION");
             }
             body
         }
@@ -1626,7 +1681,11 @@ fn constraint_line(
                 if def.is_empty() {
                     return Ok(None);
                 }
-                format!("CHECK {def}")
+                if nfr {
+                    format!("CHECK NOT FOR REPLICATION {def}")
+                } else {
+                    format!("CHECK {def}")
+                }
             } else {
                 return Ok(None);
             }
@@ -1753,12 +1812,17 @@ fn sub_ddl(
             let Some(k) = det.keys.iter().find(|k| k.name.eq_ignore_ascii_case(name)) else {
                 return Err(no_ddl(o));
             };
-            match constraint_line(s, d, o, k)? {
-                Some(line) => Ok(format!(
-                    "ALTER TABLE {} ADD CONSTRAINT {} {line};\n",
-                    q(d, o),
-                    ident(d, name)
-                )),
+            let extras = extras_for(s, d, o, std::slice::from_ref(k));
+            match constraint_line(s, d, o, k, extras.as_deref())? {
+                Some(line) => {
+                    let (_, add, tail) = key_stmts(
+                        &q(d, o),
+                        &ident(d, name),
+                        &line,
+                        key_state(extras.as_deref(), k),
+                    );
+                    Ok(format!("{add}{}", tail.unwrap_or_default()))
+                }
                 None => Err(no_ddl(o)),
             }
         }
@@ -1802,12 +1866,15 @@ fn sub_ddl(
                 return Err(no_ddl(o));
             }
             if let Some(k) = det.keys.iter().find(|k| k.name.eq_ignore_ascii_case(name)) {
-                if let Some(line) = constraint_line(s, d, o, k)? {
-                    return Ok(format!(
-                        "ALTER TABLE {} ADD CONSTRAINT {} {line};\n",
-                        q(d, o),
-                        ident(d, name)
-                    ));
+                let extras = extras_for(s, d, o, std::slice::from_ref(k));
+                if let Some(line) = constraint_line(s, d, o, k, extras.as_deref())? {
+                    let (_, add, tail) = key_stmts(
+                        &q(d, o),
+                        &ident(d, name),
+                        &line,
+                        key_state(extras.as_deref(), k),
+                    );
+                    return Ok(format!("{add}{}", tail.unwrap_or_default()));
                 }
             }
             Err(no_ddl(o))
@@ -1817,6 +1884,42 @@ fn sub_ddl(
 
 #[cfg(test)]
 mod tests {
+    /// 실측한 다섯 상태(비활성, 신뢰 안 됨, 복제 제외) → 문장(T-527 · 조건별 독립 영향).
+    #[test]
+    fn key_stmts_reproduce_sql_server_states() {
+        let f = |st: &str| key_stmts("dbo.T", "FK1", "FOREIGN KEY (a) REFERENCES dbo.P (id)", st);
+        // (0,0,0) = 종전 문장 그대로 · 인라인 가능.
+        assert_eq!(
+            f(""),
+            (
+                true,
+                "ALTER TABLE dbo.T ADD CONSTRAINT FK1 FOREIGN KEY (a) REFERENCES dbo.P (id);\n"
+                    .to_string(),
+                None
+            )
+        );
+        // (0,1,0) = WITH NOCHECK로만 · 인라인 불가.
+        let (inline, add, tail) = f("T");
+        assert!(
+            !inline
+                && add.starts_with("ALTER TABLE dbo.T WITH NOCHECK ADD CONSTRAINT FK1 ")
+                && tail.is_none()
+        );
+        // (1,1,0) = WITH NOCHECK + 뒤에 NOCHECK CONSTRAINT.
+        let (inline, add, tail) = f("DT");
+        assert!(!inline && add.contains(" WITH NOCHECK ADD "));
+        assert_eq!(
+            tail.as_deref(),
+            Some("ALTER TABLE dbo.T NOCHECK CONSTRAINT FK1;\n")
+        );
+        // (0,1,1) = 본문의 NOT FOR REPLICATION이면 충분 · 인라인 가능 · WITH NOCHECK 없음.
+        let (inline, add, tail) = f("TR");
+        assert!(inline && !add.contains("WITH NOCHECK") && tail.is_none());
+        // (1,1,1) = 인라인 가능 + 뒤에 NOCHECK CONSTRAINT.
+        let (inline, add, tail) = f("DTR");
+        assert!(inline && !add.contains("WITH NOCHECK") && tail.is_some());
+    }
+
     #[test]
     fn fk_rules_tail() {
         assert_eq!(fk_rules(Dialect::Mssql, "", ""), "");
