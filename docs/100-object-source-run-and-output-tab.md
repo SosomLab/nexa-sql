@@ -120,7 +120,7 @@
 ## 5. ★ 객체 소스 읽기 원칙 + DBeaver 대조(09-30 밤 · 사용자 "최종 결과에 영향을 줄 수 있으면 보수적으로 · 다른 DBMS도 · DBeaver 기능을 검토해 유사하게")
 
 ### 5-1. 원칙(불변식 · CLAUDE.md §3 · 61 §1-11)
-**소스 열기·DDL 생성이 만든 본문을 그대로 실행했을 때 서버의 최종 결과(객체의 소유 스키마 · 컬럼 이름/순서 · 참조 대상 · 상태)가 원본과 달라질 수 있으면, 사전(데이터 딕셔너리)의 정의를 명시해 달라질 수 없게 만든다.** 편의(짧은 본문)보다 결과 보존이 우선. 항목 = ① 이름의 소유 스키마 한정 ② 뷰의 컬럼 목록 ③ 트리거·인덱스·제약의 참조 테이블 한정 ④ 상태(DISABLED · FORCE) ⑤ 종결자. 설정 `explorer.source_schema`(기본 켬)를 끄면 ①③만 풀린다(사용자 선택).
+**소스 열기·DDL 생성이 만든 본문을 그대로 실행했을 때 서버의 최종 결과(객체의 소유 스키마 · 컬럼 이름/순서 · 참조 대상 · 상태)가 원본과 달라질 수 있으면, 사전(데이터 딕셔너리)의 정의를 명시해 달라질 수 없게 만든다.** 편의(짧은 본문)보다 결과 보존이 우선. 항목 = ① 이름의 소유 스키마 한정 ② 뷰의 컬럼 목록 ③ 트리거·인덱스·제약의 참조 테이블 한정 ④ 상태(DISABLED · FORCE) ⑤ 종결자 ⑥ 제약의 동작 규칙(FK `ON DELETE` · `ON UPDATE` · 11-28 T-526). 설정 `explorer.source_schema`(기본 켬)를 끄면 ①③만 풀린다(사용자 선택).
 
 - ★ **11-10 조용한 손실 금지 사례(D-479 · [journal 11-10 §15](journal/2026-11-10.md))** = "소스 전체를 한 단위로 실행"(F5)은 드라이버가 받은 문자열 **전부**를 실행하거나 오류를 내야 한다 — SQLite에서 rusqlite `prepare`가 첫 문장만 실행하고 나머지를 버려 `DROP VIEW …; CREATE VIEW …` 본문이 뷰를 지운 채 "완료"로 끝났다(8b069b69 = 비조회는 `execute_batch` · 조회/바인드 꼬리는 오류) · 새 드라이버·실행 경로는 "여러 문장 본문을 한 번에 넘겼을 때 전부 실행 또는 명시 오류"를 시험으로 확인한다.
 
@@ -138,8 +138,11 @@
 | MySQL 뷰·테이블 | `SHOW CREATE`(DB 한정됨) | 같음 |
 | MySQL 루틴·트리거 | `SHOW CREATE`(이름에 DB 없음 = 현재 DB) | 같음 + **`\`db\`.` 한정 + 트리거 `ON \`db\`.\`t\``**(`qualify_mysql_header`) |
 | SQLite | `sqlite_master.sql` 원문 | 같음(단일 스키마) |
+| 테이블 DDL의 FK 삭제 · 갱신 규칙(11-28 · T-526) | 조사하지 않음 | Oracle = `GET_DDL`에 포함(갱신 규칙은 문법에 없음) · PostgreSQL = `pg_get_constraintdef`에 포함 · **SQL Server · MySQL(자체 조립 길 `constraint_line`) = 사전 질의(`key_extras`)로 읽어 ` ON DELETE x ON UPDATE y`를 붙임**(`fk_rules` · `NO ACTION` = 꼬리 없음 · 못 읽으면 종전대로) · SQLite = 원문 |
 
 순수 함수 넷 + 시험: `normalize_plsql_header`(11) · `qualify_on_table` · `qualify_tsql_header` · `qualify_mysql_header`(`conservative_qualification_helpers`). Oracle 전 유형 왕복 = `scripts/oracle-ddl-e2e.sh` 67/67(한정 형태 기대값 · `-s <OWNER>`).
+
+FK 규칙(T-526 · 11-28 · [journal 11-28 §3](journal/2026-11-28.md)): 종전에는 자체 조립 길의 FK 줄이 `FOREIGN KEY (…) REFERENCES 대상 (컬럼)`뿐이라 그 DDL로 다시 만들면 규칙이 `NO ACTION`으로 바뀌었다 → 순수 함수 `fk_rules` + 시험 `fk_rules_tail` · 실서버 왕복(생성 DDL을 다른 이름으로 실행 → 카탈로그의 규칙이 원본과 같은지) = SQL Server ✓ · Oracle ✓ · PostgreSQL ✓ · MySQL / MariaDB 미확인(환경 없음) · 객체 백업 파일도 같은 생성기라 같은 줄이 나온다(3방언 확인) · 남은 격차 = 자체 조립 길이 제약 상태(비활성 · 미검증 · `NOT FOR REPLICATION`)를 싣지 않음(④ · **T-527** · 코드 읽기).
 
 ### 5-3. 남은 격차(T-268) — ✅ 10-01 대부분 반영(SQL Server 트리거 `ON` · PG 함수 참조 · GET_DDL 폴백 · PG/MSSQL 왕복 E2E `scripts/dbms-source-e2e.sh` 33/33 · CLI `qualify=off`) · 남음 = MySQL 실서버 왕복(프로필 없음)
 - SQL Server 트리거의 `ON table` 한정(`sys.triggers.parent_id`로 부모 표 알기) · MSSQL 뷰의 컬럼 목록(저장 정의 그대로 = DBeaver와 같음 · 결과 보존은 됨).

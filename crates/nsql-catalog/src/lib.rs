@@ -1793,7 +1793,7 @@ pub struct KeyExtra {
 
 /// 외래 키 규칙 · 체크 식을 한 질의로(방언별 사전) — 행 = (이름, 종류 R/C, 삭제 규칙, 식, 갱신 규칙, 잠금 Y/N, 다른 스키마 대상).
 /// SQLite·그 밖 = `None`.
-fn key_extras(s: &mut dyn Session, schema: &str, table: &str) -> Option<Vec<KeyExtra>> {
+pub(crate) fn key_extras(s: &mut dyn Session, schema: &str, table: &str) -> Option<Vec<KeyExtra>> {
     let dialect = s.dialect();
     let sql = match dialect {
         Dialect::Oracle => format!(

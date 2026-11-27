@@ -1541,6 +1541,18 @@ fn table_with_keys(s: &mut dyn Session, d: Dialect, o: &ObjectInfo) -> Result<St
     Ok(out)
 }
 
+/// 외래 키 규칙 꼬리(` ON DELETE x ON UPDATE y` · 빈 값 = 생략 · Oracle은 갱신 규칙이 문법에 없다). 순수.
+fn fk_rules(d: Dialect, on_delete: &str, on_update: &str) -> String {
+    let mut s = String::new();
+    if !on_delete.is_empty() {
+        s.push_str(&format!(" ON DELETE {on_delete}"));
+    }
+    if !on_update.is_empty() && d != Dialect::Oracle {
+        s.push_str(&format!(" ON UPDATE {on_update}"));
+    }
+    s
+}
+
 /// 제약 본문(`PRIMARY KEY (a, b)` · `UNIQUE (…)` · `FOREIGN KEY (…) REFERENCES t (…)` · `CHECK (…)`) — 방언 사전에서 정확한 것을 우선.
 fn constraint_line(
     s: &mut dyn Session,
@@ -1585,14 +1597,22 @@ fn constraint_line(
                     target,
                 )
             };
-            if rcols.is_empty() {
+            let mut body = if rcols.is_empty() {
                 format!("FOREIGN KEY ({}) REFERENCES {rt}", cols.join(", "))
             } else {
                 format!(
                     "FOREIGN KEY ({}) REFERENCES {rt} ({rcols})",
                     cols.join(", ")
                 )
+            };
+            // ★ 삭제·갱신 규칙(T-526 · 11-28 · 보수적 생성 100 §5): 이 길(서버가 DDL을 만들어 주지 않는 방언)은 규칙을 싣지 않아
+            //   생성 DDL·객체 백업으로 다시 만들면 `ON DELETE CASCADE`가 조용히 사라졌다 → 방언 사전에서 읽어 붙인다(못 읽으면 종전대로).
+            if let Some(x) = crate::key_extras(s, &o.schema, &o.name) {
+                if let Some(e) = x.iter().find(|e| e.kind == 'R' && e.name == k.name) {
+                    body.push_str(&fk_rules(d, &e.on_delete, &e.on_update));
+                }
             }
+            body
         }
         _ => {
             if d == Dialect::Mssql {
@@ -1797,6 +1817,24 @@ fn sub_ddl(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fk_rules_tail() {
+        assert_eq!(fk_rules(Dialect::Mssql, "", ""), "");
+        assert_eq!(
+            fk_rules(Dialect::Mssql, "CASCADE", ""),
+            " ON DELETE CASCADE"
+        );
+        assert_eq!(
+            fk_rules(Dialect::Mysql, "SET NULL", "CASCADE"),
+            " ON DELETE SET NULL ON UPDATE CASCADE"
+        );
+        // Oracle에는 갱신 규칙 문법이 없다.
+        assert_eq!(
+            fk_rules(Dialect::Oracle, "CASCADE", "CASCADE"),
+            " ON DELETE CASCADE"
+        );
+    }
+
     /// 바인드 목록 주석(09-28): 등장 순 · 중복 제거 · 문자열/주석/`::` 제외 · 머리/꼬리/둘 다/끔.
     #[test]
     fn bind_note_lists_binds_in_order() {
