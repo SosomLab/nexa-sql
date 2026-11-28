@@ -286,6 +286,7 @@
 > **부하원 보강(10-30 181차 · T-110 2-3)**: 같은 `nsql-git` 스레드가 `editor.minimap_git` 켬 + 활성 탭이 파일이면 **`git show HEAD:./<파일>` 1회를 더 호출**(같은 주기 · 동시 1 · 본문 = 활성 파일 1개만 메모리) — 끄는 키 `editor.minimap_git` 또는 `statusbar.git`.
 > **부하원 보강(11-22 · C-1 ahead/behind)**: 같은 `nsql-git` 조회 한 바퀴에 **`git rev-list --left-right --count HEAD...@{u}` 1회를 더 호출**(같은 주기 · 동시 1 · 추적 브랜치 없음 = 실패 코드 → 표시 생략) — git CLI 2회 → 3회(+ show 1) · 네트워크 0(로컬 추적 ref만 · fetch 없음 · 26 §8 점검) · 끄는 키 = `statusbar.git`(감시는 거터·미니맵 git이 켜져 있으면 계속 · 11-22 git 감시 수정). 대안 = `status --porcelain=v2 --branch` 한 번으로 HEAD·변경 수·ab를 함께(호출 2회로 줄지만 커밋 없는 저장소·detached 표시가 바뀜 → 사용자 결정 후보).
 > **부하원 추가(09-16 29차)**: 텍스트 보기 변환 스레드 `nsql-textview`(변환 중에만 · 500행 블록 · 취소 깃발 · **결과 복제 0 — 09-17 DR-33: `ResultData` Arc 세그먼트 공유 + 인덱스 뷰** · 파생 `text_lines`는 예산에 포함) — 끄는 키 없음(보기를 그리드로 두면 0) · 자세히 [journal 29차](journal/2026-09-16.md).
+> **부하원 등재(11-28 · T-525 5차 · D-571)**: 테이블 구조 편집기([119](119-table-editor-design.md)) — **자체 스레드 0**(`app/tbledit.rs` · `tbledit_view.rs`에 스레드 생성 없음) · 구조 읽기 · 적용 직전 재확인 · 위험 검사 집계 질의 = 탐색기 메타 세션의 요청 하나(`Req::TableEdit`)에 실어 보냄 · 적용 = 그 서버의 세션으로 문장 하나씩(문지기 `gate_open`) · 메모리 = 열린 탭의 편집 모델 + 되돌리기 단계(탭당 상한 200) — 끄는 키 = **`tbledit.enabled`**(off = 구조 편집 · 새 테이블 명령이 탭을 만들지 않음 · 상태줄 안내) · 줄이는 키 = `tbledit.risk_check`(off = 적용 전 집계 질의 0 · 운영 접속은 늘 검사) · **아직 없는 것** = 메모리 원장 `Cat::TableEdit` · 유휴 회수 `tbledit.idle_secs` · 탭 상한 `tbledit.max_tabs`(119 §10-3 2 · T-525 남음).
 
 ## 4. 거버너 — 설정 체계 설계(포트 + 레지스트리 + 설정 선택)
 

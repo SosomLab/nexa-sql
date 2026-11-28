@@ -630,6 +630,12 @@ impl App {
             }
             "explorer.icons" => self.explorer.set_icons(self.settings.flag(key)),
             "explorer.sizes" => self.explorer.set_sizes(self.settings.flag(key)),
+            "explorer.size_zero" => self
+                .explorer
+                .set_size_zero_hide(self.settings.get(key) == Some("hide")),
+            "tbledit.fold_names" | "tbledit.add_row" => self.tbledit_apply_prefs(),
+            // 읽을 때마다 설정을 본다(적용할 화면 상태 없음).
+            "tbledit.enabled" | "tbledit.on_failure" | "tbledit.risk_check" | "tbledit.prod" => {}
             "explorer.tooltip" => self.explorer.set_tooltip(self.settings.flag(key)),
             "explorer.timeout" => self
                 .explorer

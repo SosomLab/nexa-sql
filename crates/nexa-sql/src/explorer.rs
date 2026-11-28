@@ -1140,6 +1140,8 @@ pub(crate) struct Explorer {
     sizes_loaded: HashSet<(String, ObjectKind)>,
     /// 보냈고 아직 답이 없는 용량 조회(스키마, 종류) — 그동안 값이 없는 객체 행은 빈 칸 대신 `…`(사용자 11-19).
     sizes_pending: HashSet<(String, ObjectKind)>,
+    /// 0바이트 용량을 빈 칸으로(설정 `explorer.size_zero = hide`).
+    size_zero_hide: bool,
     /// 방금 만든 객체(DDL)의 용량을 목록 갱신 뒤 이름 하나로 읽을 것 — (폴더 노드, 문장에 적힌 이름).
     size_want: Vec<(usize, String)>,
     /// 조용한 갱신이 도는 중에 **또** 요청된 노드 — 답이 오면 한 번 더 읽는다(사용자 11-19 · 종전 = 버려서 DDL 직전 목록이 남았다 ·
@@ -2742,6 +2744,7 @@ impl Explorer {
             sizes: HashMap::new(),
             sizes_loaded: HashSet::new(),
             sizes_pending: HashSet::new(),
+            size_zero_hide: false,
             size_want: Vec::new(),
             soft_redo: HashSet::new(),
             db_sizes: HashMap::new(),
@@ -2888,6 +2891,10 @@ impl Explorer {
     }
 
     /// 용량 표시 켬/끔 — 끄면 읽어 둔 값도 비운다(다시 켜면 폴더를 읽을 때 다시 채운다).
+    pub(crate) fn set_size_zero_hide(&mut self, hide: bool) {
+        self.size_zero_hide = hide;
+    }
+
     pub(crate) fn set_sizes(&mut self, on: bool) {
         self.sizes_on = on;
         if !on {
@@ -3018,7 +3025,12 @@ impl Explorer {
                 } else {
                     o.schema.clone()
                 };
-                *self.sizes.get(&(sk, o.kind, o.name.clone()))?
+                let b = *self.sizes.get(&(sk, o.kind, o.name.clone()))?;
+                // 저장 공간이 없는 객체(0바이트)를 빈 칸으로 보이는 설정.
+                if b == 0 && self.size_zero_hide {
+                    return None;
+                }
+                b
             }
             NodeKind::Folder { schema, kind } if Self::sizeable(*kind) => {
                 if ssms && schema.is_empty() {

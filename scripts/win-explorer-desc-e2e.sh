@@ -47,10 +47,10 @@ cli() { "$CLI" run -c "$P" --no-prompt "$1" > "$OUT/cli_$2.out" 2>&1; local rc=$
 T="nsqlt_desc_probe"; WORD="giraffe"; KO="공급계획"; DESC="zebra $WORD $KO lookup table"   # 한글 낱말 = 사용자 10-15 SQL Server 재현(⑥)
 case "$DIA" in
   postgres) CREATE="DROP TABLE IF EXISTS $T; CREATE TABLE $T (id int); COMMENT ON TABLE $T IS '$DESC';"; DROP="DROP TABLE IF EXISTS $T;";;
-  oracle)   CREATE="BEGIN EXECUTE IMMEDIATE 'DROP TABLE $T'; EXCEPTION WHEN OTHERS THEN NULL; END;
+  oracle)   CREATE="BEGIN EXECUTE IMMEDIATE 'DROP TABLE $T PURGE'; EXCEPTION WHEN OTHERS THEN NULL; END;
 /
 CREATE TABLE $T (id NUMBER);
-COMMENT ON TABLE $T IS '$DESC';"; DROP="DROP TABLE $T;";;
+COMMENT ON TABLE $T IS '$DESC';"; DROP="DROP TABLE $T PURGE;";;
   mssql)    CREATE="IF OBJECT_ID(N'$T', N'U') IS NOT NULL DROP TABLE $T;
 CREATE TABLE $T (id int);
 EXEC sp_addextendedproperty @name = N'MS_Description', @value = N'$DESC', @level0type = N'SCHEMA', @level0name = N'dbo', @level1type = N'TABLE', @level1name = N'$T';"; DROP="DROP TABLE $T;";;

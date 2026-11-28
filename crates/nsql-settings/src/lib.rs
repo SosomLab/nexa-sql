@@ -2713,6 +2713,56 @@ pub const REGISTRY: &[Entry] = &[
         kind: SettingKind::Choice(COMPARE_VIEW_OPTS),
         default: "diff",
     },
+    // ★ 테이블 구조 편집기 손잡이(사용자 11-28 "설정으로 가능한 부분은 모두"): 켜기 · 새 이름 접기 · 새 행 자리 · 멈춘 뒤 남은 편집 · 적용 전 검사.
+    Entry {
+        key: "tbledit.enabled",
+        cat: Msg::CatExplorer,
+        label: Msg::LblTbeditEnabled,
+        desc: Msg::DescTbeditEnabled,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "tbledit.fold_names",
+        cat: Msg::CatExplorer,
+        label: Msg::LblTbeditFoldNames,
+        desc: Msg::DescTbeditFoldNames,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    Entry {
+        key: "tbledit.add_row",
+        cat: Msg::CatExplorer,
+        label: Msg::LblTbeditAddRow,
+        desc: Msg::DescTbeditAddRow,
+        kind: SettingKind::Choice(TBEDIT_ROW_OPTS),
+        default: "end",
+    },
+    Entry {
+        key: "tbledit.on_failure",
+        cat: Msg::CatExplorer,
+        label: Msg::LblTbeditOnFailure,
+        desc: Msg::DescTbeditOnFailure,
+        kind: SettingKind::Choice(TBEDIT_FAIL_OPTS),
+        default: "keep",
+    },
+    Entry {
+        key: "tbledit.risk_check",
+        cat: Msg::CatExplorer,
+        label: Msg::LblTbeditRiskCheck,
+        desc: Msg::DescTbeditRiskCheck,
+        kind: SettingKind::Bool,
+        default: "on",
+    },
+    // ★ 저장 공간이 없는 객체의 용량 칸(D-562 · 사용자 11-28): show = 0B(기본) / hide = 빈 칸.
+    Entry {
+        key: "explorer.size_zero",
+        cat: Msg::CatExplorer,
+        label: Msg::LblExplorerSizeZero,
+        desc: Msg::DescExplorerSizeZero,
+        kind: SettingKind::Choice(SIZE_ZERO_OPTS),
+        default: "show",
+    },
     // ★ 테이블 구조 편집기(119 · D-322 · 11-27): 운영 접속 = allow(운영 가드와 함께 편집 · 기본) / deny(읽기 전용).
     Entry {
         key: "tbledit.prod",
@@ -9356,6 +9406,14 @@ const FETCH_DISPLAY_OPTS: &[(&str, Msg)] = &[
     ("whole", Msg::ValFetchDisplayWhole),
 ];
 
+const TBEDIT_ROW_OPTS: &[(&str, Msg)] =
+    &[("end", Msg::OptTbeRowEnd), ("after", Msg::OptTbeRowAfter)];
+const TBEDIT_FAIL_OPTS: &[(&str, Msg)] =
+    &[("keep", Msg::OptTbeKeep), ("discard", Msg::OptTbeDiscard)];
+const SIZE_ZERO_OPTS: &[(&str, Msg)] = &[
+    ("show", Msg::OptSizeZeroShow),
+    ("hide", Msg::OptSizeZeroHide),
+];
 const TBEDIT_PROD_OPTS: &[(&str, Msg)] = &[("allow", Msg::OptTbeAllow), ("deny", Msg::OptTbeDeny)];
 const COMPARE_VIEW_OPTS: &[(&str, Msg)] = &[
     ("diff", Msg::ValCompareViewDiff),

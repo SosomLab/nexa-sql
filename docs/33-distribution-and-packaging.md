@@ -156,6 +156,7 @@ Linux    /usr/bin/nexa-sql · /usr/bin/nsql · /usr/lib/nexa-sql/ (공유 so) ·
 - 트리거: 릴리스 **공개**(published) · 수동 dispatch(`tag` · `force` · `channels`). 사전 릴리스(`-`)는 건너뜀.
 - guard: 저장소 변수(`WINGET_PUBLISH` · `CHOCO_PUSH` = true) × 시크릿(`WINGET_TOKEN` · `CHOCO_API_KEY`) 이중 게이트 · winget = 같은 패키지의 **열린 PR이 있으면 건너뜀** · choco = 직전 버전이 OData `IsApproved=true`가 아니면 건너뜀(미승인 중 새 버전 push = 403 · ⚠ 10-27 전제 깨짐 = OData는 승인분만 보여 대기 중 판을 "마지막 제출"로 못 본다 · 대기 중에도 새 버전 접수됨 · T-435) · 포크 동기화(`merge-upstream`) · `winget validate` exit 40 = 경고 · 제출 재시도 3.
 - 릴리스 노트: `release.yml`이 **영어 절을 먼저**(설치 표 · winget/choco/brew/pkg 명령) 쓰고 한국어를 뒤에 둔다 → 매니페스트 ReleaseNotesUrl이 가리켜도 영어가 먼저 보임.
+- 다음 릴리스 노트에 실을 것(11-28) = Release `panic = "unwind"` 전환으로 실행 파일이 커진 까닭(D-567 · 문구 · 숫자 맞추는 법 = [claude-release-rules](claude-release-rules.md) "다음 릴리스 노트 재료").
 - **첫 제출 절차**: winget = 열린 PR이 없으므로 공개 때 자동 · choco = 제출한 적이 없어 "직전 버전 미승인"으로 자동 건너뜀 → 공개 뒤 **`publish-windows-packages`를 수동 1회 `tag=v0.1.5 channels=choco force=true`**(개발 세션). 이후 버전은 직전이 승인되면 자동.
 - 기대치(형제 저장소 실측): 신규 패키지 첫 검수 = winget `Policy-Test-1.2`·바이러스 스캔 Flag 등으로 **수일~44일** · choco 첫 승인 뒤 후속 버전 38시간~6일 · winget 후속 약 40분. 검수 중엔 다음 버전 자동 건너뜀. choco 상태는 패키지 페이지 문구·댓글 전문으로 본다("Waiting for Maintainer" = 우리 차례).
 - 로컬 검증: 0.1.4 MSI(개발 세션) · 0.1.5 MSI(협업 세션 V2) 렌더 → `winget validate` · `choco pack` = journal 10-05 §33.

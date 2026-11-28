@@ -182,6 +182,8 @@
 
 > ★ **11-27 착수 = T-525** — 사용자 11-27 "테이블 구조 편집기 구현(DataGrip 주 참조 · DBeaver 참고)" · 무인 진행 규칙에 따라 아래 표의 결정 대기 8건(D-316 · D-318 ~ D-321 · D-324 ~ D-326)은 **권장안 그대로 진행**한다(사용자 확인 대기 · [10](10-decision-record.md)에 "11-27 무인 진행 추천안(권장안)" 표기 · [journal 11-27 §7](journal/2026-11-27.md)) · 사용자 확정 6건(D-317 · D-322 · D-323 · D-327 ~ D-329)은 그대로.
 
+> ★ **11-28 사용자 확정** — 아래 표의 결정 대기 8건(D-316 · D-318 ~ D-321 · D-324 ~ D-326)은 **권장안 그대로 확정**(질문 창 "나머지 확인") · 그 가운데 설정으로 열 수 있는 것은 설정으로 열었다(D-571 = `tbledit.enabled` · `tbledit.fold_names` · `tbledit.add_row` · `tbledit.on_failure` · `tbledit.risk_check` · 기본 = 권장안) · 재생성 금지 · 적용 직전 재확인 · 문장 하나씩 · 운영 접속의 위험 검사는 열지 않음 · D-329의 나머지(Release `unwind`)도 전환(D-567) — §10-8.
+
 | # | 결정 | 권장안 |
 |---|---|---|
 | D-316 | 화면 = 뷰 탭 vs 모달 | **뷰 탭**(§4) · 모달은 미리보기·2단에만 |
@@ -217,7 +219,7 @@
 4. 미리보기 편집본을 그대로 실행할지(권장 = 그대로 · 파서 검증 1회) vs 편집하면 "편집기로 보내기"만 허용할지.
 5. 라이선스 안내 모달 빈도 = 앱 실행마다 첫 열기 1회(권장) vs 탭을 열 때마다(D-328 비고).
 
-## 10. 구현 현황(11-27 1차 · 2차 · 11-28 3차 · 4차 · T-525)
+## 10. 구현 현황(11-27 1차 · 2차 · 11-28 3차 · 4차 · 5차 · T-525)
 
 > 무인 진행(§7 권장안 + D-563 ~ D-566 · D-568 ~ D-570)으로 넣은 1차 배선(§10-1 ~ §10-4) · 2차(§10-5) · 3차(§10-6) · 4차(§10-7). 결정은 전부 **사용자 확인 대기** — 바꿀 항목은 그 단계에서 반영한다. 검증 = §10-4 ~ §10-7 · [journal 11-27 §10 · §11](journal/2026-11-27.md) · [journal 11-28 §1 · §2](journal/2026-11-28.md).
 
@@ -245,13 +247,13 @@
 - SQLite = 타입 · NULL · 기본값 · 제약 변경 막힘(추가 · 이름 바꾸기는 됨) · 코멘트 미지원.
 - 서버에서 읽은 FK · CHECK = 1차 ~ 3차는 이름 바꾸기 · 삭제만(읽지 않은 속성 보호 · D-563) → **4차부터** 규칙 · 식을 읽은 방언(Oracle · PostgreSQL · SQL Server · MySQL)의 **잠기지 않은** 제약은 컬럼 · 정의 편집 가능(`DROP` → `ADD`) · 잠긴 제약(지연 검사 · 비활성 · 미검증 등)과 속성을 못 읽은 방언 = 종전대로 이름 바꾸기 · 삭제만(§10-7).
 - PK/UK와 같은 이름의 인덱스는 인덱스 목록에서 숨긴다(키 섹션에만).
-- 새 이름 = 방언 접힘 · 행 추가 = 맨 끝(D-564).
+- 새 이름 = 방언 접힘 · 행 추가 = 맨 끝(D-564) — 11-28부터 둘 다 설정(`tbledit.fold_names` · `tbledit.add_row` · 기본 = 그대로 · D-571 · §10-8).
 
-### 10-3. 아직 없는 것(= TODO T-525 "남음" · 4차 반영)
+### 10-3. 아직 없는 것(= TODO T-525 "남음" · 5차 반영)
 
 2차(§10-5)에 들어간 것 = 라이선스 안내(F-17 · D-328 — 모달 창이 아니라 탭 안 안내 판 · D-566) · 타입 완성 목록 · 미적용 변경이 있는 탭의 닫기 확인 · 언와인드 경계(D-329의 절반). 3차(§10-6)에 들어간 것 = 셀 단위 되돌리기(Ctrl+Z · 다시 실행) · 미리보기 편집본 실행(§9 질문 4 · D-568) · 기록 섹션 F-15 · `_applied.sql` 보관(F-9 ④). 4차(§10-7)에 들어간 것 = FK 삭제 · 갱신 규칙 · CHECK 식 읽기 + 서버에서 읽은 FK / CHECK 편집(제약 단위 잠금 · D-563 갱신) · 재생성 주의 문구(D-570). 남은 것:
 
-1. D-329의 나머지 = Release `panic = "unwind"` **전역 전환**(§5-4) — 경계는 들어갔지만 Release는 아직 `panic = "abort"`라 Debug에서만 작동한다 · 전환 여부 = 실측(§10-5) 뒤 **사용자 결정**(D-567 후보).
+1. ~~D-329의 나머지 = Release `panic = "unwind"` 전역 전환~~ → ✅ 11-28 전환(D-567 사용자 "지금 전환" · §10-8) · 남은 것 = Release(lite) 재빌드 실측 · **배포판에서의 경계 확인**(사용자 실기 뒤 · journal 11-28 §7) · Windows · macOS · full 변형의 크기(D-335).
 2. 메모리 원장 `Cat::TableEdit` · `tbledit.idle_secs` · `tbledit.max_tabs`(유휴 회수).
 3. 상세 패널 · Ctrl 링크 카드의 진입 버튼.
 4. identity 읽기(카탈로그 확장) — CHECK 식 · FK 삭제 / 갱신 규칙은 4차에 들어갔다(§10-7).
@@ -452,3 +454,45 @@
 
 **덧붙임(11-28 · 잠긴 줄 이유 표시 · 소견 ②의 처리 · journal 11-28 §4)** — Keys 섹션에서 잠긴 줄(이름 · 삭제만)을 고르고 있으면 경고 줄 맨 위에 안내 한 줄이 나온다(`Msg::TbeKeyLocked` · 경고색 아님 · 경고 줄 상한 4는 그대로) · 잠금 판정은 `key_fixed(row)` 한 함수로 모았다(칸 편집 가능 판정이 같은 함수를 쓴다 = 동작 불변) · 판정용 덤프에 `locked|<행>`(Keys 섹션의 잠긴 행마다 그 `row` 줄 바로 뒤). 검증 = `cargo test -p nexa-sql -p nsql-i18n` 734 / 0 / 10 · clippy ✓ · V1 `tbledit` 31 / 0 · 실서버 PostgreSQL 13 / 0(지연 검사 FK · `NOT VALID` CHECK에만 `locked` · 보통 FK · PK에는 없음) · SQL Server 12 / 0(`NOCHECK` CHECK만) · 헤드리스 캡처 눈 판정(잠긴 줄을 고르면 안내 줄 있음 · 잠기지 않은 줄이면 없음). 확인하지 않은 것 = 한국어 화면 · 좁은 창에서 줄이 잘리는지 · Oracle · 마우스로 줄을 고르는 조작.
 
+
+### 10-8. 5차(11-28 저녁 · 사용자 결정 반영 = Release `unwind` 전환 + 설정 키 6 · 작업 트리 = 08bbd3b9 + 5차)
+
+11-28 질문 창 8문항의 답([journal 11-28 §7](journal/2026-11-28.md) · [10](10-decision-record.md) D-561 ~ D-571)을 옮긴 묶음이다. 기능은 늘리지 않았다 — 기본값은 전부 종전 동작이고, 바뀌는 것은 ① 배포판의 패닉 처리 ② 설정으로 바꿀 수 있는 자리 여섯 ③ 실기 지적 둘(셀 편집 상자의 글자 위치 · 편집 중 Tab)이다.
+
+| # | 들어간 것 | 어떻게 |
+|---|---|---|
+| ① | Release `panic = "unwind"`(D-567 · D-329의 나머지) | `Cargo.toml` `[profile.release]` `panic = "abort"` → `"unwind"` — 2차의 오류 경계(§10-5 ④)와 워커 · 메타 스레드의 패닉 격리가 **배포판에서도** 동작한다(패닉이 프로세스 전체가 아니라 그 탭 · 그 명령만 끝낸다) · 패닉을 잡는 자리 = `catch_unwind`(`app/tbledit.rs` · `app/paint.rs` · `worker.rs` · `explorer.rs`) · 비용(11-27 Linux Release lite 실측 · §10-5) = `nexa-sql` +9.00 % · `nsql` +7.16 % · 기동 중앙값 43 → 44 ms |
+| ② | 주입 패닉 명령의 문 | `tbledit.test_panic` = **Debug 빌드이거나 환경 변수 `NSQL_TEST_HOOKS`가 있을 때만** 듣는다 → 배포판에서 경계를 확인하는 길이 생겼고(환경 변수를 준 시험 실행), 보통 실행에서는 무시된다 |
+| ③ | 설정 키 6(D-571) | 아래 표 · 등재 = [94 §6-44](94-settings-key-naming-and-location.md) · 라벨 · 설명 · 선택지 = `nsql-i18n`(영어 · 한국어) · 분류 = Explorer |
+| ④ | 통합 시험의 Oracle 정리문 `DROP … PURGE` | `crates/nsql-drivers/tests/integration.rs` 4곳(`nsqlt_plan_e` · `nsqlt_plan_d` · `nexa_it`의 시작 정리와 끝 정리) — 시험을 돌릴 때마다 실서버 휴지통에 쌓이던 것(사용자 "비우고 앞으로도 안 쌓이게") |
+| ⑤ | 셀 편집 상자의 글자 위치(사용자 실기 지적) | `tbledit_view.rs` — 편집 상자에 `set_cell_pad(Some(s(CELL_PAD)))`(결과 그리드의 셀 편집과 같은 방법 · 종전 = 보통 상자 여백 10이라 보기 모드의 6보다 글자가 오른쪽으로 밀렸다) + 보기 모드의 칸 · 머리 칸 여백을 같은 상수 `CELL_PAD`(6.0)로 |
+| ⑥ | 편집 중 Tab으로 다음 칸(사용자 실기 지적) | 이 앱은 Tab을 문자 사건 `Char('\t')`로 보낸다(`app/input.rs`) — 뷰가 키 사건의 Tab만 받고 있어서 편집 중 Tab이 듣지 않았다(Linux에서 드러났지만 OS와 무관) → `tbledit_view.rs` `on_event` 머리에서 그 문자를 Tab 키로 바꿔 받는다(Shift 상태 = 호스트 `app/tbledit.rs`가 사건 전에 `set_shift`) · 끝 칸 Tab = 다음 줄 첫 칸 · 첫 칸 Shift+Tab = 앞 줄 끝 칸 · 체크 칸 · 제약 종류 칸은 건너뜀 · 시험 `tab_arrives_as_a_char_event_and_moves_to_the_next_cell` |
+
+**설정 키 6(③ · 기본 = 종전 동작)**
+
+| 키 | 기본 | 바꾼 값에서 | 반영되는 때 |
+|---|---|---|---|
+| `tbledit.enabled` | on | off = 구조 편집 · 새 테이블 명령이 탭을 만들지 않고 상태줄에 `Msg::StTbeDisabled`("The table editor is turned off (tbledit.enabled)") | 명령을 낼 때마다 읽음 |
+| `tbledit.fold_names` | on | off = 새 이름을 접지 않고 적은 그대로(필요하면 인용 — Oracle에서 `MixedName` → `"MixedName"`) | `set_prefs` · 설정을 바꾸면 열린 탭에도(`tbledit_apply_prefs`) |
+| `tbledit.add_row` | end | after = [추가]가 선택 행 아래에 넣는다(문장은 MySQL만 가운데 자리를 적을 수 있다 — 그 밖은 `ADD COLUMN` = 맨 끝) | 같음 |
+| `tbledit.on_failure` | keep | discard = 적용이 멈춘 뒤 서버에서 다시 읽은 구조로 **바꿔 싣는다**(`load` · 종전 `rebase` = 남은 편집 유지) | 적용이 멈춘 때 읽음 |
+| `tbledit.risk_check` | on | off = [적용…] 때 위험 검사 집계 질의(`risk_checks`)를 만들지 않는다 · **운영 접속이면 설정과 무관하게 검사**(D-326) | [적용…]을 누를 때 읽음 |
+| `explorer.size_zero` | show | hide = 0 바이트인 용량 칸을 빈 칸으로(`set_size_zero_hide` · D-562의 `0B`를 보이지 않게) | 설정을 바꾸면 즉시 |
+
+시험 = `prefs_turn_off_folding_and_place_new_rows_after_selection`(`tbledit_view.rs`).
+
+**열지 않은 것(D-571 · 안전 규칙 = 설정이 없다)** = 테이블 재생성 금지(D-318) · 적용 직전 서버 재확인(D-325) · 문장 하나씩 · 오류에서 멈춤 · 자동 되돌리기 없음(D-321 · D-565) · 운영 접속의 위험 검사(D-326).
+
+**검증(11-28 저녁 · Linux · 협업)**
+
+| 단계 | 결과 |
+|---|---|
+| verify `--level v2 --v1 all`(작업 트리 = 08bbd3b9 + ① ~ ④ · ⑤ 전) | fmt · `check-3os --quick`(clippy) · `todo-check` ✓ · `cargo test --workspace` **1602 / 0 / 12** · 통합 **48 / 0 / 1** · Debug 빌드 ✓ · V1 31 시나리오 = **698 / 3**(3 = 알려진 창 제목 캡처 · T-524 · 종전과 같은 셋) · `tbledit` 31 / 0 |
+| ④ 통합 시험 뒤 실서버 휴지통 | 전 403 → 뒤 403 = **새 항목 0**(종전 = 돌릴 때마다 늘어남) |
+| ③ 설정 키 6 V1(격리 홈 · 헤드리스 · 키 · 마우스 주입 0 · 기본값 대조 × 바꾼 값) | **27 / 0** — SQLite: `add_row`(끝 = `row\|2\|+\|` / after = `row\|1\|+\|` + 원래 줄이 `row\|2\|\|name\|TEXT\|`) · `risk_check`(on = 미리보기 머리에 `1 row(s) have a value - DROP COLUMN deletes them` / off = 그 줄 없음 · 문장은 그대로) · `on_failure`(keep = 실패 뒤 `dirty=true` + 새 줄 남음 / discard = `dirty=false can_apply=false … rows=2` · 새 줄 없음 · 상태줄은 둘 다 `Stopped after 0 of 1 statement(s) - …`) · `enabled=off`(편집기 덤프 없음 = 열기 · 새 테이블 둘 다 · 상태줄 안내 · 탭 없음 · 종료 코드 0) / Oracle 실서버(임시 테이블 · 적용 없음 · `DROP … PURGE` 뒤 남은 수 0 · 휴지통 0): `fold_names`(on = `MixedName` → `MIXEDNAME NUMBER` / off = `"MixedName" NUMBER`) · `size_zero`(`segment_created = NO`인 테이블 = show `0B` / hide 빈 칸) |
+| ⑤ 뒤(개발 = clippy ✓ · `nexa-sql` `tbledit` 18 / 0 · 헤드리스 캡처 2장의 글자 시작 x 일치) | 협업 = V1 `tbledit` 31 / 0 · 설정 키 V1 27 / 0(위 줄은 이 판에서 돌린 것) · 실제 설정 Debug 재시작 → 사용자 재확인 대기 |
+| ⑥ 뒤(개발 = clippy ✓ · `nexa-sql` `tbledit` 19 / 0 · V1 `tbledit` 31 / 0) | 협업 = V1 `tbledit` 31 / 0(다시) · 실제 설정 Debug 재시작 → 사용자 재확인 대기 · 실제 키로 누른 Tab은 자동으로 확인하지 않음(키 주입 금지 · 단위 시험만) |
+| 사용자 실기(11-28 19:00 · Linux · 실제 설정 Debug) | 타입 완성 목록(글자로 거르기 · ↑ ↓ · Enter · Esc · 마우스 클릭) · Ctrl+Z · 다시 실행 · 칸 편집 중 되돌리기 = **정상**(journal 11-28 §6 R-2 · R-4 ✓) · 어긋난 것 = 글자 위치(⑤) · Tab(⑥) — 둘 다 수정 · 재확인 대기 |
+| ① 뒤 Release(lite) 재빌드 · 크기 · 기동 3회 중앙값 · **배포판 경계 확인**(`NSQL_TEST_HOOKS` 있음 = 탭만 닫힘 / 없음 = 무시) | **아직 안 함** — 사용자가 Debug로 실기 중이라 콜드 빌드를 미룸(CPU 양보 · 개발 지시) · 끝나면 [journal 11-28 §7](journal/2026-11-28.md)에 덧붙인다 |
+
+**확인하지 않은 것(5차)** = ①의 배포판 동작 전부(위 마지막 줄 — 지금까지의 근거는 11-27의 unwind 판 크기 · 기동 실측과 Debug에서의 경계 동작뿐) · Windows · macOS · full 변형의 크기 · 설정 창 화면에서 여섯 키를 바꾸는 조작(판정은 격리 홈의 설정 파일로만) · 실행 중에 설정을 바꿨을 때 열린 탭에 바로 반영되는지(코드 = `tbledit_apply_prefs` · 실행으로는 기동 전 설정만) · 한국어 화면의 라벨 · `fold_names=off`의 PostgreSQL · SQL Server · MySQL(Oracle만) · `on_failure=discard`의 실서버(SQLite만) · `risk_check=off`인 운영 접속에서 검사가 그대로 도는지(운영 표식 프로필로는 시험하지 않음 — 코드 읽기 = `prod || flag`) · ⑤ · ⑥ 뒤의 `cargo test --workspace` 전체와 V1 전체(바뀐 시나리오만 다시) · ⑥을 실제 키로 누른 확인(사용자 재확인 대기).

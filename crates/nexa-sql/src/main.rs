@@ -1925,6 +1925,7 @@ fn main() {
         );
         e.set_icons(settings.flag("explorer.icons"));
         e.set_sizes(settings.flag("explorer.sizes"));
+        e.set_size_zero_hide(settings.get("explorer.size_zero") == Some("hide"));
         e.set_tooltip(settings.flag("explorer.tooltip"));
         e.set_load_timeout(settings.int("explorer.timeout").clamp(0, 600) as u64);
         e.set_filter_expand(settings.flag("explorer.filter_expand"));

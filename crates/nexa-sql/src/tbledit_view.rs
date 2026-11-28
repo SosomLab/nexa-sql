@@ -244,6 +244,9 @@ pub(crate) const NOTICE_SECS: u64 = 3;
 /// 되돌리기 단계 상한(모델 하나 = 수십 KB 이하 · 탭을 닫으면 함께 사라진다).
 const UNDO_MAX: usize = 200;
 
+/// 칸 안 글자의 왼쪽 여백(논리 px) — 보기 모드의 글과 편집 상자의 글이 **같은 자리**에서 시작하도록 한 값을 둘 다 쓴다.
+const CELL_PAD: f32 = 6.0;
+
 /// 완성 목록에 한 번에 보이는 줄 수.
 const SUGG_MAX: usize = 10;
 
@@ -316,6 +319,12 @@ pub(crate) struct TableEditView {
     /// 서버에서 읽은 외래 키·체크 제약의 속성(삭제 규칙 · 식)을 **다 읽었는가** — 아니면 그 제약은 이름·삭제만(모르는 속성을
     /// 잃지 않게 · D-563).
     keys_complete: bool,
+    /// Shift가 눌려 있는가(호스트가 사건 전에 알려 준다 — Tab은 문자 사건으로 와서 Shift 여부가 실려 있지 않다).
+    shift: bool,
+    /// 새로 적는 이름을 방언의 기본 대소문자로 접는가(설정 `tbledit.fold_names` · 끄면 적은 그대로).
+    fold: bool,
+    /// 행 추가 자리 = 선택 행 바로 아래(설정 `tbledit.add_row = after` · 기본 = 맨 끝).
+    add_after: bool,
     /// 표현하지 못하는 속성이 있어 **잠긴** 제약들(서버에서의 이름) — 속성을 다 읽은 방언에서도 이름·삭제만.
     locked_keys: Vec<String>,
     /// 이 탭에서 적용한 스크립트(시각 · 결과 글 · 파일 경로) — 새 것이 위.
@@ -326,8 +335,7 @@ pub(crate) struct TableEditView {
     redo: Vec<Table>,
     /// 마지막으로 기록한 편집 모델(이것과 달라졌을 때만 한 단계를 쌓는다).
     last: Table,
-    /// 판정용(Debug 빌드만): 다음 그리기에서 일부러 패닉 — 오류 경계(D-329)가 탭만 걷는지 본다.
-    #[cfg(debug_assertions)]
+    /// 판정용(시험 훅 env가 있을 때만 켜진다): 다음 그리기에서 일부러 패닉 — 오류 경계(D-329)가 탭만 걷는지 본다.
     test_panic: bool,
     sugg: Vec<&'static str>,
     sugg_sel: Option<usize>,
@@ -393,12 +401,14 @@ impl TableEditView {
             ddl_rect: Rect::default(),
             notice: None,
             keys_complete: false,
+            shift: false,
+            fold: true,
+            add_after: false,
             locked_keys: Vec::new(),
             history: Vec::new(),
             undo: Vec::new(),
             redo: Vec::new(),
             last: Table::default(),
-            #[cfg(debug_assertions)]
             test_panic: false,
             sugg: Vec::new(),
             sugg_sel: None,
@@ -537,6 +547,25 @@ impl TableEditView {
         }
     }
 
+    pub(crate) fn set_shift(&mut self, on: bool) {
+        self.shift = on;
+    }
+
+    /// 사용자 설정 반영(이름 접기 · 행 추가 자리).
+    pub(crate) fn set_prefs(&mut self, fold: bool, add_after: bool) {
+        self.fold = fold;
+        self.add_after = add_after;
+    }
+
+    /// 이름 접기에 쓸 방언 — 접기를 껐으면 접지 않는 방언 규칙(앞뒤 공백·큰따옴표만 벗긴다)으로.
+    fn fold_dialect(&self) -> Dialect {
+        if self.fold {
+            self.dialect
+        } else {
+            Dialect::Sqlite
+        }
+    }
+
     /// `complete` = 제약의 덧붙은 속성(규칙 · 식)을 읽었다 · `locked` = 그래도 고치면 안 되는 제약들(지연 검사 · 비활성 등).
     pub(crate) fn set_key_lock(&mut self, complete: bool, locked: Vec<String>) {
         self.keys_complete = complete;
@@ -556,8 +585,7 @@ impl TableEditView {
             .filter(|f| !f.is_empty())
     }
 
-    /// 판정용(Debug 빌드만 · 기동 명령 `tbledit.test_panic`).
-    #[cfg(debug_assertions)]
+    /// 판정용(기동 명령 `tbledit.test_panic` · 호스트가 시험 훅 env를 확인한 뒤에만 부른다).
     pub(crate) fn arm_test_panic(&mut self) {
         self.test_panic = true;
     }
@@ -811,7 +839,7 @@ impl TableEditView {
         if !self.cell_editable(row, col) || self.cell_text(row, col) == text {
             return false;
         }
-        let d = self.dialect;
+        let d = self.fold_dialect();
         match self.section {
             Section::Columns => {
                 let Some(c) = self.edit.columns.get_mut(row) else {
@@ -932,8 +960,12 @@ impl TableEditView {
             return false;
         }
         self.commit_edit();
-        // 맨 끝에(DataGrip과 같다): 가운데에 넣는 자리 지정은 MySQL만 되고, 그때는 [위로]/[아래로]로 옮긴다.
-        let at = self.rows();
+        // 기본 = 맨 끝(DataGrip과 같다 · 가운데 자리 지정은 MySQL만 문장이 된다) · 설정 `tbledit.add_row = after`면 선택 행 바로 아래.
+        let at = if self.add_after && self.rows() > 0 {
+            (self.sel_row + 1).min(self.rows())
+        } else {
+            self.rows()
+        };
         let table = self.edit.name.clone();
         match self.section {
             Section::Columns => self.edit.columns.insert(
@@ -958,7 +990,7 @@ impl TableEditView {
                 self.edit.keys.insert(
                     at,
                     nsql_ddl::Key {
-                        name: nsql_ddl::fold_new_name(self.dialect, &name),
+                        name: nsql_ddl::fold_new_name(self.fold_dialect(), &name),
                         kind,
                         ..nsql_ddl::Key::default()
                     },
@@ -970,7 +1002,7 @@ impl TableEditView {
                 self.edit.indexes.insert(
                     at,
                     Index {
-                        name: nsql_ddl::fold_new_name(self.dialect, &name),
+                        name: nsql_ddl::fold_new_name(self.fold_dialect(), &name),
                         ..Index::default()
                     },
                 );
@@ -1023,7 +1055,7 @@ impl TableEditView {
     }
 
     pub(crate) fn set_table_name(&mut self, text: &str) -> bool {
-        let n = nsql_ddl::fold_new_name(self.dialect, text);
+        let n = nsql_ddl::fold_new_name(self.fold_dialect(), text);
         if self.locked() || n == self.edit.name {
             return false;
         }
@@ -1228,6 +1260,9 @@ impl TableEditView {
             }
         };
         self.editing = Some(tg);
+        // ★ 편집 상자의 글자 시작 자리를 보기 모드(칸 왼쪽 + 6)와 같게(사용자 11-28 "보기 모드와 편집 모드의 글자 위치가 다르다" ·
+        //   결과 그리드 셀 편집과 같은 방법 = TextBox 셀 여백) — 지정하지 않으면 보통 상자 여백(10)이라 오른쪽으로 밀린다.
+        self.cell.set_cell_pad(Some(self.s(CELL_PAD)));
         let mut inv = Invalidations::default();
         match replace {
             Some(c) => {
@@ -1354,6 +1389,18 @@ impl TableEditView {
 
     /// 사건 처리 — 다시 그릴 일이 있으면 true(호스트 규칙 = 확장 상세 뷰와 같다).
     pub(crate) fn on_event(&mut self, ev: &InputEvent) -> bool {
+        // ★ 이 앱에서 Tab은 **문자 사건**(`'\t'`)으로 온다(app/input.rs) — 키 사건의 Tab과 같은 동작으로 받는다(사용자 11-28 "탭 동작 안 함").
+        let tab_ev;
+        let ev = if matches!(ev, InputEvent::Char { c: '\t', .. }) {
+            tab_ev = InputEvent::Key {
+                key: Key::Tab,
+                shift: self.shift,
+                primary: false,
+            };
+            &tab_ev
+        } else {
+            ev
+        };
         // ★ 라이선스 안내가 떠 있는 동안 = 안내의 두 버튼만(키·휠·다른 클릭은 삼킨다 · Esc/Enter로 닫히지 않는다).
         if self.notice.is_some() {
             match *ev {
@@ -1461,7 +1508,25 @@ impl TableEditView {
                     self.commit_edit();
                     if let Target::Cell { row, col } = tg {
                         self.sel_row = row.min(self.rows().saturating_sub(1));
-                        self.step_col(col, !shift);
+                        // 끝 칸에서 Tab = 다음 줄의 첫 칸 · 첫 칸에서 Shift+Tab = 앞 줄의 끝 칸(엑셀식 · 줄이 없으면 그 자리).
+                        let last = self.specs().len().saturating_sub(1);
+                        if !shift && col == last && self.sel_row + 1 < self.rows() {
+                            self.sel_row += 1;
+                            self.sel_col = 0;
+                        } else if shift && col == 0 && self.sel_row > 0 {
+                            self.sel_row -= 1;
+                            self.sel_col = last;
+                        } else {
+                            self.step_col(col, !shift);
+                        }
+                        // 글로 편집하지 않는 칸(체크 칸 · 제약 종류 칸)은 건너뛴다 — Tab으로 글 칸에서 글 칸으로 이어 적는다.
+                        let skip = self.specs().get(self.sel_col).is_some_and(|c| c.check)
+                            || (self.section == Section::Keys && self.sel_col == 1);
+                        if skip {
+                            let c = self.sel_col;
+                            self.step_col(c, !shift);
+                        }
+                        self.ensure_visible();
                         self.begin_edit(
                             Target::Cell {
                                 row: self.sel_row,
@@ -1688,7 +1753,6 @@ impl TableEditView {
 
     #[allow(clippy::too_many_lines)]
     pub(crate) fn paint(&mut self, dc: &mut dyn DrawCtx, th: &Theme) {
-        #[cfg(debug_assertions)]
         assert!(
             !self.test_panic,
             "tbledit.test_panic (injected by a startup command)"
@@ -1790,7 +1854,7 @@ impl TableEditView {
             dc.fill_round_rect(r, self.s(3.0), th.panel_bg_alt);
             dc.stroke_round_rect(r, self.s(3.0), th.border, 1.0);
             if self.editing != Some(tg) {
-                text_mid(dc, r.x + self.s(6.0), r.y, r.h, r, &text, th.text);
+                text_mid(dc, r.x + self.s(CELL_PAD), r.y, r.h, r, &text, th.text);
             }
         }
         y += field_h + self.s(10.0);
@@ -2016,7 +2080,7 @@ impl TableEditView {
                     } else {
                         th.text_dim
                     };
-                    text_mid(dc, x + self.s(6.0), ry, self.row_h, cell, &text, fg);
+                    text_mid(dc, x + self.s(CELL_PAD), ry, self.row_h, cell, &text, fg);
                 }
                 if row == self.sel_row && ci == self.sel_col && self.focused {
                     dc.stroke_round_rect(cell, 0, th.accent, 1.0);
@@ -2428,6 +2492,61 @@ mod tests {
                 "ALTER TABLE APP.ITEM ADD CONSTRAINT ITEM_FK FOREIGN KEY (NAME) REFERENCES UNIT (ID) ON DELETE CASCADE"
             ]
         );
+    }
+
+    #[test]
+    fn prefs_turn_off_folding_and_place_new_rows_after_selection() {
+        let mut v = sample();
+        v.set_prefs(false, true);
+        // 접기 끔 = 적은 그대로(Oracle이라도 소문자 유지 → 문장에서는 인용된다).
+        assert!(v.set_cell(1, 0, "title"));
+        assert_eq!(v.edited().columns[1].name, "title");
+        assert_eq!(
+            v.plan().stmts[0].sql,
+            "ALTER TABLE APP.ITEM RENAME COLUMN NAME TO \"title\""
+        );
+        // 행 추가 = 선택 행(0) 바로 아래.
+        v.revert();
+        assert!(v.add_row());
+        assert_eq!(v.edited().columns.len(), 3);
+        assert!(v.edited().columns[1].name.is_empty());
+        // 기본값으로 되돌리면 맨 끝 · 대문자.
+        let mut v = sample();
+        assert!(v.add_row());
+        assert!(v.edited().columns[2].name.is_empty());
+        assert!(v.set_cell(2, 0, "flag"));
+        assert_eq!(v.edited().columns[2].name, "FLAG");
+    }
+
+    #[test]
+    fn tab_arrives_as_a_char_event_and_moves_to_the_next_cell() {
+        let mut v = sample();
+        v.edit_cell(1, 0);
+        assert!(v.on_event(&InputEvent::Char { c: '\t', now_ms: 0 }));
+        // 이름 칸 → 타입 칸(편집 상태 유지 = 타입 목록이 뜬다).
+        assert_eq!((v.sel_row, v.sel_col), (1, 1));
+        assert!(v.editing.is_some());
+        assert!(!v.sugg.is_empty());
+        // Shift+Tab = 앞 칸.
+        v.set_shift(true);
+        assert!(v.on_event(&InputEvent::Char { c: '\t', now_ms: 0 }));
+        assert_eq!((v.sel_row, v.sel_col), (1, 0));
+        // 타입 칸에서 Tab = 체크 칸(NOT NULL)을 건너뛰고 기본값 칸으로.
+        v.set_shift(false);
+        v.edit_cell(1, 1);
+        assert!(v.on_event(&InputEvent::Char { c: '\t', now_ms: 0 }));
+        assert_eq!((v.sel_row, v.sel_col), (1, 3));
+        assert!(v.editing.is_some());
+        // 끝 칸에서 Tab = 다음 줄 첫 칸.
+        v.set_shift(false);
+        v.edit_cell(0, 4);
+        assert!(v.on_event(&InputEvent::Char { c: '\t', now_ms: 0 }));
+        assert_eq!((v.sel_row, v.sel_col), (1, 0));
+        // 편집 중이 아니면 선택만 옮긴다(글자로 편집이 열리지 않는다).
+        let mut v = sample();
+        assert!(v.on_event(&InputEvent::Char { c: '\t', now_ms: 0 }));
+        assert_eq!(v.sel_col, 1);
+        assert!(v.editing.is_none());
     }
 
     #[test]

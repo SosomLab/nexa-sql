@@ -164,6 +164,8 @@ pub(crate) struct ExplorerSet {
     visible: bool,
     icons: bool,
     sizes: bool,
+    /// 0바이트 용량을 빈 칸으로(`explorer.size_zero = hide` · 새 칸에도 물려준다).
+    size_zero_hide: bool,
     /// 노드 툴팁(`explorer.tooltip` · T-249): 커서 아래 노드가 **목표**(칸, 노드) — 머문 뒤에만 확정(nexa-ctl `LatestIntent` · 09-30
     ///   "마지막 사건만 살아남는 큐잉") · 그릴 때 목표가 아직 커서 아래인지 한 번 더 확인.
     tooltip: bool,
@@ -242,6 +244,7 @@ impl ExplorerSet {
             visible,
             icons: true,
             sizes: true,
+            size_zero_hide: false,
             tooltip: true,
             tip: nexa_ctl::LatestIntent::new(700),
             head_tip: nexa_ctl::LatestIntent::new(700),
@@ -295,6 +298,7 @@ impl ExplorerSet {
         let mut ex = Explorer::new(Box::new(move || w()), self.visible);
         ex.set_icons(self.icons);
         ex.set_sizes(self.sizes);
+        ex.set_size_zero_hide(self.size_zero_hide);
         ex.set_font_px(self.font_px);
         ex.set_typeahead(self.ta_cfg);
         ex.set_preload(self.preload);
@@ -955,6 +959,13 @@ impl ExplorerSet {
     }
 
     /// 용량 표시(설정 `explorer.sizes`) — 모든 칸 + 새 칸.
+    pub(crate) fn set_size_zero_hide(&mut self, hide: bool) {
+        self.size_zero_hide = hide;
+        for p in &mut self.panes {
+            p.ex.set_size_zero_hide(hide);
+        }
+    }
+
     pub(crate) fn set_sizes(&mut self, on: bool) {
         self.sizes = on;
         for p in &mut self.panes {

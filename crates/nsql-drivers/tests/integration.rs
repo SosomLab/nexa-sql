@@ -253,7 +253,7 @@ fn explain_review_oracle() {
         };
         // 실제 계획(DISPLAY_CURSOR)은 V$SQL_PLAN 권한이 있어야 한다 → 추정만 필수 · 실제는 되면 좋고(실패해도 시험은 통과).
         explain_check(&mut r, Dialect::Oracle,
-            "BEGIN EXECUTE IMMEDIATE 'DROP TABLE nsqlt_plan_e'; EXCEPTION WHEN OTHERS THEN NULL; END;\n/\nBEGIN EXECUTE IMMEDIATE 'DROP TABLE nsqlt_plan_d'; EXCEPTION WHEN OTHERS THEN NULL; END;\n/\nCREATE TABLE nsqlt_plan_d (id NUMBER PRIMARY KEY, name VARCHAR2(20));\nCREATE TABLE nsqlt_plan_e (id NUMBER PRIMARY KEY, dept NUMBER, name VARCHAR2(20));\nINSERT INTO nsqlt_plan_d VALUES (10,'x');\nINSERT INTO nsqlt_plan_d VALUES (20,'y');\nINSERT INTO nsqlt_plan_e VALUES (1,10,'a');\nINSERT INTO nsqlt_plan_e VALUES (2,20,'b');\nCOMMIT;\n",
+            "BEGIN EXECUTE IMMEDIATE 'DROP TABLE nsqlt_plan_e PURGE'; EXCEPTION WHEN OTHERS THEN NULL; END;\n/\nBEGIN EXECUTE IMMEDIATE 'DROP TABLE nsqlt_plan_d PURGE'; EXCEPTION WHEN OTHERS THEN NULL; END;\n/\nCREATE TABLE nsqlt_plan_d (id NUMBER PRIMARY KEY, name VARCHAR2(20));\nCREATE TABLE nsqlt_plan_e (id NUMBER PRIMARY KEY, dept NUMBER, name VARCHAR2(20));\nINSERT INTO nsqlt_plan_d VALUES (10,'x');\nINSERT INTO nsqlt_plan_d VALUES (20,'y');\nINSERT INTO nsqlt_plan_e VALUES (1,10,'a');\nINSERT INTO nsqlt_plan_e VALUES (2,20,'b');\nCOMMIT;\n",
             "SELECT e.name, d.name FROM nsqlt_plan_e e JOIN nsqlt_plan_d d ON d.id = e.dept WHERE e.name = 'a'", false);
         match r.explain("SELECT e.name, d.name FROM nsqlt_plan_e e JOIN nsqlt_plan_d d ON d.id = e.dept WHERE e.name = 'a'", nsql_script::plan::PlanOptions { analyze: true }) {
             Ok(rep) => eprintln!("[plan] oracle actual({})\n{}", d.as_str(), nsql_script::plan::render_text(&rep)),
@@ -261,7 +261,7 @@ fn explain_review_oracle() {
         }
         run(
             &mut r,
-            "DROP TABLE nsqlt_plan_e;\nDROP TABLE nsqlt_plan_d;\n",
+            "DROP TABLE nsqlt_plan_e PURGE;\nDROP TABLE nsqlt_plan_d PURGE;\n",
         );
     }
 }
@@ -458,7 +458,7 @@ fn oracle_exec_bind_formula_is_remembered_in_use_mode() {
 #[test]
 fn oracle_plsql_block_out_binds_and_dml() {
     for_each_oracle(|mut r| {
-        run(&mut r, "BEGIN EXECUTE IMMEDIATE 'DROP TABLE nexa_it'; EXCEPTION WHEN OTHERS THEN NULL; END;\n/\nCREATE TABLE nexa_it (id NUMBER, name VARCHAR2(30));\nINSERT INTO nexa_it VALUES (1, '홍길동');\nBEGIN\n  SELECT name INTO :V_NM FROM nexa_it WHERE id = 1;\n  :V_TWICE := :V_NM || :V_NM;\nEND;\n/\nCOMMIT;\n");
+        run(&mut r, "BEGIN EXECUTE IMMEDIATE 'DROP TABLE nexa_it PURGE'; EXCEPTION WHEN OTHERS THEN NULL; END;\n/\nCREATE TABLE nexa_it (id NUMBER, name VARCHAR2(30));\nINSERT INTO nexa_it VALUES (1, '홍길동');\nBEGIN\n  SELECT name INTO :V_NM FROM nexa_it WHERE id = 1;\n  :V_TWICE := :V_NM || :V_NM;\nEND;\n/\nCOMMIT;\n");
         assert_eq!(
             r.engine.vars.get("V_NM").unwrap().value,
             Value::Str("홍길동".into())
@@ -469,7 +469,7 @@ fn oracle_plsql_block_out_binds_and_dml() {
         );
         let ev = run(
             &mut r,
-            "SELECT id, name FROM nexa_it WHERE name = :V_NM;\nDROP TABLE nexa_it;\n",
+            "SELECT id, name FROM nexa_it WHERE name = :V_NM;\nDROP TABLE nexa_it PURGE;\n",
         );
         let rs = first_rs(&ev).unwrap();
         assert_eq!(rs.rows[0], vec![Value::Int(1), Value::Str("홍길동".into())]);

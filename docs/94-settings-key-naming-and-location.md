@@ -406,7 +406,20 @@
 |---|---|---|---|---|
 | `tbledit.prod` | Choice(`allow` · `deny`) | allow | Explorer | 운영 접속의 테이블 구조 편집기 — allow = 운영 가드(확인 · 백업)와 함께 편집 · deny = 읽기 전용으로만 연다(머리에 "Production connection - structure editing is turned off") |
 
-명명 확인 = 기능 접두 `tbledit.`(119 §7의 설계 이름 그대로) · 분류 = Explorer(진입점이 탐색기 메뉴) · **아직 없는 설계 키**(119 = `tbledit.risk_check` · `tbledit.sqlite_rebuild` · `tbledit.idle_secs` · `tbledit.max_tabs`)는 그 기능을 만들 때 같은 접두로 등재한다(T-525 남음 ⑧ · ⑪ · 유휴 시간 = 10초 초과라 `_secs` = 6-5).
+명명 확인 = 기능 접두 `tbledit.`(119 §7의 설계 이름 그대로) · 분류 = Explorer(진입점이 탐색기 메뉴) · **아직 없는 설계 키**(119 = `tbledit.sqlite_rebuild` · `tbledit.idle_secs` · `tbledit.max_tabs` · `tbledit.risk_check`는 11-28에 등재 = 6-44)는 그 기능을 만들 때 같은 접두로 등재한다(T-525 남음 ⑧ · ⑪ · 유휴 시간 = 10초 초과라 `_secs` = 6-5).
+
+### 6-44. 11-28 새 키 6(테이블 구조 편집기 5 + 탐색기 1 · T-525 5차 · D-571 · [119 §10-8](119-table-editor-design.md) · [journal 11-28 §7](journal/2026-11-28.md))
+
+| 키 | 종류 | 기본 | 분류 | 뜻 |
+|---|---|---|---|---|
+| `tbledit.enabled` | Bool | on | Explorer | 테이블 구조 편집기 — off = 구조 편집 · 새 테이블 명령이 탭을 만들지 않는다(상태줄 "The table editor is turned off (tbledit.enabled)") · 부하원 스위치 = [39 §3](39-resource-governance.md) |
+| `tbledit.fold_names` | Bool | on | Explorer | 새로 적는 이름을 그 데이터베이스의 기본 대소문자로 접는다 — on = Oracle 대문자 · PostgreSQL 소문자(큰따옴표로 감싸면 적은 그대로) / off = 늘 적은 그대로(필요하면 인용해서 만든다) · 열린 탭에 즉시 반영 |
+| `tbledit.add_row` | Choice(`end` · `after`) | end | Explorer | [추가]로 넣는 새 행의 자리 — end = 맨 끝 / after = 선택 행 아래(가운데 자리는 MySQL만 문장이 된다) · 열린 탭에 즉시 반영 |
+| `tbledit.on_failure` | Choice(`keep` · `discard`) | keep | Explorer | 적용이 멈춘 뒤 적용되지 않은 편집 — keep = 탭에 남김(고쳐서 다시 적용) / discard = 서버에서 다시 읽고 버림 · 멈추는 것 자체(문장 하나씩 · 오류에서 멈춤)는 설정이 아니다 |
+| `tbledit.risk_check` | Bool | on | Explorer | 적용 전 기존 데이터 검사(NULL 행 · 지울 컬럼의 값 · 중복 키를 세어 미리보기 머리에 싣는다) — off = 집계 질의를 보내지 않는다 · **운영 접속은 설정과 무관하게 늘 검사**(D-326) |
+| `explorer.size_zero` | Choice(`show` · `hide`) | show | Explorer | 저장 공간이 아직 없는 객체(예: 새로 만든 빈 Oracle 테이블 · D-562)의 용량 칸 — show = `0B` / hide = 빈 칸 · 설정을 바꾸면 즉시 |
+
+명명 확인 = 기능 접두 `tbledit.`(6-43과 같음 · `tbledit.risk_check`는 119 §7의 설계 이름 그대로) · `explorer.size_zero` = `explorer.sizes`(용량 표시) 곁의 표시 방식 · 여섯 다 기본값 = 종전 동작(D-571 "기본값 = 지금 동작") · 시간 값 없음(6-5 해당 없음) · 설정으로 열지 않은 것 = 재생성 금지 · 적용 직전 서버 재확인 · 문장 하나씩 · 오류에서 멈춤 · 운영 접속의 위험 검사(D-571).
 
 ### 6-3. 설정 창 규칙(구현)
 - 카드 순서 = **그룹 → 카테고리 → 접두 묶음(그 접두가 처음 등재된 자리 순) → 등재 순**(`display_order`) — 검색 결과도 같은 순.

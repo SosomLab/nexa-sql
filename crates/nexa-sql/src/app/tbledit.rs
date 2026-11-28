@@ -361,6 +361,11 @@ impl App {
         server: Option<ConnectSpec>,
         is_new: bool,
     ) -> Option<String> {
+        if !self.settings.flag("tbledit.enabled") {
+            self.sess.status = t(Msg::StTbeDisabled).into();
+            self.redraw();
+            return None;
+        }
         let Some(d) = self.tbledit_dialect(server.as_ref()).and_then(tb_dialect) else {
             self.sess.status = t(Msg::StTbeUnsupported).into();
             self.redraw();
@@ -405,6 +410,10 @@ impl App {
             {
                 view.set_notice(true);
             }
+            view.set_prefs(
+                self.settings.flag("tbledit.fold_names"),
+                self.settings.get("tbledit.add_row") == Some("after"),
+            );
             self.tbledits.insert(
                 key.clone(),
                 TbTab {
@@ -419,6 +428,17 @@ impl App {
         self.layout();
         self.redraw();
         Some(key)
+    }
+
+    /// 설정이 바뀌었다 — 열려 있는 탭 전부에 이름 접기 · 새 행 자리를 다시 넣는다.
+    pub(crate) fn tbledit_apply_prefs(&mut self) {
+        let (fold, after) = (
+            self.settings.flag("tbledit.fold_names"),
+            self.settings.get("tbledit.add_row") == Some("after"),
+        );
+        for tab in self.tbledits.values_mut() {
+            tab.view.set_prefs(fold, after);
+        }
     }
 
     /// 탐색기 ▸ 구조 편집…(팔레트 `obj.edit_structure`도 여기로).
@@ -478,6 +498,7 @@ impl App {
         let Some(key) = key else {
             return;
         };
+        let discard_on_failure = self.settings.get("tbledit.on_failure") == Some("discard");
         let Some(tab) = self.tbledits.get_mut(&key) else {
             return;
         };
@@ -501,7 +522,12 @@ impl App {
             TbPending::Reload { ok: false } => {
                 tab.view
                     .set_key_lock(data.key_extra.is_some(), locked_keys(&data));
-                tab.view.rebase(model);
+                // 멈춘 뒤 남은 편집: 기본 = 남김(설정 `tbledit.on_failure = discard`면 서버에서 다시 읽은 것으로 덮는다).
+                if discard_on_failure {
+                    tab.view.load(model);
+                } else {
+                    tab.view.rebase(model);
+                }
             }
             TbPending::PreApply => {
                 // F-13: 열어 본 뒤 다른 세션이 구조를 바꿨으면 적용하지 않는다(사용자가 본 차이가 더는 맞지 않는다).
@@ -613,7 +639,19 @@ impl App {
         }
         let d = tab.view.dialect();
         let orig = tab.view.orig().clone();
-        let checks = nsql_ddl::risk_checks(d, &orig, &nsql_ddl::diff(&orig, tab.view.edited()));
+        // 위험 검사 질의: 기본 켬 · 설정으로 끌 수 있지만 **운영 접속은 늘 켬**(D-326) · 서버 재확인(F-13)은 어느 쪽이든 한다.
+        let prod = Self::tbledit_prod(
+            tab.server.as_ref(),
+            self.sess
+                .spec
+                .as_ref()
+                .is_some_and(|s| s.env == Some(nsql_script::ConnEnv::Prod)),
+        );
+        let checks = if prod || self.settings.flag("tbledit.risk_check") {
+            nsql_ddl::risk_checks(d, &orig, &nsql_ddl::diff(&orig, tab.view.edited()))
+        } else {
+            Vec::new()
+        };
         self.sess.status = t(Msg::StTbeChecking).into();
         self.tbledit_request(key, TbPending::PreApply, checks);
         self.redraw();
@@ -829,10 +867,12 @@ impl App {
         };
         // ★ 오류 경계(D-329): 편집기 안의 패닉이 메인 편집기까지 끌고 가지 않게 — 잡히면 그 탭의 상태를 통째로 버린다.
         //   (Release가 `panic = "abort"`인 동안은 Debug에서만 효과가 있다 · 전역 전환은 크기 실측 뒤 결정.)
+        let shift = self.shift;
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.tbledits
-                .get_mut(&key)
-                .is_some_and(|tab| tab.view.on_event(ev))
+            self.tbledits.get_mut(&key).is_some_and(|tab| {
+                tab.view.set_shift(shift);
+                tab.view.on_event(ev)
+            })
         }));
         let Ok(redraw) = r else {
             self.tbledit_crashed(&key);
@@ -968,9 +1008,11 @@ impl App {
             return true;
         }
         match rest {
-            // 판정용(Debug 빌드만): 다음 그리기에서 편집기가 패닉 → 오류 경계가 그 탭만 걷는지.
-            #[cfg(debug_assertions)]
-            "test_panic" => {
+            // 판정용: 다음 그리기에서 편집기가 패닉 → 오류 경계가 그 탭만 걷는지. Debug 빌드이거나 환경 변수
+            // `NSQL_TEST_HOOKS`가 있을 때만(Release에서 경계 동작을 확인하는 길 · 평소 설치본에서는 무시된다).
+            "test_panic"
+                if cfg!(debug_assertions) || std::env::var_os("NSQL_TEST_HOOKS").is_some() =>
+            {
                 if let Some(tab) = self.tbledits.get_mut(&key) {
                     tab.view.arm_test_panic();
                 }

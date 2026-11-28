@@ -118,7 +118,10 @@ nexa-sys = { path = "../nexa-ui/crates/nexa-sys", default-features = false }
 opt-level = 3
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+# ★ unwind(사용자 11-28 결정 D-567 · 종전 abort): 테이블 구조 편집기의 오류 경계(D-329)와 워커·메타 스레드의 패닉 격리가 **배포판에서도**
+#   동작하게 — 패닉이 프로세스 전체가 아니라 그 탭/그 명령만 끝낸다. 비용(11-27 Linux lite 실측) = nexa-sql +9.0 % · nsql +7.2 % ·
+#   기동 차이 없음. 패닉을 잡는 자리 = `catch_unwind`(app/tbledit.rs · app/paint.rs · worker.rs · explorer.rs).
+panic = "unwind"
 strip = "symbols"
 
 # ★ 개발 빌드 주기 단축(사용자 11-13 "빌드 및 디버그 실행에 너무 오래 걸려" · 실측 Windows = 파일 하나 고친 뒤 재빌드 1038초 → 19~47초 ·
