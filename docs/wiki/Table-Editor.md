@@ -70,7 +70,8 @@ The preview window is editable. If you change the script, **Apply** runs **what 
 
 - The text is split into statements — on SQL Server into batches at `GO` lines — and they run one at a time, with the same backup and the same stop-at-the-first-error rule. Parts that are only comments are skipped.
 - Nexa SQL does not check an edited script again. It runs what you wrote, as if you had run it in an editor.
-- Afterwards the structure is read again. Edits in the grid that your script did not carry out **stay in the tab**, even when every statement succeeded — look at the DDL preview before you apply again.
+- Afterwards the structure is read again from the server. When every statement succeeded, the tab shows the table **as it now is** and the edits you had made in the grid are **dropped** — once you edit the script, the script is what counts, not the grid. A change you left out of the script has to be entered again.
+- If the script stops at an error, it is handled like any stopped Apply: the grid edits stay (or are dropped when `tbledit.on_failure` is **Discard**).
 - Whatever the script added on the server (a column, a key, an index) appears in the grid as part of the table.
 
 ## History
@@ -85,7 +86,7 @@ Every Apply is recorded, whether it finished or stopped. The **History** section
 
 Double-click a row (or press **Enter**) to open that script in an editor tab.
 
-The statements that were sent are saved next to the table's object backups, in the `backups/objects` folder of the settings folder, as `<profile>_<schema>.<table>_TABLE.<timestamp>_applied.sql`. The header comment says how many statements were applied. For a stopped run it also has a `STOPPED` line, and the last statement in the file is the one that failed.
+The statements that were sent are saved next to the table's object backups, in the `backups/objects` folder of the settings folder, as `<profile>_<schema>.<table>_TABLE.<timestamp>_applied.sql`. The header comment says how many statements were applied. For a stopped run it also has a `STOPPED` line, and the last statement in the file is the one that failed. A script that you edited in the preview has a `Source: script edited in the preview window` line.
 
 Closing the tab clears the list. The files stay.
 

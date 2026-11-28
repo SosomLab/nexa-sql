@@ -43,9 +43,10 @@ if [ -n "$AP" ] && grep -qF "ALTER TABLE main.item ADD COLUMN qty INTEGER;" "$AP
 expect "rename-stmt" "$V1_OUT/d.txt" "stmt|Safe|ALTER TABLE main.item RENAME COLUMN name TO title"
 expect "type-blocked" "$V1_OUT/e.txt" "blocked|NeedsRebuild|title"
 expect_not "type-no-stmt" "$V1_OUT/e.txt" "ALTER COLUMN"
-# ⑤-b 미리보기에서 고친 스크립트 = 고친 글 그대로 실행(D-317) · 화면의 남은 편집(이름 바꾸기)은 지켜진다.
+# ⑤-b 미리보기에서 고친 스크립트 = 고친 글 그대로 실행(D-317) · 성공하면 화면의 편집은 버리고 서버 상태로 다시 읽는다(사용자 11-28).
 expect "edited-applied" "$V1_OUT/s.txt" "|extra2|TEXT|"
-expect "edited-keeps-pending" "$V1_OUT/s.txt" "RENAME COLUMN name TO title"
+expect "edited-reloads-clean" "$V1_OUT/s.txt" "dirty=false can_apply=false"
+expect_not "edited-drops-pending" "$V1_OUT/s.txt" "RENAME COLUMN name TO title"
 expect "new-create" "$V1_OUT/f.txt" "stmt|Safe|CREATE TABLE main.orders (     id INTEGER NOT NULL )"
 expect "new-created" "$V1_OUT/g.txt" "table=main.orders new=false loaded=true dirty=false"
 # ⑦ 미적용 변경이 있는 탭 닫기 = 첫 번째는 남고(안내) · 곧바로 한 번 더 닫으면 닫힌다(그 뒤 덤프 = 다른 편집기 탭 또는 없음).

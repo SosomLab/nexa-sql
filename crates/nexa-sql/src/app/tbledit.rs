@@ -260,20 +260,25 @@ pub(crate) fn preview_header(
 
 /// 보관할 "실행한 스크립트" 글(영어 고정 머리 주석 + 보낸 문장들). 순수.
 pub(crate) fn applied_script(
-    schema: &str,
-    table: &str,
+    target: &str,
     when: &str,
     applied: usize,
     total: usize,
     ok: bool,
+    edited: bool,
     script: &str,
 ) -> String {
     let mut s = format!(
-        "-- Nexa SQL table editor: {schema}.{table} - applied {applied} of {total} statement(s) at {when}\n"
+        "-- Nexa SQL table editor: {target} - applied {applied} of {total} statement(s) at {when}\n"
     );
     if !ok {
         s.push_str(
             "-- STOPPED: the last statement below failed; statements after it were not sent.\n",
+        );
+    }
+    if edited {
+        s.push_str(
+            "-- Source: script edited in the preview window (not the generated statements).\n",
         );
     }
     s.push('\n');
@@ -809,12 +814,12 @@ impl App {
                 })
                 .collect();
             let body = applied_script(
-                &schema,
-                &table,
+                &format!("{schema}.{table}"),
                 &now.stamp(),
                 applied,
                 total,
                 ok,
+                run.edited,
                 &nsql_ddl::script(d, &sent_stmts),
             );
             let file = crate::backups::objects_dir()
@@ -852,8 +857,10 @@ impl App {
                 tab.view.created();
             }
             if !tab.view.is_new() {
-                // 고친 스크립트를 실행했으면 화면의 편집 가운데 일부만 적용됐을 수 있다 → 성공이어도 남은 편집을 지키는 쪽으로.
-                let ok = ok && !run.edited;
+                // ★ 고친 스크립트로 성공했으면 화면의 편집을 버리고 **서버 상태로 다시 읽는다**(사용자 11-28 실기 · 확정):
+                //   사용자가 스크립트를 어떻게 고쳤는지(이름을 바꿨는지 · 일부를 미뤘는지) 알 수 없어, 남겨 두면 원치 않는 변경이
+                //   다음 적용에 딸려 나간다(COL2를 COL3으로 고쳐 적용했더니 COL2가 "추가할 것"으로 남던 것). 고친 순간부터 기준은
+                //   화면이 아니라 그 스크립트다. 오류로 멈춘 경우만 남은 편집을 지킨다(`tbledit.on_failure`).
                 self.tbledit_request(&run.key, TbPending::Reload { ok }, Vec::new());
             }
         }
@@ -1225,20 +1232,22 @@ mod tests {
     #[test]
     fn applied_script_header_says_what_ran() {
         let ok = applied_script(
-            "APP",
-            "T",
+            "APP.T",
             "2026-11-27 23:00:00.000",
             2,
             2,
             true,
+            false,
             "A;\nB;\n",
         );
+        assert!(!ok.contains("Source:"));
         assert!(ok.starts_with(
             "-- Nexa SQL table editor: APP.T - applied 2 of 2 statement(s) at 2026-11-27"
         ));
         assert!(!ok.contains("STOPPED"));
         assert!(ok.ends_with("\nA;\nB;\n"));
-        let bad = applied_script("APP", "T", "x", 1, 3, false, "A;\nB;\n");
+        let bad = applied_script("APP.T", "x", 1, 3, false, true, "A;\nB;\n");
+        assert!(bad.contains("-- Source: script edited in the preview window"));
         assert!(bad.contains("applied 1 of 3"));
         assert!(bad.contains("-- STOPPED: the last statement below failed"));
     }
